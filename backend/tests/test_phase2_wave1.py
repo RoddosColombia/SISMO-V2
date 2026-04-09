@@ -8,6 +8,39 @@ import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+
+# ---------------------------------------------------------------------------
+# Stream mock helper — used by Tests 7, 8, 10
+# ---------------------------------------------------------------------------
+
+def _make_stream_mock(final_message):
+    """
+    Build a mock for 'async with client.messages.stream(**kwargs) as stream:'.
+
+    Structure needed:
+      client.messages.stream(**kwargs) -> context manager (cm)
+      async with cm as stream:
+        async for event in stream: ...  (yields nothing)
+        await stream.get_final_message() -> final_message
+    """
+    # The inner stream object (what 'as stream' binds to)
+    class AsyncIterEmpty:
+        def __aiter__(self):
+            return self
+        async def __anext__(self):
+            raise StopAsyncIteration
+
+    stream_inner = MagicMock()
+    stream_inner.__aiter__ = lambda self: AsyncIterEmpty()
+    stream_inner.get_final_message = AsyncMock(return_value=final_message)
+
+    # The context manager returned by client.messages.stream(...)
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(return_value=stream_inner)
+    cm.__aexit__ = AsyncMock(return_value=None)
+    return cm
+
+
 # ---------------------------------------------------------------------------
 # TESTS 1-6: ToolDispatcher
 # ---------------------------------------------------------------------------
@@ -33,8 +66,6 @@ class TestToolDispatcher:
     @pytest.mark.asyncio
     async def test_2_permission_error_caught_and_returned(self):
         """Test 2: When handler raises PermissionError, dispatch returns error dict."""
-        from agents.contador.handlers import ToolDispatcher
-
         async def bad_handler(**kwargs):
             raise PermissionError("sin permiso")
 
@@ -47,7 +78,6 @@ class TestToolDispatcher:
     @pytest.mark.asyncio
     async def test_3_generic_exception_caught_and_returned(self):
         """Test 3: When handler raises generic Exception, dispatch returns error dict."""
-
         async def bad_handler(**kwargs):
             raise Exception("db error")
 
@@ -128,7 +158,6 @@ class TestChatRouting:
     async def test_7_read_tool_executes_immediately(self):
         """Test 7: Read-only tool executes immediately via dispatcher, no ExecutionCard."""
         from agents.chat import process_chat
-        from unittest.mock import AsyncMock, MagicMock, patch
 
         mock_dispatcher = AsyncMock()
         mock_dispatcher.dispatch.return_value = {
@@ -145,17 +174,13 @@ class TestChatRouting:
         fake_final_message = MagicMock()
         fake_final_message.content = [fake_block]
 
-        fake_stream = AsyncMock()
-        fake_stream.__aenter__ = AsyncMock(return_value=fake_stream)
-        fake_stream.__aexit__ = AsyncMock(return_value=None)
-        fake_stream.__aiter__ = MagicMock(return_value=iter([]))
-        fake_stream.get_final_message = AsyncMock(return_value=fake_final_message)
-
         mock_db = AsyncMock()
         mock_db.agent_sessions = AsyncMock()
 
+        stream_cm = _make_stream_mock(fake_final_message)
+
         with patch("agents.chat.anthropic.AsyncAnthropic") as mock_anthropic:
-            mock_anthropic.return_value.messages.stream.return_value = fake_stream
+            mock_anthropic.return_value.messages.stream.return_value = stream_cm
 
             events = []
             async for event in process_chat(
@@ -193,18 +218,14 @@ class TestChatRouting:
         fake_final_message = MagicMock()
         fake_final_message.content = [fake_block]
 
-        fake_stream = AsyncMock()
-        fake_stream.__aenter__ = AsyncMock(return_value=fake_stream)
-        fake_stream.__aexit__ = AsyncMock(return_value=None)
-        fake_stream.__aiter__ = MagicMock(return_value=iter([]))
-        fake_stream.get_final_message = AsyncMock(return_value=fake_final_message)
-
         mock_db = AsyncMock()
         mock_db.agent_sessions = AsyncMock()
         mock_db.agent_sessions.update_one = AsyncMock()
 
+        stream_cm = _make_stream_mock(fake_final_message)
+
         with patch("agents.chat.anthropic.AsyncAnthropic") as mock_anthropic:
-            mock_anthropic.return_value.messages.stream.return_value = fake_stream
+            mock_anthropic.return_value.messages.stream.return_value = stream_cm
 
             events = []
             async for event in process_chat(
@@ -266,7 +287,7 @@ class TestChatRouting:
 
     @pytest.mark.asyncio
     async def test_10_dispatcher_error_yields_sse_error(self):
-        """Test 10: If dispatcher returns success=False, SSE error event is yielded."""
+        """Test 10: If dispatcher returns success=False, SSE tool_result is yielded."""
         from agents.chat import process_chat
 
         mock_dispatcher = AsyncMock()
@@ -283,17 +304,13 @@ class TestChatRouting:
         fake_final_message = MagicMock()
         fake_final_message.content = [fake_block]
 
-        fake_stream = AsyncMock()
-        fake_stream.__aenter__ = AsyncMock(return_value=fake_stream)
-        fake_stream.__aexit__ = AsyncMock(return_value=None)
-        fake_stream.__aiter__ = MagicMock(return_value=iter([]))
-        fake_stream.get_final_message = AsyncMock(return_value=fake_final_message)
-
         mock_db = AsyncMock()
         mock_db.agent_sessions = AsyncMock()
 
+        stream_cm = _make_stream_mock(fake_final_message)
+
         with patch("agents.chat.anthropic.AsyncAnthropic") as mock_anthropic:
-            mock_anthropic.return_value.messages.stream.return_value = fake_stream
+            mock_anthropic.return_value.messages.stream.return_value = stream_cm
 
             events = []
             async for event in process_chat(

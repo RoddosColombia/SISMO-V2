@@ -29,6 +29,7 @@ from agents.prompts import SYSTEM_PROMPTS
 from agents.contador.tools import get_tools_for_agent
 from core.router import route_with_sticky, IntentResult
 from core.permissions import validate_write_permission
+from agents.contador.handlers import ToolDispatcher, is_read_only_tool, is_conciliation_tool
 
 ANTHROPIC_MODEL = "claude-sonnet-4-5"
 
@@ -40,6 +41,7 @@ async def process_chat(
     session_id: str | None = None,
     current_agent: str | None = None,
     correlation_id: str | None = None,
+    dispatcher: ToolDispatcher | None = None,  # NEW — injected by router
 ) -> AsyncGenerator[str, None]:
     """
     Async generator that yields SSE-formatted strings.
@@ -94,7 +96,18 @@ async def process_chat(
             final_message = await stream.get_final_message()
             for block in final_message.content:
                 if block.type == 'tool_use':
-                    # Validate permissions before proposing (T-02-05)
+                    # Read-only tools execute immediately — no confirmation needed (per D-06)
+                    if is_read_only_tool(block.name) and dispatcher is not None:
+                        result = await dispatcher.dispatch(block.name, block.input, session_id or "anon")
+                        yield f"data: {json.dumps({'type': 'tool_result', 'tool_name': block.name, 'result': result})}\n\n"
+                        continue
+
+                    # Conciliation tools return Phase 3 stub immediately (per D-07)
+                    if is_conciliation_tool(block.name):
+                        yield f"data: {json.dumps({'type': 'tool_result', 'tool_name': block.name, 'result': {'success': True, 'message': 'Conciliación bancaria disponible en Phase 3'}})}\n\n"
+                        continue
+
+                    # Write tools: validate permissions, show ExecutionCard (existing behavior preserved, per D-06)
                     try:
                         validate_write_permission(agent_type, f"POST /{block.name}", 'alegra')
                     except PermissionError:
@@ -132,6 +145,36 @@ async def process_chat(
         yield f"data: {json.dumps({'type': 'error', 'message': f'Error inesperado: {str(e)}'})}\n\n"
 
     yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+
+async def execute_approved_action(
+    session_id: str,
+    db: AsyncIOMotorDatabase,
+    dispatcher: ToolDispatcher,
+) -> dict:
+    """
+    Called by POST /api/chat/approve-plan after user confirms ExecutionCard.
+    Retrieves pending_action from MongoDB session and dispatches it.
+    Returns result dict with alegra_id as evidence.
+    """
+    session = await db.agent_sessions.find_one({"session_id": session_id})
+    if not session or not session.get("pending_action"):
+        return {"success": False, "error": "No hay acción pendiente para esta sesión"}
+
+    pending = session["pending_action"]
+    result = await dispatcher.dispatch(
+        tool_name=pending["tool_name"],
+        tool_input=pending["tool_input"],
+        user_id=session_id,
+    )
+
+    # Clear pending action after execution
+    await db.agent_sessions.update_one(
+        {"session_id": session_id},
+        {"$unset": {"pending_action": ""}}
+    )
+
+    return result
 
 
 def _format_tool_proposal(tool_name: str, tool_input: dict) -> str:
