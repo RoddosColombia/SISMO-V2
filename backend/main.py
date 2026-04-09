@@ -2,6 +2,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from core.database import lifespan
+from routers.chat import router as chat_router
 
 app = FastAPI(title="SISMO V2", version="0.1.0", lifespan=lifespan)
 
@@ -12,6 +13,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(chat_router)
 
 
 @app.get("/health")
