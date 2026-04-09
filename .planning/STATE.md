@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 2
 status: unknown
-last_updated: "2026-04-09T16:20:29.156Z"
+last_updated: "2026-04-09T22:09:43.087Z"
 progress:
   total_phases: 4
   completed_phases: 1
-  total_plans: 3
+  total_plans: 10
   completed_plans: 3
-  percent: 100
+  percent: 30
 ---
 
 # STATE: SISMO V2
