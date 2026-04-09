@@ -49,21 +49,30 @@ Plans:
 
 **Depends on:** Phase 1
 
-**Requirements mapped:** EGRE-01, EGRE-02, EGRE-03, EGRE-04, CONC-01, CONC-02, CONC-03, CONC-04, NOMI-01, CXC-01, CXC-02
+**Requirements mapped:** EGRE-01, EGRE-02, EGRE-03, EGRE-04, CONC-04, NOMI-01, CXC-01, CXC-02, FACT-01, FACT-02, FACT-03, INGR-01, INGR-02, PL-01, PL-02
 
 **Success Criteria** (what must be TRUE):
 1. User describes expense in natural language, agent classifies via motor matricial, proposes complete journal entry with correct retenciones calculated (Arrendamiento 3.5%, Servicios 4%, Honorarios PN 10%, Honorarios PJ 11%, Compras 2.5%, ReteICA 0.414%), user confirms before execution
 2. Partner expenses (Andres CC 80075452, Ivan CC 80086601) always routed to CXC socios account, never classified as operating expense
 3. Auteco NIT 860024781 recognized as autoretenedor -- ReteFuente never applied
-4. User uploads bank extract .xlsx (Bancolombia, BBVA, Davivienda formats), system parses by headers, classifies movements with >= 0.70 confidence auto-caused via BackgroundTask; < 0.70 routes to WhatsApp and then Backlog if unresolved
-5. Anti-duplicates enforced in 3 layers: MD5 hash per extract (Capa 1), MD5 hash per movement (Capa 2), GET Alegra post-POST verification (Capa 3)
-6. Individual movements classified via chat: user describes, agent proposes journal, user confirms, POST /journals executes with verification
-7. Monthly payroll registered as individual journals per employee (Sueldos 5462 + Seguridad Social 5471) with anti-duplicate check per month+employee
-8. Partner CXC balance query returns exact pending amount per partner in real-time
+4. Individual movements classified via chat: user describes, agent proposes journal, user confirms, POST /journals executes with verification
+5. Monthly payroll registered as individual journals per employee (Sueldos 5462 + Seguridad Social 5471) with anti-duplicate check per month+employee
+6. Partner CXC balance query returns exact pending amount per partner in real-time
+7. Invoice created with mandatory VIN + motor; blocked if missing or moto status != disponible
+8. Successful invoice triggers cascade: inventario_motos -> Vendida, loanbook created, event published
+9. Loan payment dual-operation: POST /payments + POST /journals both verified; cuota marked paid only after both succeed
+10. P&L readable from Alegra journals/invoices/payments -- never from MongoDB
 
-**Plans:** TBD
+**Plans:** 7 plans
 
-**UI hint:** yes
+Plans:
+- [ ] 02-01-PLAN.md -- ToolDispatcher infrastructure + chat.py wiring (Wave 1)
+- [ ] 02-02-PLAN.md -- 8 consultas read-only handlers (Wave 2)
+- [ ] 02-03-PLAN.md -- Retenciones service + 7 egresos handlers (Wave 3)
+- [ ] 02-04-PLAN.md -- 4 ingresos + CXC handlers (Wave 4)
+- [ ] 02-05-PLAN.md -- 4 facturacion handlers with VIN enforcement (Wave 5)
+- [ ] 02-06-PLAN.md -- 6 nomina + cartera + catalogo handlers (Wave 6)
+- [ ] 02-07-PLAN.md -- 12 integration tests + smoke test (Wave 7)
 
 ---
 
@@ -73,13 +82,12 @@ Plans:
 
 **Depends on:** Phase 1, Phase 2
 
-**Requirements mapped:** FACT-01, FACT-02, FACT-03, INGR-01, INGR-02
+**Requirements mapped:** CONC-01, CONC-02, CONC-03
 
 **Success Criteria** (what must be TRUE):
-1. Invoice created in Alegra (POST /invoices) with item format "[Modelo] [Color] - VIN: [x] / Motor: [x]" -- VIN and motor mandatory; invoice blocked if missing or status != "disponible"
-2. Successful invoice triggers cascade: inventario_motos status -> "vendida", loanbook created as "pendiente_entrega", event "factura.venta.creada" published, WhatsApp Template 5 sent
-3. Loan payment requires dual operation: POST /payments (against invoice) + POST /journals (income journal) -- both verified with request_with_verify(), cuota marked paid only after BOTH succeed
-4. Non-operational income (recovered motos, bank interest) registered as journal with correct account from plan_ingresos_roddos
+1. User uploads bank extract .xlsx (Bancolombia, BBVA, Davivienda formats), system parses by headers, classifies movements with >= 0.70 confidence auto-caused via BackgroundTask; < 0.70 routes to WhatsApp and then Backlog if unresolved
+2. Anti-duplicates enforced in 3 layers: MD5 hash per extract (Capa 1), MD5 hash per movement (Capa 2), GET Alegra post-POST verification (Capa 3)
+3. Bank extract parsers handle Bancolombia, BBVA, and Davivienda header formats
 
 **Plans:** TBD
 
@@ -113,11 +121,11 @@ Plans:
 | Phase | Name | Requirements | Status |
 |-------|------|--------------|--------|
 | 1 | Foundation & Architecture | 6 | Planned (3 plans ready) |
-| 2 | Core Accounting Operations | 11 | Not started |
-| 3 | Revenue & Invoicing | 5 | Not started |
+| 2 | Core Accounting Operations | 15 | Planned (7 plans ready) |
+| 3 | Conciliacion Bancaria | 3 | Not started |
 | 4 | Operations & Financial Reporting | 5 | Not started |
 
-**Total:** 4 phases, 27 requirements mapped, 3 plans created (Phase 1)
+**Total:** 4 phases, 27 requirements mapped, 10 plans created (Phase 1: 3, Phase 2: 7)
 
 ---
 
@@ -125,16 +133,15 @@ Plans:
 
 ```
 Phase 1 (Foundation) --+
-                       +--> Phase 2 (Core Accounting)
-                       |         |
-                       |    Phase 3 (Revenue) --+
-                       |                        +--> Phase 4 (Operations & Reporting)
-                       +------------------------+
+                       +--> Phase 2 (Core Accounting — 29 handlers)
+                                 |
+                            Phase 3 (Conciliacion Bancaria) --+
+                                                               +--> Phase 4 (Reporting)
 ```
 
 **Execution order:** 1 -> 2 -> 3 -> 4
 
-Phase 1 must complete before any other phase starts. Phase 2 can start once Phase 1 completes. Phase 3 depends on Phase 1 + 2. Phase 4 depends on all three prior phases (requires foundation, accounting ops, and revenue ops to be complete).
+Phase 1 must complete before any other phase starts. Phase 2 can start once Phase 1 completes. Phase 3 (conciliacion bancaria) depends on Phase 2 handler infrastructure. Phase 4 depends on all three prior phases.
 
 ---
 
@@ -150,27 +157,27 @@ Phase 1 must complete before any other phase starts. Phase 2 can start once Phas
 | FOUND-04 | Foundation | 1 | Tool Use native + feature flag |
 | FOUND-05 | Foundation | 1 | Event bus (roddos_events) |
 | FOUND-06 | Foundation | 1 | request_with_verify() pattern |
-| EGRE-01 | Egresos | 2 | Natural language expense -> classification -> journal |
-| EGRE-02 | Egresos | 2 | Automatic retenciones calculation |
-| EGRE-03 | Egresos | 2 | Partner expenses -> CXC socios |
-| EGRE-04 | Egresos | 2 | Auteco autoretenedor handling |
-| CONC-01 | Conciliacion Bancaria | 2 | Bank extract .xlsx upload and parsing |
-| CONC-02 | Conciliacion Bancaria | 2 | Confidence-based auto-classification + Backlog |
-| CONC-03 | Conciliacion Bancaria | 2 | 3-layer anti-duplicates |
-| CONC-04 | Conciliacion Bancaria | 2 | Individual movement chat classification |
-| NOMI-01 | Nomina | 2 | Monthly payroll journals per employee |
-| CXC-01 | CXC Socios | 2 | Partner withdrawals as CXC (balance sheet) |
-| CXC-02 | CXC Socios | 2 | Real-time CXC balance query |
-| FACT-01 | Facturacion | 3 | Invoice creation with VIN + motor mandatory |
-| FACT-02 | Facturacion | 3 | Invoice cascade (inventory, loanbook, event, WhatsApp) |
-| FACT-03 | Facturacion | 3 | Invoice blocking rules |
-| INGR-01 | Ingresos | 3 | Dual-operation loan payment (payment + journal) |
-| INGR-02 | Ingresos | 3 | Non-operational income journals |
+| EGRE-01 | Egresos | 2 | Natural language expense -> classification -> journal (Wave 3) |
+| EGRE-02 | Egresos | 2 | Automatic retenciones calculation (Wave 3 retenciones.py) |
+| EGRE-03 | Egresos | 2 | Partner expenses -> CXC socios (Wave 3 + Wave 4) |
+| EGRE-04 | Egresos | 2 | Auteco autoretenedor handling (Wave 3 retenciones.py) |
+| CONC-01 | Conciliacion Bancaria | 3 | Bank extract .xlsx upload and parsing |
+| CONC-02 | Conciliacion Bancaria | 3 | Confidence-based auto-classification + Backlog |
+| CONC-03 | Conciliacion Bancaria | 3 | 3-layer anti-duplicates |
+| CONC-04 | Conciliacion Bancaria | 2 | Individual movement chat classification (Wave 3 causar_movimiento_bancario) |
+| NOMI-01 | Nomina | 2 | Monthly payroll journals per employee (Wave 6) |
+| CXC-01 | CXC Socios | 2 | Partner withdrawals as CXC (balance sheet) (Wave 4) |
+| CXC-02 | CXC Socios | 2 | Real-time CXC balance query (Wave 4) |
+| FACT-01 | Facturacion | 2 | Invoice creation with VIN + motor mandatory (Wave 5) |
+| FACT-02 | Facturacion | 2 | Invoice cascade (inventory, loanbook, event) (Wave 5) |
+| FACT-03 | Facturacion | 2 | Invoice blocking rules (Wave 5) |
+| INGR-01 | Ingresos | 2 | Dual-operation loan payment (payment + journal) (Wave 4) |
+| INGR-02 | Ingresos | 2 | Non-operational income journals (Wave 4) |
 | BACK-01 | Backlog Operativo | 4 | Unresolved movement insertion to backlog |
 | BACK-02 | Backlog Operativo | 4 | Backlog UI with filtering and sorting |
 | BACK-03 | Backlog Operativo | 4 | Manual "Causar" from Backlog |
-| PL-01 | P&L Automatico | 4 | CFO P&L read from Alegra (not MongoDB) |
-| PL-02 | P&L Automatico | 4 | P&L sections (devengado/caja, CXC exclusion, IVA) |
+| PL-01 | P&L Automatico | 2 | CFO P&L read from Alegra (Wave 2 consultar_estado_resultados) |
+| PL-02 | P&L Automatico | 2 | P&L sections: cuatrimestral IVA, CXC excluded (Wave 6 consultar_obligaciones) |
 
 **Total:** 27/27 requirements mapped
 **Coverage:** 100%
@@ -180,3 +187,4 @@ Phase 1 must complete before any other phase starts. Phase 2 can start once Phas
 
 *Roadmap created: 2026-04-09*
 *Phase 1 plans created: 2026-04-09*
+*Phase 2 plans created: 2026-04-09*
