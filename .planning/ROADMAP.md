@@ -37,9 +37,9 @@
 **Plans:** 3 plans
 
 Plans:
-- [ ] 01-01-PLAN.md -- Project scaffold, database DI, intent router, system prompts, WRITE_PERMISSIONS, event bus
-- [ ] 01-02-PLAN.md -- Alegra client with request_with_verify(), 32 Contador tools, SSE chat endpoint with Tool Use loop
-- [ ] 01-03-PLAN.md -- Infrastructure test suite covering all FOUND-01 through FOUND-06 requirements
+- [x] 01-01-PLAN.md -- Project scaffold, database DI, intent router, system prompts, WRITE_PERMISSIONS, event bus
+- [x] 01-02-PLAN.md -- Alegra client with request_with_verify(), 32 Contador tools, SSE chat endpoint with Tool Use loop
+- [x] 01-03-PLAN.md -- Infrastructure test suite covering all FOUND-01 through FOUND-06 requirements
 
 ---
 
