@@ -32,15 +32,20 @@
 3. Agent attempting to write to unauthorized collection raises PermissionError before Alegra call (WRITE_PERMISSIONS enforced)
 4. Tool Use native from Anthropic API functions with typed tool definitions; TOOL_USE_ENABLED feature flag allows rollback to ACTION_MAP
 5. Every successful write to Alegra is followed by immutable event published to roddos_events collection
-6. All Alegra writes follow request_with_verify() pattern: POST with verification HTTP 200/201, GET confirmation, return Alegra ID — no blind writes
+6. All Alegra writes follow request_with_verify() pattern: POST with verification HTTP 200/201, GET confirmation, return Alegra ID -- no blind writes
 
-**Plans:** TBD
+**Plans:** 3 plans
+
+Plans:
+- [ ] 01-01-PLAN.md -- Project scaffold, database DI, intent router, system prompts, WRITE_PERMISSIONS, event bus
+- [ ] 01-02-PLAN.md -- Alegra client with request_with_verify(), 32 Contador tools, SSE chat endpoint with Tool Use loop
+- [ ] 01-03-PLAN.md -- Infrastructure test suite covering all FOUND-01 through FOUND-06 requirements
 
 ---
 
 ### Phase 2: Core Accounting Operations
 
-**Goal:** Enable users to describe expenses naturally, reconcile bank statements, manage payroll, and track partner withdrawals — all automatically classified, verified, and recorded to Alegra with correct retenciones and anti-duplicate protection.
+**Goal:** Enable users to describe expenses naturally, reconcile bank statements, manage payroll, and track partner withdrawals -- all automatically classified, verified, and recorded to Alegra with correct retenciones and anti-duplicate protection.
 
 **Depends on:** Phase 1
 
@@ -48,8 +53,8 @@
 
 **Success Criteria** (what must be TRUE):
 1. User describes expense in natural language, agent classifies via motor matricial, proposes complete journal entry with correct retenciones calculated (Arrendamiento 3.5%, Servicios 4%, Honorarios PN 10%, Honorarios PJ 11%, Compras 2.5%, ReteICA 0.414%), user confirms before execution
-2. Partner expenses (Andrés CC 80075452, Iván CC 80086601) always routed to CXC socios account, never classified as operating expense
-3. Auteco NIT 860024781 recognized as autoretenedor — ReteFuente never applied
+2. Partner expenses (Andres CC 80075452, Ivan CC 80086601) always routed to CXC socios account, never classified as operating expense
+3. Auteco NIT 860024781 recognized as autoretenedor -- ReteFuente never applied
 4. User uploads bank extract .xlsx (Bancolombia, BBVA, Davivienda formats), system parses by headers, classifies movements with >= 0.70 confidence auto-caused via BackgroundTask; < 0.70 routes to WhatsApp and then Backlog if unresolved
 5. Anti-duplicates enforced in 3 layers: MD5 hash per extract (Capa 1), MD5 hash per movement (Capa 2), GET Alegra post-POST verification (Capa 3)
 6. Individual movements classified via chat: user describes, agent proposes journal, user confirms, POST /journals executes with verification
@@ -71,9 +76,9 @@
 **Requirements mapped:** FACT-01, FACT-02, FACT-03, INGR-01, INGR-02
 
 **Success Criteria** (what must be TRUE):
-1. Invoice created in Alegra (POST /invoices) with item format "[Modelo] [Color] - VIN: [x] / Motor: [x]" — VIN and motor mandatory; invoice blocked if missing or status != "disponible"
+1. Invoice created in Alegra (POST /invoices) with item format "[Modelo] [Color] - VIN: [x] / Motor: [x]" -- VIN and motor mandatory; invoice blocked if missing or status != "disponible"
 2. Successful invoice triggers cascade: inventario_motos status -> "vendida", loanbook created as "pendiente_entrega", event "factura.venta.creada" published, WhatsApp Template 5 sent
-3. Loan payment requires dual operation: POST /payments (against invoice) + POST /journals (income journal) — both verified with request_with_verify(), cuota marked paid only after BOTH succeed
+3. Loan payment requires dual operation: POST /payments (against invoice) + POST /journals (income journal) -- both verified with request_with_verify(), cuota marked paid only after BOTH succeed
 4. Non-operational income (recovered motos, bank interest) registered as journal with correct account from plan_ingresos_roddos
 
 **Plans:** TBD
@@ -94,7 +99,7 @@
 1. Unresolved movements (confidence < 0.70, Alegra errors, unclassifiable) inserted into backlog_movimientos with fecha, banco, descripcion, monto, razon_pendiente, intentos
 2. Backlog page displays visible badge count in sidebar, filterable by banco/fecha/razon, sortable by antiguedad
 3. Manual "Causar" from Backlog: select cuenta + optional retenciones -> POST /journals -> request_with_verify() -> on success: movement exits Backlog; on failure: returns with updated error reason
-4. CFO constructs P&L by reading directly from Alegra (GET /journals + /invoices + /payments + /categories) — never from MongoDB
+4. CFO constructs P&L by reading directly from Alegra (GET /journals + /invoices + /payments + /categories) -- never from MongoDB
 5. P&L separates devengado (Seccion A) from caja real (Seccion B); CXC socios excluded from P&L (balance sheet only); IVA cuatrimestral
 
 **Plans:** TBD
@@ -107,27 +112,27 @@
 
 | Phase | Name | Requirements | Status |
 |-------|------|--------------|--------|
-| 1 | Foundation & Architecture | 6 | Not started |
+| 1 | Foundation & Architecture | 6 | Planned (3 plans ready) |
 | 2 | Core Accounting Operations | 11 | Not started |
 | 3 | Revenue & Invoicing | 5 | Not started |
 | 4 | Operations & Financial Reporting | 5 | Not started |
 
-**Total:** 4 phases, 27 requirements mapped, 0 plans created
+**Total:** 4 phases, 27 requirements mapped, 3 plans created (Phase 1)
 
 ---
 
 ## Dependencies
 
 ```
-Phase 1 (Foundation) ──┐
-                       ├──> Phase 2 (Core Accounting)
-                       │         ↓
-                       │    Phase 3 (Revenue) ──┐
-                       │                        ├──> Phase 4 (Operations & Reporting)
-                       └────────────────────────┘
+Phase 1 (Foundation) --+
+                       +--> Phase 2 (Core Accounting)
+                       |         |
+                       |    Phase 3 (Revenue) --+
+                       |                        +--> Phase 4 (Operations & Reporting)
+                       +------------------------+
 ```
 
-**Execution order:** 1 → 2 → 3 → 4
+**Execution order:** 1 -> 2 -> 3 -> 4
 
 Phase 1 must complete before any other phase starts. Phase 2 can start once Phase 1 completes. Phase 3 depends on Phase 1 + 2. Phase 4 depends on all three prior phases (requires foundation, accounting ops, and revenue ops to be complete).
 
@@ -167,10 +172,11 @@ Phase 1 must complete before any other phase starts. Phase 2 can start once Phas
 | PL-01 | P&L Automatico | 4 | CFO P&L read from Alegra (not MongoDB) |
 | PL-02 | P&L Automatico | 4 | P&L sections (devengado/caja, CXC exclusion, IVA) |
 
-**Total:** 27/27 requirements mapped ✓  
-**Coverage:** 100%  
+**Total:** 27/27 requirements mapped
+**Coverage:** 100%
 **Orphaned:** 0
 
 ---
 
 *Roadmap created: 2026-04-09*
+*Phase 1 plans created: 2026-04-09*
