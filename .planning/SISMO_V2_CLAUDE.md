@@ -24,6 +24,29 @@
 - Especificación completa: .planning/SISMO_V2_Fase0_Fase1.md
 - Todo lo demás es Backlog de proyecto
 
+## ROG-4 — Alegra es la fuente canónica (INAMOVIBLE)
+
+Alegra es el ERP contable-legal de RODDOS. SISMO es el cerebro operativo que trabaja SOBRE Alegra.
+
+FLUJO SISMO → ALEGRA (escritura):
+El Agente Contador recibe instrucciones del usuario, razona el asiento contable correcto
+(cuenta, retenciones, monto), y envía a Alegra la instrucción de causación:
+- POST /journals — causar gastos, ingresos, CXC, nómina
+- POST /invoices — crear facturas de venta con VIN
+- POST /payments — registrar pagos de cuotas
+Alegra recibe, procesa contablemente, y retorna el ID del registro creado.
+
+FLUJO ALEGRA → SISMO (lectura):
+Alegra retorna información construida contablemente que SISMO consume:
+- GET /categories — plan de cuentas 233 NIIF (NO viene de MongoDB)
+- GET /journals — journals para construir P&L
+- GET /invoices — facturas para el CFO
+- GET /payments — pagos para cartera
+El CFO, el RADAR y todos los agentes leen DE Alegra, no de MongoDB.
+
+MongoDB es almacenamiento operativo temporal (sesiones, cache, estado de jobs,
+loanbooks, inventario). NUNCA es fuente de verdad contable.
+
 ## Reglas de Oro — NUNCA violar
 
 ROG-1: Nunca reportar éxito sin verificar HTTP 200 en Alegra. request_with_verify() siempre. El juez es Alegra, no el agente.
@@ -31,6 +54,8 @@ ROG-1: Nunca reportar éxito sin verificar HTTP 200 en Alegra. request_with_veri
 ROG-2: Sin atajos. Cada build deja el sistema mejor. Sin deuda técnica.
 
 ROG-3: Todo funciona desde SISMO. PowerShell solo para lo estrictamente necesario.
+
+ROG-4: Alegra es la fuente canónica. MongoDB NO es el ERP. MongoDB NO recibe información contable. Ver sección ROG-4 arriba.
 
 ## Reglas Técnicas Permanentes
 
