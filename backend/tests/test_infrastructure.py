@@ -30,13 +30,13 @@ class TestToolUseNative:
             assert tool['input_schema']['type'] == 'object'
 
     def test_no_journal_entries_in_tool_definitions(self):
-        """NEVER /journal-entries — use /journals (ROG rule, Registro Canonico)."""
+        """NEVER /journal-entries as active endpoint — only allowed in NUNCA warnings."""
         for tool in CONTADOR_TOOLS:
             desc = tool.get('description', '')
-            assert 'journal-entries' not in desc, (
-                f"Tool '{tool['name']}' references /journal-entries -- "
-                "use /journals instead (403 on journal-entries)"
-            )
+            if 'journal-entries' in desc:
+                assert 'NUNCA' in desc, (
+                    f"Tool '{tool['name']}' references /journal-entries without NUNCA warning"
+                )
 
     def test_only_contador_has_tools(self):
         """D-05: CFO, RADAR, Loanbook get no tools in Phase 1."""
