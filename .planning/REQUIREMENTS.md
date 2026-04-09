@@ -109,39 +109,40 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| FOUND-01 | TBD | Pending |
-| FOUND-02 | TBD | Pending |
-| FOUND-03 | TBD | Pending |
-| FOUND-04 | TBD | Pending |
-| FOUND-05 | TBD | Pending |
-| FOUND-06 | TBD | Pending |
-| EGRE-01 | TBD | Pending |
-| EGRE-02 | TBD | Pending |
-| EGRE-03 | TBD | Pending |
-| EGRE-04 | TBD | Pending |
-| CONC-01 | TBD | Pending |
-| CONC-02 | TBD | Pending |
-| CONC-03 | TBD | Pending |
-| CONC-04 | TBD | Pending |
-| NOMI-01 | TBD | Pending |
-| CXC-01 | TBD | Pending |
-| CXC-02 | TBD | Pending |
-| FACT-01 | TBD | Pending |
-| FACT-02 | TBD | Pending |
-| FACT-03 | TBD | Pending |
-| INGR-01 | TBD | Pending |
-| INGR-02 | TBD | Pending |
-| BACK-01 | TBD | Pending |
-| BACK-02 | TBD | Pending |
-| BACK-03 | TBD | Pending |
-| PL-01 | TBD | Pending |
-| PL-02 | TBD | Pending |
+| FOUND-01 | 1 | Pending |
+| FOUND-02 | 1 | Pending |
+| FOUND-03 | 1 | Pending |
+| FOUND-04 | 1 | Pending |
+| FOUND-05 | 1 | Pending |
+| FOUND-06 | 1 | Pending |
+| EGRE-01 | 2 | Pending |
+| EGRE-02 | 2 | Pending |
+| EGRE-03 | 2 | Pending |
+| EGRE-04 | 2 | Pending |
+| CONC-01 | 2 | Pending |
+| CONC-02 | 2 | Pending |
+| CONC-03 | 2 | Pending |
+| CONC-04 | 2 | Pending |
+| NOMI-01 | 2 | Pending |
+| CXC-01 | 2 | Pending |
+| CXC-02 | 2 | Pending |
+| FACT-01 | 3 | Pending |
+| FACT-02 | 3 | Pending |
+| FACT-03 | 3 | Pending |
+| INGR-01 | 3 | Pending |
+| INGR-02 | 3 | Pending |
+| BACK-01 | 4 | Pending |
+| BACK-02 | 4 | Pending |
+| BACK-03 | 4 | Pending |
+| PL-01 | 4 | Pending |
+| PL-02 | 4 | Pending |
 
 **Coverage:**
 - Milestone 1 requirements: 27 total
-- Mapped to phases: 0
-- Unmapped: 27 (pending roadmap creation)
+- Mapped to phases: 27 (100%)
+- Unmapped: 0
 
 ---
+
 *Requirements defined: 2026-04-09*
-*Last updated: 2026-04-09 after initial definition*
+*Traceability updated: 2026-04-09 after roadmap creation*
