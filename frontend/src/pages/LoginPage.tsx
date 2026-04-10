@@ -1,12 +1,16 @@
 import { useState, type FormEvent } from 'react'
+import { Navigate, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/lib/auth'
 
 export default function LoginPage() {
-  const { login } = useAuth()
+  const { user, login } = useAuth()
+  const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+
+  if (user) return <Navigate to="/chat" replace />
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -14,6 +18,7 @@ export default function LoginPage() {
     setLoading(true)
     try {
       await login(email, password)
+      navigate('/chat', { replace: true })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error de inicio de sesion')
     } finally {
