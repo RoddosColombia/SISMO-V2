@@ -8,7 +8,9 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from core.database import get_db
 from core.auth import get_current_user
-from agents.chat import process_chat
+from services.alegra.client import AlegraClient
+from agents.chat import process_chat, execute_approved_action
+from agents.contador.handlers import ToolDispatcher
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -33,6 +35,8 @@ async def chat_endpoint(
     current_user: dict = Depends(get_current_user),
 ):
     """Stream agent response as Server-Sent Events."""
+    alegra = AlegraClient(db=db)
+    dispatcher = ToolDispatcher(alegra=alegra, db=db, event_bus=None)
     return StreamingResponse(
         process_chat(
             message=request.message,
@@ -41,6 +45,7 @@ async def chat_endpoint(
             session_id=request.session_id,
             current_agent=request.current_agent,
             correlation_id=request.correlation_id,
+            dispatcher=dispatcher,
         ),
         media_type="text/event-stream",
         headers={
@@ -58,8 +63,6 @@ async def approve_plan(
 ):
     """
     Execute or cancel a pending tool action from ExecutionCard.
-    The actual tool execution logic is implemented in Phase 2+ per each tool.
-    For Phase 1: validates the pending action exists and returns a stub response.
 
     Security (T-02-02): tool_input comes from agent_sessions (set by agent), not from
     request body -- user cannot inject arbitrary tool_input via this endpoint.
@@ -68,8 +71,6 @@ async def approve_plan(
     if not session or not session.get("pending_action"):
         raise HTTPException(status_code=404, detail="No hay accion pendiente para esta sesion.")
 
-    pending = session["pending_action"]
-
     if not request.confirmed:
         await db.agent_sessions.update_one(
             {"session_id": request.session_id},
@@ -77,14 +78,7 @@ async def approve_plan(
         )
         return {"status": "cancelado", "message": "Accion cancelada por el usuario."}
 
-    # Phase 1: Return the pending action for confirmation (tool execution in Phase 2+)
-    # The tool executor will be wired here in subsequent plans
-    return {
-        "status": "pendiente_ejecucion",
-        "tool_name": pending["tool_name"],
-        "tool_input": pending["tool_input"],
-        "message": (
-            f"Accion '{pending['tool_name']}' confirmada. "
-            "La ejecucion se implementa en la siguiente fase."
-        ),
-    }
+    alegra = AlegraClient(db=db)
+    dispatcher = ToolDispatcher(alegra=alegra, db=db, event_bus=None)
+    result = await execute_approved_action(request.session_id, db, dispatcher)
+    return result

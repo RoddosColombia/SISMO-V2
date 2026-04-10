@@ -238,13 +238,13 @@ class ToolDispatcher:
         # Wave 4: ingresos + CXC
         try:
             from agents.contador.handlers.ingresos import (
-                handle_registrar_pago_cuota,
+                handle_registrar_ingreso_cuota,
                 handle_registrar_ingreso_no_operacional,
                 handle_registrar_cxc_socio,
                 handle_consultar_cxc_socios,
             )
             self._handlers.update({
-                "registrar_pago_cuota": handle_registrar_pago_cuota,
+                "registrar_pago_cuota": handle_registrar_ingreso_cuota,
                 "registrar_ingreso_no_operacional": handle_registrar_ingreso_no_operacional,
                 "registrar_cxc_socio": handle_registrar_cxc_socio,
                 "consultar_cxc_socios": handle_consultar_cxc_socios,
@@ -277,7 +277,6 @@ class ToolDispatcher:
                 handle_calcular_retenciones,
             )
             from agents.contador.handlers.cartera import (
-                handle_registrar_pago_cuota,
                 handle_consultar_cartera,
                 handle_consultar_catalogo_roddos,
             )
@@ -285,7 +284,7 @@ class ToolDispatcher:
                 "registrar_nomina_mensual": handle_registrar_nomina_mensual,
                 "consultar_obligaciones_tributarias": handle_consultar_obligaciones_tributarias,
                 "calcular_retenciones": handle_calcular_retenciones,
-                "registrar_pago_cuota": handle_registrar_pago_cuota,
+                # registrar_pago_cuota mapped in Wave 4 to ingresos dual-op handler
                 "consultar_cartera": handle_consultar_cartera,
                 "consultar_catalogo_roddos": handle_consultar_catalogo_roddos,
             })
