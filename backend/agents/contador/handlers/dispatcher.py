@@ -26,13 +26,13 @@ READ_ONLY_TOOLS = frozenset({
     "consultar_catalogo_roddos",
 })
 
-# Conciliation tools are stubs until Phase 3
+# Conciliation tools — now implemented in Phase 3
 CONCILIATION_TOOLS = frozenset({
-    "cargar_extracto_bancario",
-    "clasificar_movimiento_bancario",
-    "consultar_estado_conciliacion",
-    "reintentar_movimiento",
-    "consultar_backlog_movimientos",
+    "conciliar_extracto_bancario",
+    "clasificar_movimiento",
+    "enviar_movimiento_backlog",
+    "causar_desde_backlog",
+    "consultar_movimientos_pendientes",
 })
 
 
@@ -279,8 +279,6 @@ class ToolDispatcher:
             from agents.contador.handlers.cartera import (
                 handle_registrar_pago_cuota,
                 handle_consultar_cartera,
-            )
-            from agents.contador.handlers.catalogo import (
                 handle_consultar_catalogo_roddos,
             )
             self._handlers.update({
@@ -294,14 +292,26 @@ class ToolDispatcher:
         except ImportError:
             pass
 
-    async def dispatch(self, tool_name: str, tool_input: dict, user_id: str) -> dict:
-        if is_conciliation_tool(tool_name):
-            return {
-                "success": True,
-                "message": "Conciliación bancaria disponible en Phase 3",
-                "phase": 3,
-            }
+        # Phase 3: conciliacion bancaria
+        try:
+            from agents.contador.handlers.conciliacion import (
+                handle_conciliar_extracto_bancario,
+                handle_clasificar_movimiento,
+                handle_enviar_movimiento_backlog,
+                handle_causar_desde_backlog,
+                handle_consultar_movimientos_pendientes,
+            )
+            self._handlers.update({
+                "conciliar_extracto_bancario": handle_conciliar_extracto_bancario,
+                "clasificar_movimiento": handle_clasificar_movimiento,
+                "enviar_movimiento_backlog": handle_enviar_movimiento_backlog,
+                "causar_desde_backlog": handle_causar_desde_backlog,
+                "consultar_movimientos_pendientes": handle_consultar_movimientos_pendientes,
+            })
+        except ImportError:
+            pass
 
+    async def dispatch(self, tool_name: str, tool_input: dict, user_id: str) -> dict:
         handler = self._handlers.get(tool_name)
         if not handler:
             return {"success": False, "error": f"Handler no encontrado: {tool_name}"}
