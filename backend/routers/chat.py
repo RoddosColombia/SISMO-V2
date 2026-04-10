@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from core.database import get_db
+from core.auth import get_current_user
 from agents.chat import process_chat
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
@@ -29,6 +30,7 @@ class ApproveRequest(BaseModel):
 async def chat_endpoint(
     request: ChatRequest,
     db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
 ):
     """Stream agent response as Server-Sent Events."""
     return StreamingResponse(
@@ -52,6 +54,7 @@ async def chat_endpoint(
 async def approve_plan(
     request: ApproveRequest,
     db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     Execute or cancel a pending tool action from ExecutionCard.

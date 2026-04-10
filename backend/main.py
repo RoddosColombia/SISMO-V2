@@ -2,6 +2,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from core.database import lifespan
+from routers.auth import router as auth_router
 from routers.chat import router as chat_router
 from routers.conciliacion import router as conciliacion_router
 from routers.backlog import router as backlog_router
@@ -16,6 +17,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_router)
 app.include_router(chat_router)
 app.include_router(conciliacion_router)
 app.include_router(backlog_router)
