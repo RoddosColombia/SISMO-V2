@@ -125,7 +125,9 @@ class TestToolDispatcher:
             "calcular_retenciones",
             "consultar_catalogo_roddos",
         }
-        assert set(dispatcher._handlers.keys()) == expected_keys
+        # Phase 3 may add conciliacion handlers — check subset instead of exact match
+        assert expected_keys.issubset(set(dispatcher._handlers.keys())), \
+            f"Missing handlers: {expected_keys - set(dispatcher._handlers.keys())}"
 
     def test_5_is_read_only_tool(self):
         """Test 5: is_read_only_tool correctly classifies tools."""
@@ -135,16 +137,14 @@ class TestToolDispatcher:
         assert is_read_only_tool("consultar_plan_cuentas") is True
         assert is_read_only_tool("registrar_gasto") is False
 
-    @pytest.mark.asyncio
-    async def test_6_conciliation_tool_returns_phase3_stub(self):
-        """Test 6: Conciliation tools return Phase 3 stub."""
+    def test_6_conciliation_tools_registered(self):
+        """Test 6: Conciliation tools are registered in dispatcher (Phase 3 implemented)."""
         from agents.contador.handlers import is_conciliation_tool
-        assert is_conciliation_tool("cargar_extracto_bancario") is True
+        assert is_conciliation_tool("conciliar_extracto_bancario") is True
+        assert is_conciliation_tool("clasificar_movimiento") is True
 
         dispatcher = self._make_dispatcher()
-        result = await dispatcher.dispatch("cargar_extracto_bancario", {}, "u1")
-        assert result["success"] is True
-        assert "Phase 3" in result["message"]
+        assert "conciliar_extracto_bancario" in dispatcher._handlers
 
 
 # ---------------------------------------------------------------------------

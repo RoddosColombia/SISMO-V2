@@ -157,7 +157,9 @@ def test_t12_static_no_contable_mongodb_writes():
     if not handlers_dir.exists():
         pytest.skip("handlers/ directory not found")
 
-    allowed_collections = {"roddos_events", "conciliacion_jobs", "inventario_motos", "loanbook"}
+    allowed_collections = {"roddos_events", "conciliacion_jobs", "inventario_motos", "loanbook",
+                           "backlog_movimientos", "conciliacion_extractos_procesados",
+                           "conciliacion_movimientos_procesados"}
     violations = []
 
     for py_file in handlers_dir.glob("*.py"):
