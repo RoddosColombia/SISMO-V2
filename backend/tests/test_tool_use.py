@@ -196,9 +196,9 @@ def test_write_tool_mentions_request_with_verify(tool_name):
 def test_catalogo_contains_all_gasto_ids():
     catalogo = next(t for t in CONTADOR_TOOLS if t['name'] == 'catalogo_cuentas_roddos')
     desc = catalogo['description']
-    gasto_ids = ['5462', '5470', '5471', '5472', '5480', '5484', '5487',
-                 '5490', '5491', '5493', '5497', '5500', '5501', '5505',
-                 '5508', '5510', '5533']
+    gasto_ids = ['5462', '5475', '5471', '5472', '5480', '5485', '5487',
+                 '5492', '5497', '5499', '5507', '5508', '5509', '5494',
+                 '5486']
     for gid in gasto_ids:
         assert gid in desc, f"catalogo missing gasto ID {gid}"
 
@@ -206,14 +206,20 @@ def test_catalogo_contains_all_gasto_ids():
 def test_catalogo_contains_retencion_ids():
     catalogo = next(t for t in CONTADOR_TOOLS if t['name'] == 'catalogo_cuentas_roddos')
     desc = catalogo['description']
-    assert '236505' in desc, "catalogo missing ReteFuente ID 236505"
-    assert '236560' in desc, "catalogo missing ReteICA ID 236560"
+    # Real Alegra retención IDs (per type, not NIIF codes)
+    assert '5381' in desc, "catalogo missing ReteFuente honorarios 10% ID 5381"
+    assert '5382' in desc, "catalogo missing ReteFuente honorarios 11% ID 5382"
+    assert '5383' in desc, "catalogo missing ReteFuente servicios 4% ID 5383"
+    assert '5386' in desc, "catalogo missing ReteFuente arriendo 3.5% ID 5386"
+    assert '5388' in desc, "catalogo missing ReteFuente compras 2.5% ID 5388"
+    assert '5392' in desc, "catalogo missing ReteICA ID 5392"
 
 
 def test_catalogo_contains_banco_ids():
     catalogo = next(t for t in CONTADOR_TOOLS if t['name'] == 'catalogo_cuentas_roddos')
     desc = catalogo['description']
-    banco_ids = ['111005', '111010', '111015', '111020', '11100507']
+    # Real Alegra bank category IDs
+    banco_ids = ['5314', '5315', '5319', '5322', '5321', '5536']
     for bid in banco_ids:
         assert bid in desc, f"catalogo missing banco ID {bid}"
 

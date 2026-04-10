@@ -3,7 +3,8 @@ Wave 6 — 2 cartera handlers + 1 catalogo handler.
 
 REGLAS:
 - Cartera reads from MongoDB loanbook (operational data, allowed)
-- Pago cuota: POST /payments + POST /journals (dual operation, same as Wave 4)
+- Pago cuota: POST /payments en Alegra + publish event (Loanbook listener actualiza MongoDB)
+- Contador SOLO escribe en Alegra + publica eventos (ROG-4 reforzada)
 - Catalogo: returns embedded catalog from tools.py description (no API call)
 """
 import datetime
@@ -13,9 +14,10 @@ from services.alegra.client import AlegraClient
 from core.permissions import validate_write_permission
 from core.events import publish_event
 
-BANCO_IDS = {
-    "Bancolombia": 111005, "BBVA": 111010, "Davivienda": 111015,
-    "Banco de Bogotá": 111020, "Banco de Bogota": 111020, "Global66": 11100507,
+# Alegra bank-account IDs for POST /payments
+BANCO_PAYMENT_IDS = {
+    "Bancolombia": 5, "BBVA": 10, "Davivienda": 3,
+    "Banco de Bogotá": 5, "Banco de Bogota": 5, "Global66": 5,
 }
 
 
@@ -34,7 +36,7 @@ async def handle_registrar_pago_cuota(
     banco = tool_input["banco"]
     numero_cuota = tool_input.get("numero_cuota", "?")
     fecha = tool_input.get("fecha") or datetime.date.today().isoformat()
-    banco_id = BANCO_IDS.get(banco, 111005)
+    banco_id = BANCO_PAYMENT_IDS.get(banco, 5)
 
     loanbook = await db.loanbook.find_one({"loanbook_id": loanbook_id})
     if not loanbook:
@@ -52,17 +54,18 @@ async def handle_registrar_pago_cuota(
     }
     result = await alegra.request_with_verify("payments", "POST", payload=payment_payload)
 
-    # Update cuota in loanbook (operational, allowed)
-    await db.loanbook.update_one(
-        {"loanbook_id": loanbook_id, f"cuotas.{numero_cuota}.estado": {"$ne": "pagada"}},
-        {"$set": {f"cuotas.{numero_cuota}.estado": "pagada", f"cuotas.{numero_cuota}.fecha_pago": fecha}},
-    )
-
+    # Publish event — Loanbook listener handles cuota state update in MongoDB
     await publish_event(
         db=db,
         event_type="pago.cuota.registrado",
         source="agente_contador",
-        datos={"loanbook_id": loanbook_id, "cuota": numero_cuota, "monto": monto, "payment_id": result["_alegra_id"]},
+        datos={
+            "loanbook_id": loanbook_id,
+            "cuota": numero_cuota,
+            "monto": monto,
+            "payment_id": result["_alegra_id"],
+            "fecha_pago": fecha,
+        },
         alegra_id=result["_alegra_id"],
         accion_ejecutada=f"Pago cuota {numero_cuota} {loanbook_id} — ${monto:,.0f}",
     )
@@ -111,22 +114,41 @@ async def handle_consultar_catalogo_roddos(
         "success": True,
         "data": {
             "gastos": {
-                5462: "Sueldos 510506", 5470: "Honorarios", 5471: "Seguridad Social",
-                5472: "Dotaciones", 5480: "Arrendamientos 512010", 5484: "Servicios Públicos",
-                5487: "Teléfono/Internet 513535", 5490: "Mantenimiento", 5491: "Transporte",
-                5493: "Gastos Generales (FALLBACK)", 5497: "Útiles Papelería 519530",
-                5500: "Publicidad", 5501: "Eventos", 5505: "ICA",
-                5508: "Comisiones Bancarias 530515", 5510: "Seguros", 5533: "Intereses 615020",
+                "5462": "Sueldos y salarios (510506)", "5475": "Asesoría jurídica (511025)",
+                "5476": "Asesoría financiera (511030)", "5471": "Aportes ARL (510568)",
+                "5472": "Aportes pensiones (510570)", "5473": "Aportes cajas (510572)",
+                "5480": "Arrendamientos (512010)", "5485": "Acueducto (513525)",
+                "5486": "Energía eléctrica (313530)", "5487": "Teléfono/Internet (513535)",
+                "5492": "Construcciones (514510)", "5497": "Útiles papelería (519530)",
+                "5499": "Taxis y buses (519545)", "5507": "Gastos bancarios (530505)",
+                "5508": "Comisiones bancarias (530515)", "5509": "Gravamen 4x1000 (531520)",
+                "5494": "FALLBACK Deudores (51991001) — bajo Gastos Generales",
             },
-            "retenciones": {236505: "ReteFuente practicada", 236560: "ReteICA practicada"},
-            "bancos": {111005: "Bancolombia", 111010: "BBVA", 111015: "Davivienda", 111020: "Banco de Bogotá", 11100507: "Global66"},
+            "retenciones_por_pagar": {
+                "5381": "Ret honorarios 10%", "5382": "Ret honorarios 11%",
+                "5383": "Ret servicios 4%", "5386": "Ret arriendo 3.5%",
+                "5388": "Ret compras 2.5%", "5392": "RteIca 11,04", "5393": "RteIca 9,66",
+            },
+            "bancos_journal": {
+                "5314": "Bancolombia 2029", "5315": "Bancolombia 2540",
+                "5318": "BBVA 0210", "5319": "BBVA 0212",
+                "5322": "Davivienda 482", "5321": "Banco de Bogota",
+                "5536": "Global 66",
+            },
+            "cxc": {
+                "5329": "CXC Socios (132505)", "5327": "Créditos Directos Roddos (13050502)",
+            },
+            "ingresos": {
+                "5456": "Créditos Directos Roddos (41502001)", "5442": "Motos (41350501)",
+                "5436": "Otros ingresos (42)",
+            },
             "tasas_2026": {
                 "arriendo": "3.5%", "servicios": "4%", "honorarios_pn": "10%",
                 "honorarios_pj": "11%", "compras": "2.5% (base >$1.344.573)", "reteica": "0.414%",
             },
             "autoretenedores": ["860024781 (Auteco)"],
             "socios": {"80075452": "Andrés Sanjuan", "80086601": "Iván Echeverri"},
-            "nota": "NUNCA usar ID 5495. IVA cuatrimestral (ene-abr/may-ago/sep-dic).",
+            "nota": "NUNCA usar ID 5495 ni 5493 (accumulative). IVA cuatrimestral (ene-abr/may-ago/sep-dic).",
         },
-        "message": "Catálogo de cuentas RODDOS cargado.",
+        "message": "Catálogo de cuentas RODDOS con IDs reales de Alegra.",
     }

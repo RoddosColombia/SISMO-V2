@@ -83,17 +83,28 @@ async def test_t4_factura_sin_vin_bloqueada(mock_alegra, mock_db):
         assert "VIN" in result["error"]
 
 
-# T5: Factura venta moto con VIN → inventario + loanbook
+# T5: Factura venta moto con VIN → event published (no direct MongoDB writes)
 @pytest.mark.asyncio
 async def test_t5_factura_con_vin_cascade(mock_alegra, mock_db):
     from agents.contador.handlers.facturacion import handle_crear_factura_venta_moto
     tool_input = {"cliente_nombre": "Juan", "cliente_cedula": "123", "moto_vin": "TEST123", "plan": "P52S"}
     with patch("agents.contador.handlers.facturacion.validate_write_permission"):
-        with patch("agents.contador.handlers.facturacion.publish_event", new_callable=AsyncMock):
+        with patch("agents.contador.handlers.facturacion.publish_event", new_callable=AsyncMock) as mock_pub:
             result = await handle_crear_factura_venta_moto(tool_input, mock_alegra, mock_db, mock_db, "u1")
             assert result["success"] is True
-            mock_db.inventario_motos.update_one.assert_called_once()
-            mock_db.loanbook.insert_one.assert_called_once()
+            mock_pub.assert_called_once()
+            call_kwargs = mock_pub.call_args.kwargs
+            assert call_kwargs["event_type"] == "factura.venta.creada"
+            datos = call_kwargs["datos"]
+            assert datos["factura_id"] == "555"
+            assert datos["cliente_nombre"] == "Juan"
+            assert datos["cliente_cedula"] == "123"
+            assert datos["vin"] == "TEST123"
+            assert datos["motor"] == "M456"
+            assert datos["modelo"] == "TVS Sport"
+            assert datos["color"] == "Rojo"
+            assert datos["plan"] == "P52S"
+            assert "fecha" in datos
 
 
 # T6: Consulta P&L → retorna datos sin error

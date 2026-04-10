@@ -108,7 +108,7 @@ async def test_ingreso_no_op_reads_account(mock_alegra, mock_db):
             mock_db.plan_ingresos_roddos.find_one.assert_called()
 
 
-# --- Test 6: Ingreso no op fails if account not found ---
+# --- Test 6: Ingreso no op uses fallback "5436" if account not found ---
 
 @pytest.mark.asyncio
 async def test_ingreso_no_op_account_not_found(mock_alegra, mock_db):
@@ -116,9 +116,14 @@ async def test_ingreso_no_op_account_not_found(mock_alegra, mock_db):
     mock_db.plan_ingresos_roddos.find_one = AsyncMock(return_value=None)
     tool_input = {"tipo": "tipo_desconocido", "monto": 10000, "banco": "BBVA", "descripcion": "Test"}
     with patch("agents.contador.handlers.ingresos.validate_write_permission"):
-        result = await handle_registrar_ingreso_no_operacional(tool_input, mock_alegra, mock_db, mock_db, "user1")
-        assert result["success"] is False
-        assert "no encontrada" in result["error"]
+        with patch("agents.contador.handlers.ingresos.publish_event", new_callable=AsyncMock):
+            result = await handle_registrar_ingreso_no_operacional(tool_input, mock_alegra, mock_db, mock_db, "user1")
+            # Now uses fallback "5436" (Otros ingresos) instead of failing
+            assert result["success"] is True
+            call_args = mock_alegra.request_with_verify.call_args
+            payload = call_args.kwargs.get("payload", {})
+            credit_ids = [e["id"] for e in payload.get("entries", []) if e.get("credit", 0) > 0]
+            assert "5436" in credit_ids, "Fallback should use 5436 (Otros ingresos)"
 
 
 # --- Test 7: CXC socio debits CXC account ---
@@ -131,12 +136,13 @@ async def test_cxc_socio_debits_cxc(mock_alegra, mock_db):
         with patch("agents.contador.handlers.ingresos.publish_event", new_callable=AsyncMock) as mock_pub:
             result = await handle_registrar_cxc_socio(tool_input, mock_alegra, mock_db, mock_db, "user1")
             assert result["success"] is True
-            # Verify the payload uses CXC account (1305), not gasto (5493)
+            # Verify the payload uses CXC account ("1305" from mock or "5329" hardcoded), not gasto
             call_args = mock_alegra.request_with_verify.call_args
             payload = call_args.kwargs.get("payload", {})
-            debit_ids = [e["account"]["id"] for e in payload.get("entries", []) if e.get("debit", 0) > 0]
-            assert 1305 in debit_ids, f"CXC account 1305 not in debit entries: {debit_ids}"
-            assert 5493 not in debit_ids, "Gasto fallback 5493 should NOT be in CXC debit"
+            debit_ids = [e["id"] for e in payload.get("entries", []) if e.get("debit", 0) > 0]
+            # mock_db returns alegra_id=1305 from plan_cuentas_roddos, handler converts to str
+            assert "1305" in debit_ids, f"CXC account 1305 not in debit entries: {debit_ids}"
+            assert "5494" not in debit_ids, "Gasto fallback 5494 should NOT be in CXC debit"
 
 
 # --- Test 8: Unknown CC rejected ---

@@ -5,10 +5,9 @@ REGLAS:
 - VIN y motor OBLIGATORIOS en factura de venta moto — sin ellos NO facturar
 - Formato item: "[Modelo] [Color] - VIN: [chasis] / Motor: [motor]"
 - Moto debe estar en estado "disponible" — bloqueo total si no
-- Factura exitosa: inventario → Vendida, loanbook creado, evento publicado
-- Anulacion: inventario → Disponible, loanbook → cancelado, evento publicado
-- NUNCA escribir datos contables en MongoDB (ROG-4)
-- Escrituras MongoDB PERMITIDAS: inventario_motos (operativo), loanbook (operativo)
+- Contador SOLO escribe en Alegra + publica eventos (ROG-4 reforzada)
+- DataKeeper/Loanbook listeners manejan cascadas MongoDB via eventos
+- CERO escrituras directas a inventario_motos o loanbook desde Contador
 """
 import datetime
 from typing import Any
@@ -17,9 +16,10 @@ from services.alegra.client import AlegraClient
 from core.permissions import validate_write_permission
 from core.events import publish_event
 
-BANCO_IDS = {
-    "Bancolombia": 111005, "BBVA": 111010, "Davivienda": 111015,
-    "Banco de Bogotá": 111020, "Banco de Bogota": 111020, "Global66": 11100507,
+# Alegra category IDs for journal entries (not used in facturacion but kept for reference)
+BANCO_CATEGORY_IDS = {
+    "Bancolombia": "5314", "BBVA": "5319", "Davivienda": "5322",
+    "Banco de Bogotá": "5321", "Banco de Bogota": "5321", "Global66": "5536",
 }
 
 
@@ -72,31 +72,23 @@ async def handle_crear_factura_venta_moto(
     result = await alegra.request_with_verify("invoices", "POST", payload=invoice_payload)
     factura_id = result["_alegra_id"]
 
-    # Cascade 1: Update inventory — moto → Vendida (operational write, allowed)
-    await db.inventario_motos.update_one(
-        {"vin": moto_vin},
-        {"$set": {"estado": "Vendida", "fecha_venta": fecha, "factura_alegra_id": factura_id}},
-    )
-
-    # Cascade 2: Create loanbook (operational write, allowed)
-    await db.loanbook.insert_one({
-        "loanbook_id": f"LB-{factura_id}",
-        "factura_alegra_id": factura_id,
-        "cliente_nombre": cliente_nombre,
-        "cliente_cedula": cliente_cedula,
-        "moto_vin": moto_vin,
-        "plan": plan,
-        "cuota_inicial": cuota_inicial,
-        "estado": "pendiente_entrega",
-        "fecha_creacion": fecha,
-    })
-
-    # Cascade 3: Event
+    # Publish event — DataKeeper/Loanbook listeners handle MongoDB cascades
     await publish_event(
         db=db,
         event_type="factura.venta.creada",
         source="agente_contador",
-        datos={"factura_id": factura_id, "cliente": cliente_nombre, "vin": moto_vin, "plan": plan},
+        datos={
+            "factura_id": factura_id,
+            "cliente_nombre": cliente_nombre,
+            "cliente_cedula": cliente_cedula,
+            "vin": moto_vin,
+            "motor": motor,
+            "modelo": modelo,
+            "color": color,
+            "plan": plan,
+            "cuota_inicial": cuota_inicial,
+            "fecha": fecha,
+        },
         alegra_id=factura_id,
         accion_ejecutada=f"Factura #{factura_id} — {item_desc}",
     )
@@ -147,18 +139,7 @@ async def handle_anular_factura(
     except Exception as e:
         return {"success": False, "error": f"Error anulando factura en Alegra: {str(e)}"}
 
-    # Reverse cascade 1: inventory → Disponible
-    await db.inventario_motos.update_one(
-        {"factura_alegra_id": str(invoice_id)},
-        {"$set": {"estado": "Disponible", "fecha_venta": None, "factura_alegra_id": None}},
-    )
-
-    # Reverse cascade 2: loanbook → cancelado
-    await db.loanbook.update_one(
-        {"factura_alegra_id": str(invoice_id)},
-        {"$set": {"estado": "cancelado"}},
-    )
-
+    # Publish event — DataKeeper/Loanbook listeners handle MongoDB reversals
     await publish_event(
         db=db,
         event_type="factura.venta.anulada",

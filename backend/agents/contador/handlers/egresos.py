@@ -20,37 +20,40 @@ from core.events import publish_event
 from services.retenciones import calcular_retenciones
 
 SOCIOS_CC = {"80075452": "Andrés Sanjuan", "80086601": "Iván Echeverri"}
+CXC_SOCIOS_ALEGRA_ID = "5329"  # 132505 Cuentas por cobrar a socios y accionistas
+FALLBACK_GASTO_ID = "5494"     # 51991001 Deudores (hijo de Gastos Generales) — NUNCA 5495
 
-BANCO_IDS = {
-    "Bancolombia": 111005,
-    "BBVA": 111010,
-    "Davivienda": 111015,
-    "Banco de Bogotá": 111020,
-    "Banco de Bogota": 111020,
-    "Global66": 11100507,
+# Alegra category IDs for journal entries — NOT NIIF codes
+BANCO_CATEGORY_IDS = {
+    "Bancolombia": "5314",      # 11100501 Bancolombia 2029
+    "BBVA": "5319",             # 11100506 BBVA 0212
+    "Davivienda": "5322",       # 11200502 Davivienda 482
+    "Banco de Bogotá": "5321",  # 11200501 Banco de Bogota
+    "Banco de Bogota": "5321",
+    "Global66": "5536",         # 11100507 Global 66
 }
 
 TIPO_GASTO_MAP = {
-    "arriend": ("arriendo", 5480),
-    "servicio": ("servicios", 5484),
-    "honorar": ("honorarios_pn", 5470),
-    "telefon": ("servicios", 5487),
-    "internet": ("servicios", 5487),
-    "seguro": ("servicios", 5510),
-    "mantenim": ("servicios", 5490),
-    "transport": ("servicios", 5491),
-    "papeler": ("servicios", 5497),
-    "publicid": ("servicios", 5500),
-    "comision": ("servicios", 5508),
-    "interes": ("servicios", 5533),
+    "arriend": ("arriendo", "5480"),       # 512010 Arrendamientos
+    "servicio": ("servicios", "5484"),     # 513520 Procesamiento Datos
+    "honorar": ("honorarios_pn", "5475"),  # 511025 Asesoría jurídica
+    "telefon": ("servicios", "5487"),      # 513535 Teléfono/Internet
+    "internet": ("servicios", "5487"),
+    "seguro": ("servicios", "5494"),       # Fallback — no cuenta Seguros en Alegra
+    "mantenim": ("servicios", "5492"),     # 514510 Construcciones y Edificaciones
+    "transport": ("servicios", "5499"),    # 519545 Taxis y buses
+    "papeler": ("servicios", "5497"),      # 519530 Útiles, papelería
+    "publicid": ("servicios", "5494"),     # Fallback — no cuenta Publicidad en Alegra
+    "comision": ("servicios", "5508"),     # 530515 Comisiones
+    "interes": ("servicios", "5507"),      # 530505 Gastos bancarios
 }
 
 TIPO_RECURRENTE_MAP = {
-    "arriendo": ("arriendo", 5480),
-    "servicios_publicos": ("servicios", 5484),
-    "telefonia": ("servicios", 5487),
-    "seguros": ("servicios", 5510),
-    "mantenimiento": ("servicios", 5490),
+    "arriendo": ("arriendo", "5480"),              # 512010 Arrendamientos
+    "servicios_publicos": ("servicios", "5485"),   # 513525 Acueducto/Servicios Públicos
+    "telefonia": ("servicios", "5487"),            # 513535 Teléfono/Internet
+    "seguros": ("servicios", "5494"),              # Fallback — no cuenta Seguros en Alegra
+    "mantenimiento": ("servicios", "5492"),        # 514510 Construcciones
 }
 
 
@@ -65,27 +68,27 @@ def _detect_socio(tool_input: dict) -> str | None:
     return None
 
 
-def _classify_gasto(descripcion: str, tipo_persona: str | None = None) -> tuple[str, int]:
-    """Classify expense type and account ID from description."""
+def _classify_gasto(descripcion: str, tipo_persona: str | None = None) -> tuple[str, str]:
+    """Classify expense type and Alegra category ID from description."""
     desc_lower = descripcion.lower()
     for keyword, (tipo, cuenta) in TIPO_GASTO_MAP.items():
         if keyword in desc_lower:
             if keyword == "honorar" and tipo_persona == "juridica":
                 return "honorarios_pj", cuenta
             return tipo, cuenta
-    return "servicios", 5493  # FALLBACK — NUNCA 5495
+    return "servicios", FALLBACK_GASTO_ID
 
 
-def _build_entries(cuenta_gasto: int, monto: float, banco_id: int, ret: dict) -> list[dict]:
-    """Build balanced journal entries with retenciones."""
+def _build_entries(cuenta_gasto: str, monto: float, banco_id: str, ret: dict) -> list[dict]:
+    """Build balanced journal entries with retenciones. Uses real Alegra category IDs."""
     entries = [
-        {"account": {"id": cuenta_gasto}, "debit": monto, "credit": 0},
-        {"account": {"id": banco_id}, "debit": 0, "credit": ret["neto_a_pagar"]},
+        {"id": cuenta_gasto, "debit": monto, "credit": 0},
+        {"id": banco_id, "debit": 0, "credit": ret["neto_a_pagar"]},
     ]
     if ret["retefuente_monto"] > 0:
-        entries.append({"account": {"id": 236505}, "debit": 0, "credit": ret["retefuente_monto"]})
+        entries.append({"id": ret["retefuente_alegra_id"], "debit": 0, "credit": ret["retefuente_monto"]})
     if ret["reteica_monto"] > 0:
-        entries.append({"account": {"id": 236560}, "debit": 0, "credit": ret["reteica_monto"]})
+        entries.append({"id": ret["reteica_alegra_id"], "debit": 0, "credit": ret["reteica_monto"]})
     return entries
 
 
@@ -136,7 +139,7 @@ async def handle_crear_causacion(
 
     validate_write_permission("contador", "POST /journals", "alegra")
 
-    entries = [{"account": {"id": e["id"]}, "debit": e["debit"], "credit": e["credit"]} for e in raw_entries]
+    entries = [{"id": str(e["id"]), "debit": e["debit"], "credit": e["credit"]} for e in raw_entries]
     result = await _post_journal(entries, tool_input["date"], tool_input["observations"], alegra)
 
     await publish_event(
@@ -170,7 +173,7 @@ async def handle_registrar_gasto(
     validate_write_permission("contador", "POST /journals", "alegra")
 
     monto = tool_input["monto"]
-    banco_id = BANCO_IDS.get(tool_input["banco"], 111005)
+    banco_id = BANCO_CATEGORY_IDS.get(tool_input["banco"], "5314")
     fecha = tool_input.get("fecha") or datetime.date.today().isoformat()
     descripcion = tool_input["descripcion"]
     nit = tool_input.get("proveedor_nit")
@@ -180,8 +183,8 @@ async def handle_registrar_gasto(
     if socio_cc:
         socio_name = SOCIOS_CC[socio_cc]
         entries = [
-            {"account": {"id": 1305}, "debit": monto, "credit": 0},  # CXC Socio
-            {"account": {"id": banco_id}, "debit": 0, "credit": monto},
+            {"id": CXC_SOCIOS_ALEGRA_ID, "debit": monto, "credit": 0},  # 132505 CXC Socios
+            {"id": banco_id, "debit": 0, "credit": monto},
         ]
         result = await _post_journal(entries, fecha, f"CXC Socio {socio_name}: {descripcion}", alegra)
         await publish_event(
@@ -234,9 +237,9 @@ async def handle_registrar_gasto_recurrente(
     validate_write_permission("contador", "POST /journals", "alegra")
 
     tipo_gasto = tool_input["tipo_gasto"]
-    tipo, cuenta_gasto = TIPO_RECURRENTE_MAP.get(tipo_gasto, ("servicios", 5493))
+    tipo, cuenta_gasto = TIPO_RECURRENTE_MAP.get(tipo_gasto, ("servicios", FALLBACK_GASTO_ID))
     monto = tool_input["monto"]
-    banco_id = BANCO_IDS.get(tool_input["banco"], 111005)
+    banco_id = BANCO_CATEGORY_IDS.get(tool_input["banco"], "5314")
     fecha = tool_input.get("fecha") or datetime.date.today().isoformat()
     nit = tool_input.get("proveedor_nit")
     periodo = tool_input.get("periodo", "")
@@ -320,7 +323,7 @@ async def handle_causar_movimiento_bancario(
 
     descripcion = tool_input["descripcion"]
     monto = tool_input["monto"]
-    banco_id = BANCO_IDS.get(tool_input.get("banco", ""), 111005)
+    banco_id = BANCO_CATEGORY_IDS.get(tool_input.get("banco", ""), "5314")
     fecha = tool_input.get("fecha") or datetime.date.today().isoformat()
     nit = tool_input.get("proveedor_nit")
 
@@ -365,8 +368,8 @@ async def handle_registrar_ajuste_contable(
     fecha = tool_input.get("fecha") or datetime.date.today().isoformat()
 
     entries = [
-        {"account": {"id": cuenta_destino}, "debit": monto, "credit": 0},
-        {"account": {"id": cuenta_origen}, "debit": 0, "credit": monto},
+        {"id": str(cuenta_destino), "debit": monto, "credit": 0},
+        {"id": str(cuenta_origen), "debit": 0, "credit": monto},
     ]
     result = await _post_journal(entries, fecha, f"Ajuste: {motivo}", alegra)
 
@@ -405,8 +408,8 @@ async def handle_registrar_depreciacion(
     fecha = tool_input.get("fecha") or datetime.date.today().isoformat()
 
     entries = [
-        {"account": {"id": 5493}, "debit": monto, "credit": 0},  # Gasto depreciacion
-        {"account": {"id": 5493}, "debit": 0, "credit": monto},  # Contra activo (fallback)
+        {"id": "5502", "debit": monto, "credit": 0},  # 516015 Depreciación Equipo de oficina
+        {"id": "5358", "debit": 0, "credit": monto},  # 15921501 Depreciación acumulada Eq oficina
     ]
     result = await _post_journal(entries, fecha, f"Depreciación {activo} {periodo}", alegra)
 

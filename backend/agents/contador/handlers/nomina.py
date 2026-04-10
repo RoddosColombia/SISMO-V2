@@ -15,10 +15,15 @@ from core.permissions import validate_write_permission
 from core.events import publish_event
 from services.retenciones import calcular_retenciones, AUTORETENEDORES
 
-BANCO_IDS = {
-    "Bancolombia": 111005, "BBVA": 111010, "Davivienda": 111015,
-    "Banco de Bogotá": 111020, "Banco de Bogota": 111020, "Global66": 11100507,
+# Alegra category IDs for journal entries
+BANCO_CATEGORY_IDS = {
+    "Bancolombia": "5314", "BBVA": "5319", "Davivienda": "5322",
+    "Banco de Bogotá": "5321", "Banco de Bogota": "5321", "Global66": "5536",
 }
+
+# Alegra IDs for retención accounts used in read queries
+RETEFUENTE_ACCOUNT_IDS = {"5381", "5382", "5383", "5384", "5386", "5388"}
+RETEICA_ACCOUNT_IDS = {"5392", "5393"}
 
 IVA_CUATRIMESTRES = {
     1: "ene-abr", 2: "ene-abr", 3: "ene-abr", 4: "ene-abr",
@@ -41,7 +46,7 @@ async def handle_registrar_nomina_mensual(
     anio = tool_input["anio"]
     empleados = tool_input["empleados"]
     banco = tool_input.get("banco", "Bancolombia")
-    banco_id = BANCO_IDS.get(banco, 111005)
+    banco_id = BANCO_CATEGORY_IDS.get(banco, "5314")
 
     resultados = []
     for emp in empleados:
@@ -61,31 +66,19 @@ async def handle_registrar_nomina_mensual(
                 resultados.append({"nombre": nombre, "status": "duplicado", "error": f"Nómina {nombre} {mes}/{anio} ya registrada"})
                 continue
 
-        entries = [
-            {"account": {"id": 5462}, "debit": salario, "credit": 0},  # Sueldos
-        ]
-        total_credit = salario
-        if seg_social > 0:
-            entries.append({"account": {"id": 5471}, "debit": seg_social, "credit": 0})  # Seg Social
-            total_credit += seg_social
-            entries[0]["debit"] = salario  # keep salary separate
-
-        entries.append({"account": {"id": banco_id}, "debit": 0, "credit": total_credit})
-
-        # Fix balance: total debit must equal total credit
         total_debit = salario + seg_social
         entries_final = [
-            {"account": {"id": 5462}, "debit": salario, "credit": 0},
+            {"id": "5462", "debit": salario, "credit": 0},  # Sueldos
         ]
         if seg_social > 0:
-            entries_final.append({"account": {"id": 5471}, "debit": seg_social, "credit": 0})
-        entries_final.append({"account": {"id": banco_id}, "debit": 0, "credit": total_debit})
+            entries_final.append({"id": "5471", "debit": seg_social, "credit": 0})  # Seg Social
+        entries_final.append({"id": str(banco_id), "debit": 0, "credit": total_debit})
 
         fecha = f"{anio}-{mes:02d}-28"
         payload = {
             "date": fecha,
             "observations": f"Nómina {nombre} {mes}/{anio}",
-            "entries": [{"account": {"id": e["account"]["id"]}, "debit": e["debit"], "credit": e["credit"]} for e in entries_final],
+            "entries": entries_final,
         }
         result = await alegra.request_with_verify("journals", "POST", payload=payload)
 
@@ -131,10 +124,10 @@ async def handle_consultar_obligaciones_tributarias(
         if isinstance(journals, list):
             for j in journals:
                 for entry in j.get("entries", []):
-                    acc_id = entry.get("account", {}).get("id")
-                    if acc_id == 236505:
+                    acc_id = str(entry.get("account", {}).get("id", ""))
+                    if acc_id in RETEFUENTE_ACCOUNT_IDS:
                         retefuente_total += entry.get("credit", 0)
-                    elif acc_id == 236560:
+                    elif acc_id in RETEICA_ACCOUNT_IDS:
                         reteica_total += entry.get("credit", 0)
 
         return {

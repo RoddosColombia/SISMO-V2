@@ -25,10 +25,11 @@ from services.anti_duplicados import (
 
 CONFIDENCE_THRESHOLD = 0.70
 
-BANCO_IDS = {
-    "Bancolombia": 111005, "BBVA": 111010, "Davivienda": 111015,
-    "Banco de Bogotá": 111020, "Banco de Bogota": 111020,
-    "Nequi": 111005, "Global66": 11100507,
+# Alegra category IDs for journal entries
+BANCO_CATEGORY_IDS = {
+    "Bancolombia": "5314", "BBVA": "5319", "Davivienda": "5322",
+    "Banco de Bogotá": "5321", "Banco de Bogota": "5321",
+    "Nequi": "5314", "Global66": "5536",
 }
 
 PARSERS = {
@@ -155,17 +156,17 @@ async def handle_conciliar_extracto_bancario(
         if classification["confianza"] >= CONFIDENCE_THRESHOLD:
             # Auto-cause
             try:
-                banco_id = BANCO_IDS.get(banco.capitalize(), 111005)
+                banco_id = BANCO_CATEGORY_IDS.get(banco.capitalize(), "5314")
                 ret = calcular_retenciones(classification["tipo"], mov["monto"])
 
                 entries = [
-                    {"account": {"id": classification["cuenta_id"]}, "debit": mov["monto"], "credit": 0},
-                    {"account": {"id": banco_id}, "debit": 0, "credit": ret["neto_a_pagar"]},
+                    {"id": str(classification["cuenta_id"]), "debit": mov["monto"], "credit": 0},
+                    {"id": str(banco_id), "debit": 0, "credit": ret["neto_a_pagar"]},
                 ]
                 if ret["retefuente_monto"] > 0:
-                    entries.append({"account": {"id": 236505}, "debit": 0, "credit": ret["retefuente_monto"]})
+                    entries.append({"id": ret["retefuente_alegra_id"], "debit": 0, "credit": ret["retefuente_monto"]})
                 if ret["reteica_monto"] > 0:
-                    entries.append({"account": {"id": 236560}, "debit": 0, "credit": ret["reteica_monto"]})
+                    entries.append({"id": ret["reteica_alegra_id"], "debit": 0, "credit": ret["reteica_monto"]})
 
                 payload = {
                     "date": mov["fecha"],
@@ -301,20 +302,20 @@ async def handle_causar_desde_backlog(
     if not mov:
         return {"success": False, "error": f"Movimiento {backlog_id} no encontrado en backlog."}
 
-    banco_id = BANCO_IDS.get(mov.get("banco", ""), 111005)
+    banco_id = BANCO_CATEGORY_IDS.get(mov.get("banco", ""), "5314")
     retenciones = tool_input.get("retenciones", {})
     retefuente = retenciones.get("retefuente", 0)
     reteica = retenciones.get("reteica", 0)
     neto = mov["monto"] - retefuente - reteica
 
     entries = [
-        {"account": {"id": cuenta_id}, "debit": mov["monto"], "credit": 0},
-        {"account": {"id": banco_id}, "debit": 0, "credit": neto},
+        {"id": str(cuenta_id), "debit": mov["monto"], "credit": 0},
+        {"id": str(banco_id), "debit": 0, "credit": neto},
     ]
     if retefuente > 0:
-        entries.append({"account": {"id": 236505}, "debit": 0, "credit": retefuente})
+        entries.append({"id": "5383", "debit": 0, "credit": retefuente})  # 23652501 Ret servicios 4% (default)
     if reteica > 0:
-        entries.append({"account": {"id": 236560}, "debit": 0, "credit": reteica})
+        entries.append({"id": "5392", "debit": 0, "credit": reteica})  # 23680501 RteIca
 
     try:
         payload = {

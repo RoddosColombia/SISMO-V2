@@ -90,10 +90,18 @@ async def test_factura_cascade_inventario_loanbook(mock_alegra, mock_db):
         with patch("agents.contador.handlers.facturacion.publish_event", new_callable=AsyncMock) as mock_pub:
             result = await handle_crear_factura_venta_moto(tool_input, mock_alegra, mock_db, mock_db, "u1")
             assert result["success"] is True
-            mock_db.inventario_motos.update_one.assert_called_once()
-            mock_db.loanbook.insert_one.assert_called_once()
+            # Contador no longer writes to inventario/loanbook — only publishes events
+            mock_db.inventario_motos.update_one.assert_not_called()
+            mock_db.loanbook.insert_one.assert_not_called()
             mock_pub.assert_called_once()
             assert mock_pub.call_args.kwargs["event_type"] == "factura.venta.creada"
+            datos = mock_pub.call_args.kwargs["datos"]
+            assert datos["factura_id"] == "777"
+            assert datos["vin"] == "9FL25AF31VDB95058"
+            assert datos["motor"] == "BF3AT18C2356"
+            assert datos["modelo"] == "TVS Raider 125"
+            assert datos["color"] == "Negro Nebulosa"
+            assert datos["plan"] == "P52S"
 
 
 @pytest.mark.asyncio
@@ -104,9 +112,14 @@ async def test_anular_factura_reverses_cascade(mock_alegra, mock_db):
         with patch("agents.contador.handlers.facturacion.publish_event", new_callable=AsyncMock) as mock_pub:
             result = await handle_anular_factura(tool_input, mock_alegra, mock_db, mock_db, "u1")
             assert result["success"] is True
-            mock_db.inventario_motos.update_one.assert_called_once()
-            mock_db.loanbook.update_one.assert_called_once()
+            # Contador no longer writes to inventario/loanbook — only publishes events
+            mock_db.inventario_motos.update_one.assert_not_called()
+            mock_db.loanbook.update_one.assert_not_called()
+            mock_pub.assert_called_once()
             assert mock_pub.call_args.kwargs["event_type"] == "factura.venta.anulada"
+            datos = mock_pub.call_args.kwargs["datos"]
+            assert datos["invoice_id"] == 777
+            assert datos["motivo"] == "Error en datos"
 
 
 @pytest.mark.asyncio

@@ -18,6 +18,17 @@ TASAS_RETEFUENTE: dict[str, float] = {
     "compras": 0.025,
 }
 
+# Alegra category IDs for retención accounts (por pagar)
+RETEFUENTE_ALEGRA_IDS: dict[str, str] = {
+    "arriendo": "5386",       # 23653001 Retenciones arriendo 3.5%
+    "servicios": "5383",      # 23652501 Retenciones servicios 4%
+    "honorarios_pn": "5381",  # 23651501 Retenciones honorarios 10%
+    "honorarios_pj": "5382",  # 23651502 Retenciones honorarios 11%
+    "compras": "5388",        # 23654001 Retenciones compra 2.5%
+}
+
+RETEICA_ALEGRA_ID: str = "5392"  # 23680501 RteIca
+
 RETEICA_BOGOTA: float = 0.00414
 COMPRAS_BASE_MINIMA: float = 1_344_573.0
 
@@ -57,7 +68,9 @@ def calcular_retenciones(
     return {
         "retefuente_tasa": tasa_retefuente,
         "retefuente_monto": retefuente_monto,
+        "retefuente_alegra_id": RETEFUENTE_ALEGRA_IDS.get(tipo, "5383"),
         "reteica_tasa": RETEICA_BOGOTA,
         "reteica_monto": reteica_monto,
+        "reteica_alegra_id": RETEICA_ALEGRA_ID,
         "neto_a_pagar": neto_a_pagar,
     }

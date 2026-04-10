@@ -61,8 +61,9 @@ async def test_nomina_antidup_blocks_duplicate(mock_alegra, mock_db):
 @pytest.mark.asyncio
 async def test_obligaciones_cuatrimestral(mock_alegra, mock_db):
     from agents.contador.handlers.nomina import handle_consultar_obligaciones_tributarias
+    # Use real Alegra IDs: 5381=ReteFuente honorarios 10%, 5392=ReteICA
     mock_alegra.get = AsyncMock(return_value=[
-        {"entries": [{"account": {"id": 236505}, "credit": 50000}, {"account": {"id": 236560}, "credit": 5000}]}
+        {"entries": [{"account": {"id": 5381}, "credit": 50000}, {"account": {"id": 5392}, "credit": 5000}]}
     ])
     result = await handle_consultar_obligaciones_tributarias({"mes": 2, "anio": 2026}, mock_alegra, mock_db, mock_db, "u1")
     assert result["success"] is True
@@ -116,8 +117,8 @@ async def test_catalogo_roddos_returns_data(mock_alegra, mock_db):
     from agents.contador.handlers.cartera import handle_consultar_catalogo_roddos
     result = await handle_consultar_catalogo_roddos({}, mock_alegra, mock_db, mock_db, "u1")
     assert result["success"] is True
-    assert 5462 in result["data"]["gastos"]
-    assert 5493 in result["data"]["gastos"]
+    assert "5462" in result["data"]["gastos"]
+    assert "5494" in result["data"]["gastos"]  # FALLBACK is now 5494, not 5493
     assert "860024781" in str(result["data"]["autoretenedores"])
 
 

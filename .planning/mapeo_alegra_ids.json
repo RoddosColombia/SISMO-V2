@@ -1,0 +1,370 @@
+{
+  "_meta": {
+    "source": "GET /categories + GET /bank-accounts",
+    "date": "2026-04-10",
+    "total_categories": 230,
+    "usable_movement": 160
+  },
+  "bancos_category_ids": {
+    "Bancolombia_2029": {
+      "alegra_id": "5314",
+      "code": "11100501"
+    },
+    "Bancolombia_2540": {
+      "alegra_id": "5315",
+      "code": "11100502"
+    },
+    "BBVA_0210": {
+      "alegra_id": "5318",
+      "code": "11100505"
+    },
+    "BBVA_0212": {
+      "alegra_id": "5319",
+      "code": "11100506"
+    },
+    "Davivienda_482": {
+      "alegra_id": "5322",
+      "code": "11200502"
+    },
+    "Banco_de_Bogota_047": {
+      "alegra_id": "5321",
+      "code": "11200501"
+    },
+    "Global66": {
+      "alegra_id": "5536",
+      "code": "11100507"
+    },
+    "Caja_general": {
+      "alegra_id": "5310",
+      "code": "11050501"
+    },
+    "Caja_menor": {
+      "alegra_id": "5311",
+      "code": "11050502"
+    },
+    "Tarjeta_9942_mercadeo": {
+      "alegra_id": "5316",
+      "code": "11100503"
+    },
+    "Tarjeta_6588_admin": {
+      "alegra_id": "5317",
+      "code": "11100504"
+    }
+  },
+  "bancos_payment_ids": {
+    "10": {
+      "name": "BBVA 0212",
+      "number": "043202000212"
+    },
+    "9": {
+      "name": "Tarjeta debito prepago 6588 Admin",
+      "number": "4745540009216588"
+    },
+    "8": {
+      "name": "Tarjeta debito prepago 9942 mercadeo",
+      "number": "4745540078069942"
+    },
+    "7": {
+      "name": "BBVA 0210",
+      "number": "0432000210"
+    },
+    "6": {
+      "name": "Bancolombia 2540",
+      "number": "5400002540"
+    },
+    "5": {
+      "name": "Bancolombia 2029",
+      "number": "5400002029"
+    },
+    "4": {
+      "name": "Tarjeta debido Bancolombia 5386",
+      "number": null
+    },
+    "3": {
+      "name": "Banco Davivienda Sa cuenta ahorros 482",
+      "number": null
+    },
+    "2": {
+      "name": "Caja general",
+      "number": null
+    },
+    "1": {
+      "name": "Caja menor",
+      "number": null
+    }
+  },
+  "gastos": {
+    "Sueldos_510506": {
+      "alegra_id": "5462",
+      "code": "510506"
+    },
+    "Auxilio_transporte": {
+      "alegra_id": "5465",
+      "code": "510527"
+    },
+    "Cesantias": {
+      "alegra_id": "5466",
+      "code": "510530"
+    },
+    "Int_cesantias": {
+      "alegra_id": "5467",
+      "code": "510533"
+    },
+    "Prima_servicios": {
+      "alegra_id": "5468",
+      "code": "510536"
+    },
+    "Vacaciones": {
+      "alegra_id": "5469",
+      "code": "510539"
+    },
+    "Dotacion": {
+      "alegra_id": "5470",
+      "code": "510551"
+    },
+    "Aportes_ARL": {
+      "alegra_id": "5471",
+      "code": "510568"
+    },
+    "Aportes_pensiones": {
+      "alegra_id": "5472",
+      "code": "510570"
+    },
+    "Aportes_cajas": {
+      "alegra_id": "5473",
+      "code": "510572"
+    },
+    "Asesoria_juridica": {
+      "alegra_id": "5475",
+      "code": "511025"
+    },
+    "Asesoria_financiera": {
+      "alegra_id": "5476",
+      "code": "511030"
+    },
+    "ICA": {
+      "alegra_id": "5478",
+      "code": "511505"
+    },
+    "Arrendamientos": {
+      "alegra_id": "5480",
+      "code": "512010"
+    },
+    "Aseo_vigilancia": {
+      "alegra_id": "5482",
+      "code": "513505"
+    },
+    "Asistencia_tecnica": {
+      "alegra_id": "5483",
+      "code": "513515"
+    },
+    "Procesamiento_datos": {
+      "alegra_id": "5484",
+      "code": "513520"
+    },
+    "Acueducto": {
+      "alegra_id": "5485",
+      "code": "513525"
+    },
+    "Energia_electrica": {
+      "alegra_id": "5486",
+      "code": "313530"
+    },
+    "Telefono_internet": {
+      "alegra_id": "5487",
+      "code": "513535"
+    },
+    "Correo": {
+      "alegra_id": "5488",
+      "code": "513540"
+    },
+    "Notariales": {
+      "alegra_id": "5490",
+      "code": "514005"
+    },
+    "Registro_mercantil": {
+      "alegra_id": "5491",
+      "code": "514010"
+    },
+    "Construcciones": {
+      "alegra_id": "5492",
+      "code": "514510"
+    },
+    "Deudores": {
+      "alegra_id": "5494",
+      "code": "51991001"
+    },
+    "Gastos_representacion_NUNCA": {
+      "alegra_id": "5495",
+      "code": "519520"
+    },
+    "Aseo_cafeteria": {
+      "alegra_id": "5496",
+      "code": "519525"
+    },
+    "Utiles_papeleria": {
+      "alegra_id": "5497",
+      "code": "519530"
+    },
+    "Combustibles": {
+      "alegra_id": "5498",
+      "code": "519535"
+    },
+    "Taxis_buses": {
+      "alegra_id": "5499",
+      "code": "519545"
+    },
+    "Parqueaderos": {
+      "alegra_id": "5500",
+      "code": "519565"
+    },
+    "Depreciacion_oficina": {
+      "alegra_id": "5502",
+      "code": "516015"
+    },
+    "Depreciacion_computo": {
+      "alegra_id": "5503",
+      "code": "516020"
+    },
+    "Gastos_bancarios": {
+      "alegra_id": "5507",
+      "code": "530505"
+    },
+    "Comisiones_bancarias": {
+      "alegra_id": "5508",
+      "code": "530515"
+    },
+    "Gravamen_4x1000": {
+      "alegra_id": "5509",
+      "code": "531520"
+    }
+  },
+  "gastos_generales_fallback": {
+    "WARNING": "ID 5493 (Gastos Generales code 5195) es ACCUMULATIVE — no se puede postear directamente",
+    "fallback_sugerido": "5494 (Deudores 51991001) — unico hijo movement bajo 5493 que no es 5495"
+  },
+  "retenciones_por_pagar": {
+    "honorarios_10": {
+      "alegra_id": "5381",
+      "code": "23651501"
+    },
+    "honorarios_11": {
+      "alegra_id": "5382",
+      "code": "23651502"
+    },
+    "servicios_4": {
+      "alegra_id": "5383",
+      "code": "23652501"
+    },
+    "servicios_6": {
+      "alegra_id": "5384",
+      "code": "23652502"
+    },
+    "arriendo_3_5": {
+      "alegra_id": "5386",
+      "code": "23653001"
+    },
+    "compras_2_5": {
+      "alegra_id": "5388",
+      "code": "23654001"
+    },
+    "compras_3_5": {
+      "alegra_id": "5389",
+      "code": "23654002"
+    },
+    "reteiva": {
+      "alegra_id": "5390",
+      "code": "236705"
+    },
+    "reteica_11_04": {
+      "alegra_id": "5392",
+      "code": "23680501"
+    },
+    "reteica_9_66": {
+      "alegra_id": "5393",
+      "code": "23680502"
+    },
+    "otro": {
+      "alegra_id": "5380",
+      "code": "2369"
+    }
+  },
+  "cxc": {
+    "clientes_nacionales": {
+      "alegra_id": "5326",
+      "code": "13050501"
+    },
+    "creditos_directos_roddos": {
+      "alegra_id": "5327",
+      "code": "13050502"
+    },
+    "socios_accionistas": {
+      "alegra_id": "5329",
+      "code": "132505"
+    }
+  },
+  "ingresos": {
+    "ventas_vehiculos": {
+      "alegra_id": "5438",
+      "code": "413501"
+    },
+    "motos": {
+      "alegra_id": "5442",
+      "code": "41350501"
+    },
+    "repuestos": {
+      "alegra_id": "5444",
+      "code": "41350601"
+    },
+    "creditos_directos_roddos": {
+      "alegra_id": "5456",
+      "code": "41502001"
+    },
+    "otros_ingresos": {
+      "alegra_id": "5436",
+      "code": "42"
+    }
+  },
+  "inventario": {
+    "motos": {
+      "alegra_id": "5348",
+      "code": "14350101"
+    },
+    "repuestos": {
+      "alegra_id": "5349",
+      "code": "14350102"
+    },
+    "accesorios": {
+      "alegra_id": "5350",
+      "code": "14350103"
+    }
+  },
+  "costo_ventas": {
+    "motos": {
+      "alegra_id": "5520",
+      "code": "61350501"
+    },
+    "repuestos": {
+      "alegra_id": "5522",
+      "code": "61350601"
+    },
+    "creditos_directos": {
+      "alegra_id": "5534",
+      "code": "61502001"
+    }
+  },
+  "patrimonio": {
+    "capital_social": {
+      "alegra_id": "5421",
+      "code": "310505"
+    },
+    "utilidad_ejercicio": {
+      "alegra_id": "5431",
+      "code": "360505"
+    },
+    "ganancias_acumuladas": {
+      "alegra_id": "5434",
+      "code": "370505"
+    }
+  }
+}

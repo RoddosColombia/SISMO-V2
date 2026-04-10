@@ -159,10 +159,10 @@ async def test_registrar_gasto_banco_mapping(mock_alegra, mock_db, mock_event_bu
             result = await handle_registrar_gasto(tool_input, mock_alegra, mock_db, mock_event_bus, "user1")
             call_args = mock_alegra.request_with_verify.call_args
             payload = call_args.kwargs.get("payload") or call_args[1].get("payload") or (call_args[0][2] if len(call_args[0]) > 2 else None)
-            # Verify BBVA bank ID 111010 appears in entries
+            # Verify BBVA bank ID "5319" appears in credit entries
             if payload and "entries" in payload:
-                bank_ids = [e["account"]["id"] for e in payload["entries"] if e.get("credit", 0) > 0]
-                assert 111010 in bank_ids
+                bank_ids = [e["id"] for e in payload["entries"] if e.get("credit", 0) > 0]
+                assert "5319" in bank_ids
 
 
 @pytest.mark.asyncio
@@ -175,7 +175,9 @@ async def test_registrar_gasto_auteco_no_retefuente(mock_alegra, mock_db, mock_e
             call_args = mock_alegra.request_with_verify.call_args
             payload = call_args.kwargs.get("payload") or call_args[1].get("payload") or (call_args[0][2] if len(call_args[0]) > 2 else None)
             if payload and "entries" in payload:
-                retefuente_entries = [e for e in payload["entries"] if e["account"]["id"] == 236505]
+                # ReteFuente IDs: 5381, 5382, 5383, 5386, 5388
+                retefuente_ids = {"5381", "5382", "5383", "5386", "5388"}
+                retefuente_entries = [e for e in payload["entries"] if e["id"] in retefuente_ids]
                 assert len(retefuente_entries) == 0, "Auteco should have NO ReteFuente entry"
 
 

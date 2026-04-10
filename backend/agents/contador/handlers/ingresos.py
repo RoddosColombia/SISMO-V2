@@ -21,13 +21,27 @@ SOCIOS: dict[str, str] = {
     "80086601": "Iván Echeverri",
 }
 
-BANCO_IDS: dict[str, int] = {
-    "Bancolombia": 111005,
-    "BBVA": 111010,
-    "Davivienda": 111015,
-    "Banco de Bogotá": 111020,
-    "Banco de Bogota": 111020,
-    "Global66": 11100507,
+CXC_SOCIOS_ALEGRA_ID = "5329"             # 132505 Cuentas por cobrar a socios
+INGRESO_CREDITOS_RODDOS_ID = "5456"       # 41502001 Creditos Directos Roddos
+
+# Alegra category IDs for journal entries
+BANCO_CATEGORY_IDS: dict[str, str] = {
+    "Bancolombia": "5314",      # 11100501 Bancolombia 2029
+    "BBVA": "5319",             # 11100506 BBVA 0212
+    "Davivienda": "5322",       # 11200502 Davivienda 482
+    "Banco de Bogotá": "5321",  # 11200501 Banco de Bogota
+    "Banco de Bogota": "5321",
+    "Global66": "5536",         # 11100507 Global 66
+}
+
+# Alegra bank-account IDs for POST /payments
+BANCO_PAYMENT_IDS: dict[str, int] = {
+    "Bancolombia": 5,    # Bancolombia 2029
+    "BBVA": 10,          # BBVA 0212
+    "Davivienda": 3,     # Davivienda 482
+    "Banco de Bogotá": 5,  # Fallback Bancolombia (no bank-account for Bogota)
+    "Banco de Bogota": 5,
+    "Global66": 5,       # Fallback Bancolombia (no bank-account for Global66)
 }
 
 
@@ -50,7 +64,8 @@ async def handle_registrar_ingreso_cuota(
     banco = tool_input["banco"]
     numero_cuota = tool_input.get("numero_cuota", "?")
     fecha = tool_input.get("fecha") or datetime.date.today().isoformat()
-    banco_id = BANCO_IDS.get(banco, 111005)
+    banco_category_id = BANCO_CATEGORY_IDS.get(banco, "5314")
+    banco_payment_id = BANCO_PAYMENT_IDS.get(banco, 5)
 
     # Look up invoice from loanbook (MongoDB operational data — allowed)
     loanbook = await db.loanbook.find_one({"loanbook_id": loanbook_id})
@@ -60,11 +75,11 @@ async def handle_registrar_ingreso_cuota(
     if not invoice_alegra_id:
         return {"success": False, "error": f"Loanbook {loanbook_id} no tiene factura Alegra vinculada"}
 
-    # Operation 1: POST /payments
+    # Operation 1: POST /payments (uses bank-account ID, not category ID)
     try:
         payment_payload = {
             "date": fecha,
-            "bankAccount": {"id": banco_id},
+            "bankAccount": {"id": banco_payment_id},
             "invoiceId": invoice_alegra_id,
             "amount": monto,
             "observations": f"Pago cuota {numero_cuota} — loanbook {loanbook_id}",
@@ -76,17 +91,12 @@ async def handle_registrar_ingreso_cuota(
 
     # Operation 2: POST /journals — only if payment succeeded
     try:
-        ingreso_account = await db.plan_ingresos_roddos.find_one({"tipo": "ingresos_financieros"})
-        ingreso_id = ingreso_account["alegra_id"] if ingreso_account else None
-        if not ingreso_id:
-            return {"success": False, "error": f"Pago registrado (ID {payment_id}) pero cuenta de ingresos financieros no configurada. Revisar manualmente."}
-
         journal_payload = {
             "date": fecha,
             "observations": f"Ingreso cuota {numero_cuota} — loanbook {loanbook_id}",
             "entries": [
-                {"account": {"id": banco_id}, "debit": monto, "credit": 0},
-                {"account": {"id": ingreso_id}, "debit": 0, "credit": monto},
+                {"id": banco_category_id, "debit": monto, "credit": 0},
+                {"id": INGRESO_CREDITOS_RODDOS_ID, "debit": 0, "credit": monto},
             ],
         }
         journal_result = await alegra.request_with_verify("journals", "POST", payload=journal_payload)
@@ -133,20 +143,18 @@ async def handle_registrar_ingreso_no_operacional(
     banco = tool_input.get("banco", "Bancolombia")
     fecha = tool_input.get("fecha") or datetime.date.today().isoformat()
     descripcion = tool_input.get("descripcion", f"Ingreso no operacional — {tipo}")
-    banco_id = BANCO_IDS.get(banco, 111005)
+    banco_category_id = BANCO_CATEGORY_IDS.get(banco, "5314")
 
-    # Read ingreso account from plan_ingresos_roddos (not hardcoded)
+    # Read ingreso account from plan_ingresos_roddos, fallback to otros_ingresos
     ingreso_account = await db.plan_ingresos_roddos.find_one({"tipo": tipo})
-    if not ingreso_account:
-        return {"success": False, "error": f"Cuenta de ingreso para tipo '{tipo}' no encontrada en plan_ingresos_roddos"}
-    ingreso_id = ingreso_account["alegra_id"]
+    ingreso_id = ingreso_account["alegra_id"] if ingreso_account else "5436"  # 42 Otros ingresos
 
     journal_payload = {
         "date": fecha,
         "observations": descripcion,
         "entries": [
-            {"account": {"id": banco_id}, "debit": monto, "credit": 0},
-            {"account": {"id": ingreso_id}, "debit": 0, "credit": monto},
+            {"id": banco_category_id, "debit": monto, "credit": 0},
+            {"id": str(ingreso_id), "debit": 0, "credit": monto},
         ],
     }
     result = await alegra.request_with_verify("journals", "POST", payload=journal_payload)
@@ -189,22 +197,20 @@ async def handle_registrar_cxc_socio(
     banco = tool_input.get("banco", "Bancolombia")
     fecha = tool_input.get("fecha") or datetime.date.today().isoformat()
     descripcion = tool_input.get("descripcion", f"Retiro personal socio {nombre_socio}")
-    banco_id = BANCO_IDS.get(banco, 111005)
+    banco_category_id = BANCO_CATEGORY_IDS.get(banco, "5314")
 
-    # CXC account from plan_cuentas_roddos
+    # CXC Socios — real Alegra ID, fallback to hardcoded 5329 (132505)
     cxc_record = await db.plan_cuentas_roddos.find_one({"tipo": "cxc_socios", "cc": cc})
     if not cxc_record:
         cxc_record = await db.plan_cuentas_roddos.find_one({"tipo": "cxc_socios"})
-    if not cxc_record:
-        return {"success": False, "error": f"Cuenta CXC Socios no configurada en plan_cuentas_roddos para CC {cc}"}
-    cxc_id = cxc_record["alegra_id"]
+    cxc_id = cxc_record["alegra_id"] if cxc_record else CXC_SOCIOS_ALEGRA_ID
 
     journal_payload = {
         "date": fecha,
         "observations": f"CXC Socio {nombre_socio} — {descripcion}",
         "entries": [
-            {"account": {"id": cxc_id}, "debit": monto, "credit": 0},
-            {"account": {"id": banco_id}, "debit": 0, "credit": monto},
+            {"id": str(cxc_id), "debit": monto, "credit": 0},
+            {"id": banco_category_id, "debit": 0, "credit": monto},
         ],
     }
     result = await alegra.request_with_verify("journals", "POST", payload=journal_payload)
