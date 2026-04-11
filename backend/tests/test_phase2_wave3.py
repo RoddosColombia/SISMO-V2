@@ -159,10 +159,10 @@ async def test_registrar_gasto_banco_mapping(mock_alegra, mock_db, mock_event_bu
             result = await handle_registrar_gasto(tool_input, mock_alegra, mock_db, mock_event_bus, "user1")
             call_args = mock_alegra.request_with_verify.call_args
             payload = call_args.kwargs.get("payload") or call_args[1].get("payload") or (call_args[0][2] if len(call_args[0]) > 2 else None)
-            # Verify BBVA bank ID "5319" appears in credit entries
+            # Verify BBVA 0210 bank ID "5318" appears in credit entries (default BBVA)
             if payload and "entries" in payload:
                 bank_ids = [e["id"] for e in payload["entries"] if e.get("credit", 0) > 0]
-                assert "5319" in bank_ids
+                assert "5318" in bank_ids
 
 
 @pytest.mark.asyncio

@@ -25,11 +25,16 @@ FALLBACK_GASTO_ID = "5494"     # 51991001 Deudores (hijo de Gastos Generales) �
 
 # Alegra category IDs for journal entries — NOT NIIF codes
 BANCO_CATEGORY_IDS = {
-    "Bancolombia": "5314",      # 11100501 Bancolombia 2029
-    "BBVA": "5319",             # 11100506 BBVA 0212
+    "Bancolombia": "5314",      # default Bancolombia 2029
+    "Bancolombia 2029": "5314",
+    "Bancolombia 2540": "5315",
+    "BBVA": "5318",             # default BBVA 0210
+    "BBVA 0210": "5318",
+    "BBVA 0212": "5319",
     "Davivienda": "5322",       # 11200502 Davivienda 482
     "Banco de Bogotá": "5321",  # 11200501 Banco de Bogota
     "Banco de Bogota": "5321",
+    "Bogota": "5321",
     "Global66": "5536",         # 11100507 Global 66
 }
 

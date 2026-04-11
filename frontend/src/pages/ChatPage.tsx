@@ -91,7 +91,11 @@ export default function ChatPage() {
     )
   }
 
+  const [approving, setApproving] = useState(false)
+
   async function handleApproval(confirmed: boolean) {
+    if (approving) return
+    setApproving(true)
     try {
       const res = await apiPost<{ status: string; message: string }>('/chat/approve-plan', {
         session_id: sessionId,
@@ -106,6 +110,8 @@ export default function ChatPage() {
         ...prev,
         { role: 'system', content: `Error: ${err instanceof Error ? err.message : 'Error'}` },
       ])
+    } finally {
+      setApproving(false)
     }
   }
 
@@ -143,13 +149,15 @@ export default function ChatPage() {
                   <div className="flex gap-2">
                     <button
                       onClick={() => handleApproval(true)}
-                      className="px-3 py-1 text-xs bg-neutral-900 text-white rounded hover:bg-neutral-800"
+                      disabled={approving}
+                      className="px-3 py-1 text-xs bg-neutral-900 text-white rounded hover:bg-neutral-800 disabled:opacity-50"
                     >
-                      Confirmar
+                      {approving ? 'Ejecutando...' : 'Confirmar'}
                     </button>
                     <button
                       onClick={() => handleApproval(false)}
-                      className="px-3 py-1 text-xs bg-white text-neutral-600 border border-neutral-300 rounded hover:bg-neutral-50"
+                      disabled={approving}
+                      className="px-3 py-1 text-xs bg-white text-neutral-600 border border-neutral-300 rounded hover:bg-neutral-50 disabled:opacity-50"
                     >
                       Cancelar
                     </button>

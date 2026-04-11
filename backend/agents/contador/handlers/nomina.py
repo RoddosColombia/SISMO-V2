@@ -17,8 +17,11 @@ from services.retenciones import calcular_retenciones, AUTORETENEDORES
 
 # Alegra category IDs for journal entries
 BANCO_CATEGORY_IDS = {
-    "Bancolombia": "5314", "BBVA": "5319", "Davivienda": "5322",
-    "Banco de Bogotá": "5321", "Banco de Bogota": "5321", "Global66": "5536",
+    "Bancolombia": "5314", "Bancolombia 2029": "5314", "Bancolombia 2540": "5315",
+    "BBVA": "5318", "BBVA 0210": "5318", "BBVA 0212": "5319",
+    "Davivienda": "5322",
+    "Banco de Bogotá": "5321", "Banco de Bogota": "5321", "Bogota": "5321",
+    "Global66": "5536",
 }
 
 # Alegra IDs for retención accounts used in read queries

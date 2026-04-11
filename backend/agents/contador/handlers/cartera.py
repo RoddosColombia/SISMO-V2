@@ -16,8 +16,11 @@ from core.events import publish_event
 
 # Alegra bank-account IDs for POST /payments
 BANCO_PAYMENT_IDS = {
-    "Bancolombia": 5, "BBVA": 10, "Davivienda": 3,
-    "Banco de Bogotá": 5, "Banco de Bogota": 5, "Global66": 5,
+    "Bancolombia": 5, "Bancolombia 2029": 5, "Bancolombia 2540": 6,
+    "BBVA": 7, "BBVA 0210": 7, "BBVA 0212": 10,
+    "Davivienda": 3,
+    "Banco de Bogotá": 5, "Banco de Bogota": 5, "Bogota": 5,
+    "Global66": 5,
 }
 
 

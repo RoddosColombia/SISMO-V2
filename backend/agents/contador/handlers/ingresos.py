@@ -26,19 +26,18 @@ INGRESO_CREDITOS_RODDOS_ID = "5456"       # 41502001 Creditos Directos Roddos
 
 # Alegra category IDs for journal entries
 BANCO_CATEGORY_IDS: dict[str, str] = {
-    "Bancolombia": "5314",      # 11100501 Bancolombia 2029
-    "BBVA": "5319",             # 11100506 BBVA 0212
-    "Davivienda": "5322",       # 11200502 Davivienda 482
-    "Banco de Bogotá": "5321",  # 11200501 Banco de Bogota
-    "Banco de Bogota": "5321",
-    "Global66": "5536",         # 11100507 Global 66
+    "Bancolombia": "5314", "Bancolombia 2029": "5314", "Bancolombia 2540": "5315",
+    "BBVA": "5318", "BBVA 0210": "5318", "BBVA 0212": "5319",
+    "Davivienda": "5322",
+    "Banco de Bogotá": "5321", "Banco de Bogota": "5321", "Bogota": "5321",
+    "Global66": "5536",
 }
 
 # Alegra bank-account IDs for POST /payments
 BANCO_PAYMENT_IDS: dict[str, int] = {
-    "Bancolombia": 5,    # Bancolombia 2029
-    "BBVA": 10,          # BBVA 0212
-    "Davivienda": 3,     # Davivienda 482
+    "Bancolombia": 5, "Bancolombia 2029": 5, "Bancolombia 2540": 6,
+    "BBVA": 7, "BBVA 0210": 7, "BBVA 0212": 10,
+    "Davivienda": 3,
     "Banco de Bogotá": 5,  # Fallback Bancolombia (no bank-account for Bogota)
     "Banco de Bogota": 5,
     "Global66": 5,       # Fallback Bancolombia (no bank-account for Global66)
