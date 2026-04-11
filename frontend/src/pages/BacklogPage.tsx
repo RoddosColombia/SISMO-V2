@@ -28,6 +28,8 @@ const CUENTAS_RODDOS = [
   { id: '5509', label: 'Gravamen 4x1000 (531520)' },
 ]
 
+const BANCOS = ['Bancolombia', 'BBVA', 'Davivienda', 'Nequi']
+
 export default function BacklogPage() {
   const [movimientos, setMovimientos] = useState<BacklogMovimiento[]>([])
   const [loading, setLoading] = useState(true)
@@ -59,7 +61,9 @@ export default function BacklogPage() {
     setCausarLoading(true)
     setCausarError('')
     try {
-      const data = await apiPost<{ success: boolean; error?: string }>(`/backlog/${causarTarget._id}/causar?cuenta_id=${cuentaId}&retefuente=${retefuente}&reteica=${reteica}`, {})
+      const data = await apiPost<{ success: boolean; error?: string }>(
+        `/backlog/${causarTarget._id}/causar?cuenta_id=${cuentaId}&retefuente=${retefuente}&reteica=${reteica}`, {}
+      )
       if (data.success) {
         setCausarTarget(null)
         fetchBacklog()
@@ -73,114 +77,143 @@ export default function BacklogPage() {
     }
   }
 
-  return (
-    <div className="p-6">
-      <h1 className="text-lg font-semibold text-neutral-900 mb-4">Backlog — Movimientos Pendientes</h1>
+  const pendientes = movimientos.length
 
-      <div className="flex gap-3 mb-4">
-        <select
-          value={banco}
-          onChange={(e) => setBanco(e.target.value)}
-          className="px-3 py-2 border border-neutral-300 rounded text-sm"
-        >
-          <option value="">Todos los bancos</option>
-          <option value="Bancolombia">Bancolombia</option>
-          <option value="BBVA">BBVA</option>
-          <option value="Davivienda">Davivienda</option>
-          <option value="Nequi">Nequi</option>
-        </select>
-        <button onClick={fetchBacklog} className="px-3 py-2 text-sm border border-neutral-300 rounded hover:bg-neutral-50">
-          Refrescar
-        </button>
+  return (
+    <div className="flex flex-col h-full bg-surface">
+      {/* Header */}
+      <div className="px-6 pt-6 pb-4">
+        <h1 className="font-display text-lg font-bold text-on-surface">Conciliacion</h1>
+        <p className="text-sm text-on-surface-variant mt-1">Movimientos pendientes de causar</p>
       </div>
 
-      {loading ? (
-        <p className="text-neutral-500">Cargando...</p>
-      ) : movimientos.length === 0 ? (
-        <p className="text-neutral-500">No hay movimientos pendientes.</p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b-2 border-neutral-200">
-                <th className="text-left p-2">Fecha</th>
-                <th className="text-left p-2">Banco</th>
-                <th className="text-left p-2">Descripcion</th>
-                <th className="text-right p-2">Monto</th>
-                <th className="text-left p-2">Razon</th>
-                <th className="text-center p-2">Int.</th>
-                <th className="p-2"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {movimientos.map((m) => (
-                <tr key={m._id} className="border-b border-neutral-100 hover:bg-neutral-50">
-                  <td className="p-2">{m.fecha}</td>
-                  <td className="p-2">{m.banco}</td>
-                  <td className="p-2 max-w-[300px] truncate">{m.descripcion}</td>
-                  <td className="p-2 text-right">${m.monto.toLocaleString('es-CO')}</td>
-                  <td className="p-2 text-xs text-neutral-500">{m.razon_pendiente}</td>
-                  <td className="p-2 text-center">{m.intentos}</td>
-                  <td className="p-2">
-                    <button
-                      onClick={() => { setCausarTarget(m); setCausarError('') }}
-                      className="px-3 py-1 text-xs bg-neutral-900 text-white rounded hover:bg-neutral-800"
-                    >
-                      Causar
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {/* Metrics */}
+      <div className="px-6 pb-4 flex gap-4">
+        <div className="bg-surface-container-lowest shadow-ambient-1 rounded-lg px-5 py-3 flex-1">
+          <div className="text-xs text-on-surface-variant">Pendientes</div>
+          <div className="font-display text-2xl font-bold text-on-surface">{pendientes}</div>
         </div>
-      )}
+        <div className="bg-surface-container-lowest shadow-ambient-1 rounded-lg px-5 py-3 flex-1">
+          <div className="text-xs text-on-surface-variant">Monto total</div>
+          <div className="font-display text-2xl font-bold text-on-surface">
+            ${movimientos.reduce((s, m) => s + m.monto, 0).toLocaleString('es-CO')}
+          </div>
+        </div>
+      </div>
 
-      {/* Causar Modal */}
+      {/* Filter tabs */}
+      <div className="px-6 pb-4 flex gap-2">
+        <button
+          onClick={() => setBanco('')}
+          className={`px-4 py-2 text-xs rounded-md transition-colors ${
+            banco === '' ? 'bg-primary text-white' : 'bg-surface-container-low text-on-surface-variant hover:bg-surface-container-lowest'
+          }`}
+        >
+          Todos
+        </button>
+        {BANCOS.map((b) => (
+          <button
+            key={b}
+            onClick={() => setBanco(b)}
+            className={`px-4 py-2 text-xs rounded-md transition-colors ${
+              banco === b ? 'bg-primary text-white' : 'bg-surface-container-low text-on-surface-variant hover:bg-surface-container-lowest'
+            }`}
+          >
+            {b}
+          </button>
+        ))}
+      </div>
+
+      {/* Table */}
+      <div className="flex-1 overflow-y-auto px-6">
+        {loading ? (
+          <p className="text-on-surface-variant text-sm py-8 text-center">Cargando...</p>
+        ) : movimientos.length === 0 ? (
+          <div className="text-center py-16">
+            <div className="text-on-surface-variant text-sm">No hay movimientos pendientes</div>
+          </div>
+        ) : (
+          <div className="bg-surface-container-lowest shadow-ambient-1 rounded-lg overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-surface-container-low">
+                  <th className="text-left px-4 py-3 text-xs font-medium text-on-surface-variant uppercase tracking-wider">Fecha</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-on-surface-variant uppercase tracking-wider">Banco</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-on-surface-variant uppercase tracking-wider">Descripcion</th>
+                  <th className="text-right px-4 py-3 text-xs font-medium text-on-surface-variant uppercase tracking-wider">Monto</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-on-surface-variant uppercase tracking-wider">Razon</th>
+                  <th className="px-4 py-3"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {movimientos.map((m) => (
+                  <tr key={m._id} className="hover:bg-surface-container-low/50 transition-colors">
+                    <td className="px-4 py-3 text-on-surface">{m.fecha}</td>
+                    <td className="px-4 py-3 text-on-surface">{m.banco}</td>
+                    <td className="px-4 py-3 text-on-surface max-w-[280px] truncate">{m.descripcion}</td>
+                    <td className="px-4 py-3 text-right font-mono text-on-surface">${m.monto.toLocaleString('es-CO')}</td>
+                    <td className="px-4 py-3 text-xs text-on-surface-variant">{m.razon_pendiente}</td>
+                    <td className="px-4 py-3">
+                      <button
+                        onClick={() => { setCausarTarget(m); setCausarError('') }}
+                        className="px-3 py-1.5 text-xs bg-primary text-white rounded-md hover:brightness-110 transition-all"
+                      >
+                        Causar
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Causar Modal — Glass */}
       {causarTarget && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-            <h3 className="font-semibold text-neutral-900 mb-3">Causar Movimiento</h3>
-            <div className="text-sm space-y-1 mb-4 text-neutral-600">
-              <p><span className="font-medium">Fecha:</span> {causarTarget.fecha}</p>
-              <p><span className="font-medium">Banco:</span> {causarTarget.banco}</p>
-              <p><span className="font-medium">Descripcion:</span> {causarTarget.descripcion}</p>
-              <p><span className="font-medium">Monto:</span> ${causarTarget.monto.toLocaleString('es-CO')}</p>
+        <div className="fixed inset-0 bg-on-surface/30 flex items-center justify-center z-50">
+          <div className="glass shadow-ambient-3 rounded-lg p-6 max-w-md w-full mx-4">
+            <h3 className="font-display font-bold text-on-surface mb-4">Causar Movimiento</h3>
+            <div className="text-sm space-y-1.5 mb-5 text-on-surface-variant">
+              <p><span className="font-medium text-on-surface">Fecha:</span> {causarTarget.fecha}</p>
+              <p><span className="font-medium text-on-surface">Banco:</span> {causarTarget.banco}</p>
+              <p><span className="font-medium text-on-surface">Descripcion:</span> {causarTarget.descripcion}</p>
+              <p><span className="font-medium text-on-surface">Monto:</span> ${causarTarget.monto.toLocaleString('es-CO')}</p>
             </div>
 
-            <label className="block text-sm text-neutral-600 mb-1">Cuenta contable</label>
+            <label className="block text-xs font-medium text-on-surface-variant uppercase tracking-wider mb-2">Cuenta contable</label>
             <select
               value={cuentaId}
               onChange={(e) => setCuentaId(e.target.value)}
-              className="w-full px-3 py-2 border border-neutral-300 rounded text-sm mb-3"
+              className="w-full px-3 py-2.5 bg-surface-container-low rounded-md text-sm text-on-surface mb-4 focus:outline-none focus:ring-2 focus:ring-primary/30"
             >
               {CUENTAS_RODDOS.map((c) => (
                 <option key={c.id} value={c.id}>{c.id} — {c.label}</option>
               ))}
             </select>
 
-            <div className="grid grid-cols-2 gap-3 mb-4">
+            <div className="grid grid-cols-2 gap-3 mb-5">
               <div>
-                <label className="block text-sm text-neutral-600 mb-1">ReteFuente ($)</label>
+                <label className="block text-xs font-medium text-on-surface-variant uppercase tracking-wider mb-2">ReteFuente ($)</label>
                 <input type="number" value={retefuente} onChange={(e) => setRetefuente(Number(e.target.value))}
-                  className="w-full px-3 py-2 border border-neutral-300 rounded text-sm" />
+                  className="w-full px-3 py-2.5 bg-surface-container-low rounded-md text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30" />
               </div>
               <div>
-                <label className="block text-sm text-neutral-600 mb-1">ReteICA ($)</label>
+                <label className="block text-xs font-medium text-on-surface-variant uppercase tracking-wider mb-2">ReteICA ($)</label>
                 <input type="number" value={reteica} onChange={(e) => setReteica(Number(e.target.value))}
-                  className="w-full px-3 py-2 border border-neutral-300 rounded text-sm" />
+                  className="w-full px-3 py-2.5 bg-surface-container-low rounded-md text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30" />
               </div>
             </div>
 
-            {causarError && <p className="text-sm text-red-600 mb-3">{causarError}</p>}
+            {causarError && <p className="text-sm text-error mb-4">{causarError}</p>}
 
             <div className="flex gap-3 justify-end">
               <button onClick={() => setCausarTarget(null)} disabled={causarLoading}
-                className="px-4 py-2 text-sm border border-neutral-300 rounded hover:bg-neutral-50">
+                className="px-4 py-2.5 text-sm text-on-surface-variant bg-surface-container-low rounded-md hover:bg-surface transition-colors">
                 Cancelar
               </button>
               <button onClick={handleCausar} disabled={causarLoading}
-                className="px-4 py-2 text-sm bg-neutral-900 text-white rounded hover:bg-neutral-800 disabled:opacity-50">
+                className="px-5 py-2.5 text-sm bg-primary text-white rounded-md hover:brightness-110 disabled:opacity-50 transition-all">
                 {causarLoading ? 'Causando...' : 'Confirmar'}
               </button>
             </div>

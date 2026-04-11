@@ -1,1 +1,47 @@
 @import "tailwindcss";
+
+@theme {
+  /* RODDOS Color Tokens */
+  --color-primary: #006e2a;
+  --color-primary-light: #e6f4ec;
+  --color-secondary: #006875;
+  --color-secondary-light: #e6f2f3;
+  --color-surface: #fcf9f8;
+  --color-surface-container-low: #f6f3f2;
+  --color-surface-container-lowest: #ffffff;
+  --color-on-surface: #1a1a1a;
+  --color-on-surface-variant: #5f5f5f;
+  --color-error: #ba1a1a;
+  --color-error-light: #fce8e8;
+
+  /* Typography */
+  --font-display: "Public Sans", system-ui, sans-serif;
+  --font-body: "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  /* Ambient Shadows (no borders) */
+  --shadow-ambient-1: 0 2px 24px rgba(26, 26, 26, 0.06);
+  --shadow-ambient-2: 0 8px 40px rgba(26, 26, 26, 0.10);
+  --shadow-ambient-3: 0 12px 48px rgba(26, 26, 26, 0.14);
+
+  /* Border Radius */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+}
+
+/* Base resets */
+body {
+  font-family: var(--font-body);
+  background: var(--color-surface);
+  color: var(--color-on-surface);
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Glass utility */
+.glass {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
