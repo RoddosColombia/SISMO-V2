@@ -42,23 +42,20 @@ export default function LoginPage() {
           <svg viewBox="0 0 480 120" className="w-full max-w-lg mb-4" aria-label="SISMO">
             {/* SISM as continuous word */}
             <text x="0" y="98" fontFamily="'Public Sans', sans-serif" fontWeight="900" fontSize="115" fill="white" letterSpacing="-2">SISM</text>
-            {/* O — RODDOS turbine radar (asymmetric spiral arcs) */}
-            <g transform="translate(382, 52)">
-              {/* Layer 1: Outer cyan arc — large sweep upper-left (~220°) */}
-              <path d="M 30 -38 A 48 48 0 1 0 -20 44" stroke="#00b4d8" strokeWidth="8" fill="none" strokeLinecap="round" />
-              {/* Layer 2: Green arc — left side sweep (~200°), slightly smaller */}
-              <path d="M 18 -36 A 40 40 0 1 0 -32 24" stroke="#006e2a" strokeWidth="8" fill="none" strokeLinecap="round" />
-              {/* Layer 3: Thin arcs — right side (~140°), creates turbine depth */}
-              <path d="M 36 -22 A 42 42 0 0 1 22 36" stroke="rgba(255,255,255,0.2)" strokeWidth="3.5" fill="none" strokeLinecap="round" />
-              <path d="M 32 -14 A 35 35 0 0 1 14 32" stroke="rgba(255,255,255,0.15)" strokeWidth="3" fill="none" strokeLinecap="round" />
-              <path d="M 28 -8 A 28 28 0 0 1 8 28" stroke="rgba(255,255,255,0.10)" strokeWidth="2.5" fill="none" strokeLinecap="round" />
-              {/* Layer 4: Lower cyan arc — bottom sweep (~180°) */}
-              <path d="M -44 8 A 44 44 0 0 0 8 44" stroke="#00b4d8" strokeWidth="7" fill="none" strokeLinecap="round" />
-              {/* Layer 5: Inner green arc — tight sweep near center */}
-              <path d="M -10 -24 A 26 26 0 1 0 -24 10" stroke="#006e2a" strokeWidth="6" fill="none" strokeLinecap="round" />
-              {/* Center ring + dot */}
-              <circle cx="0" cy="0" r="10" stroke="#00b4d8" strokeWidth="3" fill="none" />
-              <circle cx="0" cy="0" r="4" fill="#00b4d8" />
+            {/* O — radar circle matching letter height */}
+            <g transform="translate(380, 52)">
+              {/* Outer cyan arcs */}
+              <path d="M 42 -10 A 44 44 0 0 1 10 42" stroke="#00b4d8" strokeWidth="7" fill="none" strokeLinecap="round" />
+              <path d="M -42 10 A 44 44 0 0 1 -10 -42" stroke="#00b4d8" strokeWidth="7" fill="none" strokeLinecap="round" />
+              {/* Mid green arcs */}
+              <path d="M 30 -7 A 32 32 0 0 1 7 30" stroke="#006e2a" strokeWidth="7" fill="none" strokeLinecap="round" />
+              <path d="M -30 7 A 32 32 0 0 1 -7 -30" stroke="#006e2a" strokeWidth="7" fill="none" strokeLinecap="round" />
+              {/* Inner cyan arcs */}
+              <path d="M 19 -4 A 20 20 0 0 1 4 19" stroke="#00b4d8" strokeWidth="6" fill="none" strokeLinecap="round" />
+              <path d="M -19 4 A 20 20 0 0 1 -4 -19" stroke="#00b4d8" strokeWidth="6" fill="none" strokeLinecap="round" />
+              {/* Center */}
+              <circle cx="0" cy="0" r="6" fill="#00b4d8" />
+              <circle cx="0" cy="0" r="10" stroke="#00b4d8" strokeWidth="2.5" fill="none" />
             </g>
           </svg>
           <p className="text-white/40 text-sm tracking-widest uppercase">
