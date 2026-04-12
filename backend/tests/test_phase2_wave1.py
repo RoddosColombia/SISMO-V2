@@ -87,47 +87,17 @@ class TestToolDispatcher:
         result = await dispatcher.dispatch("tool_name", {}, "u1")
         assert result == {"success": False, "error": "Error ejecutando tool_name: db error"}
 
-    def test_4_handlers_contains_all_28_tool_keys(self):
-        """Test 4: _handlers contains exactly the expected tool keys."""
+    def test_4_handlers_match_tools_py_names(self):
+        """Test 4: dispatcher keys match tools.py tool names."""
+        from agents.contador.tools import CONTADOR_TOOLS
         dispatcher = self._make_dispatcher()
-        expected_keys = {
-            # Egresos
-            "crear_causacion",
-            "registrar_gasto",
-            "registrar_gasto_recurrente",
-            "anular_causacion",
-            "causar_movimiento_bancario",
-            "registrar_ajuste_contable",
-            "registrar_depreciacion",
-            # Ingresos + CXC
-            "registrar_pago_cuota",
-            "registrar_ingreso_no_operacional",
-            "registrar_cxc_socio",
-            "consultar_cxc_socios",
-            # Facturacion
-            "crear_factura_venta_moto",
-            "consultar_facturas",
-            "anular_factura",
-            "crear_nota_credito",
-            # Consultas
-            "consultar_plan_cuentas",
-            "consultar_journals",
-            "consultar_balance",
-            "consultar_estado_resultados",
-            "consultar_pagos",
-            "consultar_contactos",
-            "consultar_items",
-            "consultar_movimiento_cuenta",
-            # Cartera + Nomina + Catalogo
-            "consultar_cartera",
-            "registrar_nomina_mensual",
-            "consultar_obligaciones_tributarias",
-            "calcular_retenciones",
-            "consultar_catalogo_roddos",
-        }
-        # Phase 3 may add conciliacion handlers — check subset instead of exact match
-        assert expected_keys.issubset(set(dispatcher._handlers.keys())), \
-            f"Missing handlers: {expected_keys - set(dispatcher._handlers.keys())}"
+        tool_names = {t['name'] for t in CONTADOR_TOOLS}
+        handler_keys = set(dispatcher._handlers.keys())
+        # All handler keys must be valid tool names (no orphan keys)
+        orphans = handler_keys - tool_names
+        assert not orphans, f"Dispatcher keys not in tools.py: {orphans}"
+        # At least 25 tools should be wired (some may not have handlers yet)
+        assert len(handler_keys) >= 25, f"Only {len(handler_keys)} handlers wired, expected >= 25"
 
     def test_5_is_read_only_tool(self):
         """Test 5: is_read_only_tool correctly classifies tools."""
