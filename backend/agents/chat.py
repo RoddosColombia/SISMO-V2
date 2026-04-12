@@ -100,6 +100,7 @@ async def process_chat(
     current_agent: str | None = None,
     correlation_id: str | None = None,
     dispatcher: ToolDispatcher | None = None,  # NEW — injected by router
+    imagen: str | None = None,  # base64 data URI (data:image/jpeg;base64,...)
 ) -> AsyncGenerator[str, None]:
     """
     Async generator that yields SSE-formatted strings.
@@ -134,7 +135,27 @@ async def process_chat(
     # Step 2b: Load conversation history and build messages array
     await _ensure_chat_sessions_index(db)
     history = await _load_history(db, session_id)
-    messages = history + [{"role": "user", "content": message}]
+
+    # Build current message — multimodal if image attached
+    if imagen:
+        # Extract base64 data and media type from data URI
+        # Format: "data:image/jpeg;base64,/9j/4AAQ..."
+        if imagen.startswith("data:"):
+            parts = imagen.split(",", 1)
+            media_type = parts[0].split(":")[1].split(";")[0]  # "image/jpeg"
+            image_data = parts[1]
+        else:
+            media_type = "image/jpeg"
+            image_data = imagen
+
+        user_content = [
+            {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": image_data}},
+            {"type": "text", "text": message or "Procesa este comprobante y propone el asiento contable."},
+        ]
+    else:
+        user_content = message
+
+    messages = history + [{"role": "user", "content": user_content}]
 
     # Step 3: Call Claude API with streaming
     client = anthropic.AsyncAnthropic()
@@ -211,10 +232,14 @@ async def process_chat(
         yield f"data: {json.dumps({'type': 'error', 'message': f'Error inesperado: {str(e)}'})}\n\n"
 
     # Save conversation history (user message + assistant response)
+    # Don't save base64 image data in history — save text description only
+    save_message = message or "Procesa este comprobante"
+    if imagen:
+        save_message = f"[imagen adjunta] {save_message}"
     assistant_text = "".join(assistant_text_parts)
     if assistant_text:
         try:
-            await _save_messages(db, session_id, agent_type, message, assistant_text)
+            await _save_messages(db, session_id, agent_type, save_message, assistant_text)
         except Exception:
             pass  # Non-fatal — don't break the stream for a history save failure
 

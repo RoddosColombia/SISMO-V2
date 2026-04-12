@@ -21,6 +21,7 @@ class ChatRequest(BaseModel):
     session_id: str | None = None
     current_agent: str | None = None
     correlation_id: str | None = None
+    imagen: str | None = None  # base64 data URI (data:image/jpeg;base64,...)
 
 
 class ApproveRequest(BaseModel):
@@ -46,6 +47,7 @@ async def chat_endpoint(
             current_agent=request.current_agent,
             correlation_id=request.correlation_id,
             dispatcher=dispatcher,
+            imagen=request.imagen,
         ),
         media_type="text/event-stream",
         headers={

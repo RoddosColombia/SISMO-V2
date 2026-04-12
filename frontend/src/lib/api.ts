@@ -39,13 +39,14 @@ export function chatSSE(
   onEvent: (event: { type: string; [key: string]: unknown }) => void,
   onDone: () => void,
   onError: (err: Error) => void,
+  imagen?: string | null,
 ): AbortController {
   const controller = new AbortController()
 
   fetch(`${BASE}/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify({ message, session_id: sessionId }),
+    body: JSON.stringify({ message, session_id: sessionId, imagen: imagen || undefined }),
     signal: controller.signal,
   })
     .then(async (res) => {
