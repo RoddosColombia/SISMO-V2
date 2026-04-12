@@ -10,7 +10,7 @@ router = APIRouter(prefix="/api/backlog", tags=["backlog"])
 async def list_backlog(
     banco: str | None = None,
     estado: str = "pendiente",
-    limit: int = 50,
+    limit: int = 500,
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """List pending backlog movements."""

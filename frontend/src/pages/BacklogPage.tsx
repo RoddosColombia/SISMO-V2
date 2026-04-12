@@ -28,7 +28,7 @@ const CUENTAS_RODDOS = [
   { id: '5509', label: 'Gravamen 4x1000 (531520)' },
 ]
 
-const BANCOS = ['Bancolombia', 'BBVA', 'Davivienda', 'Nequi']
+const BANCOS = ['Bancolombia', 'BBVA', 'Davivienda', 'Nequi', 'Global66']
 
 export default function BacklogPage() {
   const [movimientos, setMovimientos] = useState<BacklogMovimiento[]>([])
