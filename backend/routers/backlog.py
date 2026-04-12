@@ -196,7 +196,7 @@ async def get_job_status(
 @router.post("/{backlog_id}/causar")
 async def causar_desde_backlog(
     backlog_id: str,
-    cuenta_id: int = 5493,
+    cuenta_id: str = "5494",
     retefuente: float = 0,
     reteica: float = 0,
     db: AsyncIOMotorDatabase = Depends(get_db),

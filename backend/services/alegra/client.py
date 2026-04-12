@@ -86,10 +86,19 @@ class AlegraClient:
 
             except httpx.HTTPStatusError as e:
                 status = e.response.status_code
+                # Try to extract Alegra's actual error message from response body
+                alegra_msg = ""
+                try:
+                    body = e.response.json()
+                    alegra_msg = body.get("message", "")
+                except Exception:
+                    pass
                 spanish_msg = ALEGRA_HTTP_ERROR_MESSAGES.get(
                     status,
                     f"Error inesperado de Alegra al intentar {method} {endpoint}."
                 )
+                if alegra_msg:
+                    spanish_msg = f"{spanish_msg} Detalle: {alegra_msg}"
                 raise AlegraError(spanish_msg, status_code=status) from e
 
             created = response.json()
