@@ -31,15 +31,41 @@ export default function LoginPage() {
       {/* LEFT — Branding */}
       <div className="hidden lg:flex lg:w-1/2 bg-on-surface flex-col justify-between p-12 text-surface-container-lowest">
         <div>
-          <img src="/logo-roddos.jpeg" alt="RODDOS" className="h-10 mb-16" />
-          <h1 className="font-display text-4xl font-bold leading-tight mb-4">
+          <img src="/logo-roddos-dark.png" alt="RODDOS" className="h-10 mb-12" />
+          <h1 className="font-display text-3xl font-bold leading-tight mb-10 text-white/80">
             Precision.<br />
-            Administrative<br />
+            Administrative.<br />
             Excellence.
           </h1>
-          <p className="text-on-surface-variant text-sm max-w-sm">
-            Portal corporativo de gestion contable y financiera.
-            Sistema integral de monitoreo operativo.
+
+          {/* SISMO Logo */}
+          <svg viewBox="0 0 520 100" className="w-full max-w-md mb-3" aria-label="SISMO">
+            {/* S */}
+            <text x="0" y="82" fontFamily="'Public Sans', sans-serif" fontWeight="800" fontSize="90" fill="white">S</text>
+            {/* I */}
+            <text x="62" y="82" fontFamily="'Public Sans', sans-serif" fontWeight="800" fontSize="90" fill="white">I</text>
+            {/* S */}
+            <text x="105" y="82" fontFamily="'Public Sans', sans-serif" fontWeight="800" fontSize="90" fill="white">S</text>
+            {/* M */}
+            <text x="168" y="82" fontFamily="'Public Sans', sans-serif" fontWeight="800" fontSize="90" fill="white">M</text>
+            {/* O — replaced by radar circle */}
+            <g transform="translate(310, 50)">
+              {/* Outer cyan arc */}
+              <path d="M 38 -8 A 40 40 0 0 1 8 38" stroke="#00b4d8" strokeWidth="6" fill="none" strokeLinecap="round" />
+              <path d="M -38 8 A 40 40 0 0 1 -8 -38" stroke="#00b4d8" strokeWidth="6" fill="none" strokeLinecap="round" />
+              {/* Middle green arc */}
+              <path d="M 28 -6 A 30 30 0 0 1 6 28" stroke="#006e2a" strokeWidth="6" fill="none" strokeLinecap="round" />
+              <path d="M -28 6 A 30 30 0 0 1 -6 -28" stroke="#006e2a" strokeWidth="6" fill="none" strokeLinecap="round" />
+              {/* Inner cyan arc */}
+              <path d="M 18 -4 A 20 20 0 0 1 4 18" stroke="#00b4d8" strokeWidth="5" fill="none" strokeLinecap="round" />
+              <path d="M -18 4 A 20 20 0 0 1 -4 -18" stroke="#00b4d8" strokeWidth="5" fill="none" strokeLinecap="round" />
+              {/* Center dot */}
+              <circle cx="0" cy="0" r="5" fill="#00b4d8" />
+              <circle cx="0" cy="0" r="8" stroke="#00b4d8" strokeWidth="2" fill="none" />
+            </g>
+          </svg>
+          <p className="text-white/40 text-sm tracking-widest uppercase">
+            Sistema Integral de Monitoreo Operativo
           </p>
         </div>
         <div className="flex gap-12 text-xs text-on-surface-variant">
