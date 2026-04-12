@@ -139,7 +139,7 @@ def test_dispatcher_conciliation_not_stub():
 
 def test_main_includes_conciliacion_router():
     import pathlib
-    content = pathlib.Path("backend/main.py").read_text(encoding="utf-8")
+    content = pathlib.Path("main.py").read_text(encoding="utf-8")
     assert "conciliacion_router" in content
     assert "backlog_router" in content
 

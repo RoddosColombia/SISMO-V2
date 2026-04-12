@@ -151,13 +151,13 @@ async def test_registrar_movimiento_procesado():
 
 def test_pdfplumber_in_bank_parsers():
     import pathlib
-    path = pathlib.Path("backend/services/bank_parsers.py")
+    path = pathlib.Path("services/bank_parsers.py")
     content = path.read_text(encoding="utf-8")
     assert "import pdfplumber" in content
 
 
 def test_pdfplumber_in_pyproject():
     import pathlib
-    path = pathlib.Path("backend/pyproject.toml")
+    path = pathlib.Path("pyproject.toml")
     content = path.read_text(encoding="utf-8")
     assert "pdfplumber" in content

@@ -110,7 +110,7 @@ async def test_t10_causar_desde_backlog():
 
 # T11: STATIC — no contable MongoDB writes in conciliacion.py
 def test_t11_static_no_contable_writes():
-    path = pathlib.Path("backend/agents/contador/handlers/conciliacion.py")
+    path = pathlib.Path("agents/contador/handlers/conciliacion.py")
     if not path.exists():
         pytest.skip("conciliacion.py not found")
     content = path.read_text(encoding="utf-8")

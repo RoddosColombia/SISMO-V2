@@ -164,7 +164,7 @@ def test_t11_auteco_sin_retefuente():
 # T12: STATIC ANALYSIS — no contable MongoDB writes in handlers/
 def test_t12_static_no_contable_mongodb_writes():
     """grep insert_one/update_one in handlers/ excluding allowed collections → MUST be 0."""
-    handlers_dir = pathlib.Path("backend/agents/contador/handlers")
+    handlers_dir = pathlib.Path("agents/contador/handlers")
     if not handlers_dir.exists():
         pytest.skip("handlers/ directory not found")
 
