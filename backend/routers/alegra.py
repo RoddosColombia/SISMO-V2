@@ -44,10 +44,19 @@ def _flatten_categories(nodes, result: list, depth: int = 0):
         code = node.get("code", "")
 
         if use == "movement" and cat_id and name:
+            is_bank = False
+            code_str = str(code)
+            if code_str.startswith("1105") or code_str.startswith("1110") or code_str.startswith("1120"):
+                is_bank = True
+            cat_rule = node.get("categoryRule")
+            if isinstance(cat_rule, dict) and cat_rule.get("key") in ("BANK_ACCOUNTS", "CASH_ACCOUNTS"):
+                is_bank = True
+
             result.append({
                 "id": cat_id,
                 "nombre": name,
                 "codigo": code,
+                "es_banco": is_bank,
             })
 
         children = node.get("children", [])

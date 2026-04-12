@@ -45,6 +45,11 @@ class BatchCausarRequest(BaseModel):
     confianza_minima: float = 0.70
 
 
+class TransferCausarRequest(BaseModel):
+    cuenta_origen: str
+    cuenta_destino: str
+
+
 @router.post("/causar-batch")
 async def causar_batch(
     request: BatchCausarRequest,
@@ -188,6 +193,53 @@ async def get_job_status(
         return {"success": False, "error": "Job no encontrado"}
     job.pop("_id", None)
     return {"success": True, **job}
+
+
+# --- Transfer between accounts (must be BEFORE /{backlog_id}/causar) ---
+
+
+@router.post("/{backlog_id}/causar-transferencia")
+async def causar_transferencia(
+    backlog_id: str,
+    request: TransferCausarRequest,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Cause a backlog movement as inter-account transfer — DEBIT destino / CREDIT origen."""
+    from bson import ObjectId
+    from services.alegra.client import AlegraClient
+    from core.events import publish_event
+
+    mov = await db.backlog_movimientos.find_one({"_id": ObjectId(backlog_id)})
+    if not mov:
+        return {"success": False, "error": "Movimiento no encontrado"}
+
+    alegra = AlegraClient(db=db)
+    payload = {
+        "date": mov.get("fecha", ""),
+        "observations": f"Transferencia entre cuentas: {request.cuenta_origen} -> {request.cuenta_destino} — {mov.get('descripcion', '')[:80]}",
+        "entries": [
+            {"id": request.cuenta_destino, "debit": mov["monto"], "credit": 0},
+            {"id": request.cuenta_origen, "debit": 0, "credit": mov["monto"]},
+        ],
+    }
+
+    try:
+        result = await alegra.request_with_verify("journals", "POST", payload=payload)
+        await db.backlog_movimientos.update_one(
+            {"_id": ObjectId(backlog_id)},
+            {"$set": {"estado": "causado", "alegra_id": result["_alegra_id"]}},
+        )
+        await publish_event(
+            db=db,
+            event_type="transferencia.causada",
+            source="backlog_manual",
+            datos={"alegra_id": result["_alegra_id"], "origen": request.cuenta_origen, "destino": request.cuenta_destino},
+            alegra_id=result["_alegra_id"],
+            accion_ejecutada=f"Transferencia #{result['_alegra_id']}: {request.cuenta_origen} -> {request.cuenta_destino}",
+        )
+        return {"success": True, "alegra_id": result["_alegra_id"], "message": f"Transferencia #{result['_alegra_id']} registrada en Alegra."}
+    except Exception as e:
+        return {"success": False, "error": f"Error: {str(e)}"}
 
 
 # --- Single-movement causar (must be AFTER /causar-batch and /job/{job_id}) ---

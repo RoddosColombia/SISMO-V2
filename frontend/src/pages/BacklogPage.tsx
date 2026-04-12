@@ -18,6 +18,7 @@ interface CuentaAlegra {
   id: string
   nombre: string
   codigo: string
+  es_banco?: boolean
 }
 
 const CUENTAS_FALLBACK: CuentaAlegra[] = [
@@ -50,6 +51,9 @@ export default function BacklogPage() {
   const [batchJobId, setBatchJobId] = useState<string | null>(null)
   const [batchStatus, setBatchStatus] = useState<{estado: string, total: number, procesados: number, exitosos: number, errores: number} | null>(null)
   const [showBatchConfirm, setShowBatchConfirm] = useState(false)
+  const [tipoOperacion, setTipoOperacion] = useState<'gasto' | 'transferencia'>('gasto')
+  const [cuentaOrigen, setCuentaOrigen] = useState('')
+  const [cuentaDestino, setCuentaDestino] = useState('')
 
   const fetchBacklog = useCallback(async () => {
     setLoading(true)
@@ -75,6 +79,8 @@ export default function BacklogPage() {
   const cuentasFiltradas = cuentaSearch
     ? cuentas.filter(c => `${c.id} ${c.nombre} ${c.codigo}`.toLowerCase().includes(cuentaSearch.toLowerCase()))
     : cuentas
+
+  const bancosCuentas = cuentas.filter(c => c.es_banco)
 
   const elegibles = movimientos.filter(m => (m as any).confianza_v1 >= 0.70).length
 
@@ -113,11 +119,22 @@ export default function BacklogPage() {
     setCausarLoading(true)
     setCausarError('')
     try {
-      const data = await apiPost<{ success: boolean; error?: string }>(
-        `/backlog/${causarTarget._id}/causar?cuenta_id=${cuentaId}&retefuente=${retefuente}&reteica=${reteica}`, {}
-      )
+      let data: { success: boolean; error?: string }
+      if (tipoOperacion === 'transferencia') {
+        data = await apiPost<{ success: boolean; error?: string }>(
+          `/backlog/${causarTarget._id}/causar-transferencia`, {
+            cuenta_origen: cuentaOrigen,
+            cuenta_destino: cuentaDestino,
+          }
+        )
+      } else {
+        data = await apiPost<{ success: boolean; error?: string }>(
+          `/backlog/${causarTarget._id}/causar?cuenta_id=${cuentaId}&retefuente=${retefuente}&reteica=${reteica}`, {}
+        )
+      }
       if (data.success) {
         setCausarTarget(null)
+        setTipoOperacion('gasto')
         fetchBacklog()
       } else {
         setCausarError(data.error || 'Error al causar')
@@ -235,7 +252,16 @@ export default function BacklogPage() {
                     <td className="px-4 py-3 text-xs text-on-surface-variant">{m.razon_pendiente}</td>
                     <td className="px-4 py-3">
                       <button
-                        onClick={() => { setCausarTarget(m); setCausarError('') }}
+                        onClick={() => {
+                          setCausarTarget(m)
+                          setCausarError('')
+                          setTipoOperacion('gasto')
+                          const bancoMap: Record<string, string> = {
+                            'Bancolombia': '5314', 'BBVA': '5318', 'Davivienda': '5322',
+                            'Nequi': '5314', 'Global66': '5536',
+                          }
+                          setCuentaOrigen(bancoMap[m.banco] || '5314')
+                        }}
                         className="px-3 py-1.5 text-xs bg-primary text-white rounded-md hover:brightness-110 transition-all"
                       >
                         Causar
@@ -283,44 +309,85 @@ export default function BacklogPage() {
               <p><span className="font-medium text-on-surface">Monto:</span> ${causarTarget.monto.toLocaleString('es-CO')}</p>
             </div>
 
-            <label className="block text-xs font-medium text-on-surface-variant uppercase tracking-wider mb-2">Cuenta contable</label>
-            <input
-              type="text"
-              value={cuentaSearch}
-              onChange={(e) => setCuentaSearch(e.target.value)}
-              placeholder="Buscar cuenta..."
-              className="w-full px-3 py-2 bg-surface-container-low rounded-md text-sm text-on-surface mb-1 focus:outline-none focus:ring-2 focus:ring-primary/30"
-            />
-            <select
-              value={cuentaId}
-              onChange={(e) => setCuentaId(e.target.value)}
-              size={Math.min(cuentasFiltradas.length, 6)}
-              className="w-full px-3 py-1 bg-surface-container-low rounded-md text-sm text-on-surface mb-4 focus:outline-none focus:ring-2 focus:ring-primary/30"
-            >
-              {cuentasFiltradas.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.id} — {c.id === '5494' ? 'Gastos Varios' : c.nombre} ({c.codigo})
-                </option>
-              ))}
-            </select>
-
-            <div className="grid grid-cols-2 gap-3 mb-5">
-              <div>
-                <label className="block text-xs font-medium text-on-surface-variant uppercase tracking-wider mb-2">ReteFuente ($)</label>
-                <input type="number" value={retefuente} onChange={(e) => setRetefuente(Number(e.target.value))}
-                  className="w-full px-3 py-2.5 bg-surface-container-low rounded-md text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30" />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-on-surface-variant uppercase tracking-wider mb-2">ReteICA ($)</label>
-                <input type="number" value={reteica} onChange={(e) => setReteica(Number(e.target.value))}
-                  className="w-full px-3 py-2.5 bg-surface-container-low rounded-md text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30" />
-              </div>
+            {/* Tipo de operacion */}
+            <div className="flex gap-2 mb-4">
+              <button
+                onClick={() => setTipoOperacion('gasto')}
+                className={`flex-1 py-2 text-xs rounded-md transition-colors ${
+                  tipoOperacion === 'gasto' ? 'bg-primary text-white' : 'bg-surface-container-low text-on-surface-variant'
+                }`}
+              >
+                Gasto / Ingreso
+              </button>
+              <button
+                onClick={() => setTipoOperacion('transferencia')}
+                className={`flex-1 py-2 text-xs rounded-md transition-colors ${
+                  tipoOperacion === 'transferencia' ? 'bg-primary text-white' : 'bg-surface-container-low text-on-surface-variant'
+                }`}
+              >
+                Transferencia entre cuentas
+              </button>
             </div>
+
+            {tipoOperacion === 'transferencia' ? (
+              <>
+                <label className="block text-xs font-medium text-on-surface-variant uppercase tracking-wider mb-2">Banco origen</label>
+                <select value={cuentaOrigen} onChange={(e) => setCuentaOrigen(e.target.value)}
+                  className="w-full px-3 py-2.5 bg-surface-container-low rounded-md text-sm text-on-surface mb-4 focus:outline-none focus:ring-2 focus:ring-primary/30">
+                  {bancosCuentas.map(c => (
+                    <option key={c.id} value={c.id}>{c.id} — {c.nombre} ({c.codigo})</option>
+                  ))}
+                </select>
+                <label className="block text-xs font-medium text-on-surface-variant uppercase tracking-wider mb-2">Banco destino</label>
+                <select value={cuentaDestino} onChange={(e) => setCuentaDestino(e.target.value)}
+                  className="w-full px-3 py-2.5 bg-surface-container-low rounded-md text-sm text-on-surface mb-5 focus:outline-none focus:ring-2 focus:ring-primary/30">
+                  {bancosCuentas.map(c => (
+                    <option key={c.id} value={c.id}>{c.id} — {c.nombre} ({c.codigo})</option>
+                  ))}
+                </select>
+              </>
+            ) : (
+              <>
+                <label className="block text-xs font-medium text-on-surface-variant uppercase tracking-wider mb-2">Cuenta contable</label>
+                <input
+                  type="text"
+                  value={cuentaSearch}
+                  onChange={(e) => setCuentaSearch(e.target.value)}
+                  placeholder="Buscar cuenta..."
+                  className="w-full px-3 py-2 bg-surface-container-low rounded-md text-sm text-on-surface mb-1 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+                <select
+                  value={cuentaId}
+                  onChange={(e) => setCuentaId(e.target.value)}
+                  size={Math.min(cuentasFiltradas.length, 6)}
+                  className="w-full px-3 py-1 bg-surface-container-low rounded-md text-sm text-on-surface mb-4 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                >
+                  {cuentasFiltradas.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.id} — {c.id === '5494' ? 'Gastos Varios' : c.nombre} ({c.codigo})
+                    </option>
+                  ))}
+                </select>
+
+                <div className="grid grid-cols-2 gap-3 mb-5">
+                  <div>
+                    <label className="block text-xs font-medium text-on-surface-variant uppercase tracking-wider mb-2">ReteFuente ($)</label>
+                    <input type="number" value={retefuente} onChange={(e) => setRetefuente(Number(e.target.value))}
+                      className="w-full px-3 py-2.5 bg-surface-container-low rounded-md text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-on-surface-variant uppercase tracking-wider mb-2">ReteICA ($)</label>
+                    <input type="number" value={reteica} onChange={(e) => setReteica(Number(e.target.value))}
+                      className="w-full px-3 py-2.5 bg-surface-container-low rounded-md text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/30" />
+                  </div>
+                </div>
+              </>
+            )}
 
             {causarError && <p className="text-sm text-error mb-4">{causarError}</p>}
 
             <div className="flex gap-3 justify-end">
-              <button onClick={() => setCausarTarget(null)} disabled={causarLoading}
+              <button onClick={() => { setCausarTarget(null); setTipoOperacion('gasto') }} disabled={causarLoading}
                 className="px-4 py-2.5 text-sm text-on-surface-variant bg-surface-container-low rounded-md hover:bg-surface transition-colors">
                 Cancelar
               </button>
