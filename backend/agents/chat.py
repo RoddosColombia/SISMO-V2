@@ -21,6 +21,7 @@ ExecutionCard SSE event format:
 import json
 import os
 import uuid
+from datetime import datetime, timezone
 from typing import AsyncGenerator
 import anthropic
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -32,6 +33,63 @@ from core.permissions import validate_write_permission
 from agents.contador.handlers import ToolDispatcher, is_read_only_tool, is_conciliation_tool
 
 ANTHROPIC_MODEL = "claude-sonnet-4-5"
+
+MAX_HISTORY_MESSAGES = 20  # Last N messages to include (user + assistant pairs)
+SESSION_TTL_SECONDS = 72 * 3600  # 72 hours
+
+
+async def _ensure_chat_sessions_index(db: AsyncIOMotorDatabase) -> None:
+    """Create TTL index on chat_sessions.updated_at (idempotent)."""
+    try:
+        await db.chat_sessions.create_index(
+            "updated_at",
+            expireAfterSeconds=SESSION_TTL_SECONDS,
+        )
+    except Exception:
+        pass  # Index already exists or MongoDB error — non-fatal
+
+
+async def _load_history(db: AsyncIOMotorDatabase, session_id: str) -> list[dict]:
+    """Load conversation history for a session, limited to last N messages."""
+    doc = await db.chat_sessions.find_one(
+        {"session_id": session_id},
+        {"messages": 1},
+    )
+    if not doc or not doc.get("messages"):
+        return []
+    return doc["messages"][-MAX_HISTORY_MESSAGES:]
+
+
+async def _save_messages(
+    db: AsyncIOMotorDatabase,
+    session_id: str,
+    agent_type: str,
+    user_message: str,
+    assistant_message: str,
+) -> None:
+    """Append user + assistant message pair to the session."""
+    now = datetime.now(timezone.utc)
+    await db.chat_sessions.update_one(
+        {"session_id": session_id},
+        {
+            "$push": {
+                "messages": {
+                    "$each": [
+                        {"role": "user", "content": user_message},
+                        {"role": "assistant", "content": assistant_message},
+                    ],
+                },
+            },
+            "$set": {
+                "agent_type": agent_type,
+                "updated_at": now,
+            },
+            "$setOnInsert": {
+                "session_id": session_id,
+            },
+        },
+        upsert=True,
+    )
 
 
 async def process_chat(
@@ -73,16 +131,23 @@ async def process_chat(
     tool_use_enabled = os.environ.get("TOOL_USE_ENABLED", "true").lower() == "true"
     tools = get_tools_for_agent(agent_type) if tool_use_enabled else []
 
+    # Step 2b: Load conversation history and build messages array
+    await _ensure_chat_sessions_index(db)
+    history = await _load_history(db, session_id)
+    messages = history + [{"role": "user", "content": message}]
+
     # Step 3: Call Claude API with streaming
     client = anthropic.AsyncAnthropic()
     kwargs = {
         "model": ANTHROPIC_MODEL,
         "max_tokens": 2048,
         "system": system_prompt,
-        "messages": [{"role": "user", "content": message}],
+        "messages": messages,
     }
     if tools:
         kwargs["tools"] = tools
+
+    assistant_text_parts: list[str] = []  # accumulate streamed text for history
 
     try:
         async with client.messages.stream(**kwargs) as stream:
@@ -90,6 +155,7 @@ async def process_chat(
                 # Text streaming
                 if hasattr(event, 'type') and event.type == 'content_block_delta':
                     if hasattr(event, 'delta') and hasattr(event.delta, 'text'):
+                        assistant_text_parts.append(event.delta.text)
                         yield f"data: {json.dumps({'type': 'text', 'content': event.delta.text})}\n\n"
 
             # Check final message for tool_use blocks
@@ -143,6 +209,14 @@ async def process_chat(
         yield f"data: {json.dumps({'type': 'error', 'message': f'Error con la API de Claude: {str(e)}'})}\n\n"
     except Exception as e:
         yield f"data: {json.dumps({'type': 'error', 'message': f'Error inesperado: {str(e)}'})}\n\n"
+
+    # Save conversation history (user message + assistant response)
+    assistant_text = "".join(assistant_text_parts)
+    if assistant_text:
+        try:
+            await _save_messages(db, session_id, agent_type, message, assistant_text)
+        except Exception:
+            pass  # Non-fatal — don't break the stream for a history save failure
 
     yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
