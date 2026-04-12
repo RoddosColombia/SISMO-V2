@@ -16,7 +16,7 @@ from services.alegra.client import AlegraClient
 from core.permissions import validate_write_permission
 from core.events import publish_event
 from services.retenciones import calcular_retenciones
-from services.bank_parsers import detect_bank, parse_bancolombia, parse_bbva, parse_davivienda, parse_nequi
+from services.bank_parsers import detect_bank, parse_bancolombia, parse_bbva, parse_davivienda, parse_nequi, parse_global66
 from services.anti_duplicados import (
     hash_extracto, hash_movimiento,
     check_extracto_duplicado, check_movimiento_duplicado,
@@ -31,7 +31,7 @@ BANCO_CATEGORY_IDS = {
     "BBVA": "5318", "BBVA 0210": "5318", "BBVA 0212": "5319",
     "Davivienda": "5322",
     "Banco de Bogotá": "5321", "Banco de Bogota": "5321", "Bogota": "5321",
-    "Nequi": "5314", "Global66": "5536",
+    "Nequi": "5314", "Global66": "5536", "Global 66": "5536",
 }
 
 PARSERS = {
@@ -39,6 +39,7 @@ PARSERS = {
     "bbva": parse_bbva,
     "davivienda": parse_davivienda,
     "nequi": parse_nequi,
+    "global66": parse_global66,
 }
 
 # Classification patterns with confidence

@@ -1,11 +1,12 @@
 """
-Bank statement parsers — 4 banks + auto-detect.
+Bank statement parsers — 5 banks + auto-detect.
 
 Supported formats:
 - Bancolombia: .xlsx, sheet "Extracto", headers row 15
 - BBVA: .xlsx, headers row 14
 - Davivienda: .xlsx, skiprows=4
 - Nequi: PDF via pdfplumber
+- Global66: .xls/.xlsx, sheet "Movimientos de cuenta COP", headers row 4
 
 Each parser returns: list[dict] with keys: fecha, descripcion, monto, tipo, banco
 - fecha: yyyy-MM-dd format
@@ -15,6 +16,8 @@ Each parser returns: list[dict] with keys: fecha, descripcion, monto, tipo, banc
 import hashlib
 import os
 import re
+import shutil
+import tempfile
 from datetime import datetime
 
 import openpyxl
@@ -31,7 +34,12 @@ def detect_bank(file_path: str) -> str:
     if ext not in (".xlsx", ".xls"):
         raise ValueError(f"Formato no soportado: {ext}. Solo .xlsx y .pdf.")
 
-    wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+    wb = _open_workbook(file_path)
+
+    # Global66: sheet "Movimientos de cuenta COP"
+    if any("Movimientos de cuenta COP" in name for name in wb.sheetnames):
+        wb.close()
+        return "global66"
 
     # Bancolombia: sheet named "Extracto", headers at row 15
     if "Extracto" in wb.sheetnames:
@@ -54,7 +62,19 @@ def detect_bank(file_path: str) -> str:
             return "davivienda"
 
     wb.close()
-    raise ValueError("No se pudo identificar el banco del extracto. Formatos soportados: Bancolombia, BBVA, Davivienda (.xlsx) y Nequi (.pdf).")
+    raise ValueError("No se pudo identificar el banco del extracto. Formatos soportados: Bancolombia, BBVA, Davivienda, Global66 (.xlsx/.xls) y Nequi (.pdf).")
+
+
+def _open_workbook(file_path: str):
+    """Open workbook, handling .xls files that are internally xlsx."""
+    try:
+        return openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+    except Exception:
+        # .xls extension may confuse openpyxl — copy to temp .xlsx and retry
+        tmp_dir = tempfile.mkdtemp()
+        tmp_path = os.path.join(tmp_dir, "extract.xlsx")
+        shutil.copy2(file_path, tmp_path)
+        return openpyxl.load_workbook(tmp_path, read_only=True, data_only=True)
 
 
 def _parse_date(date_str: str, fmt: str) -> str:
@@ -255,4 +275,72 @@ def parse_nequi(file_path: str) -> list[dict]:
                         "banco": "Nequi",
                     })
 
+    return movements
+
+
+def parse_global66(file_path: str) -> list[dict]:
+    """Global66: sheet 'Movimientos de cuenta COP', headers row 4, data row 5+.
+
+    Columns (0-indexed):
+    A(0): Tipo transaccion  B(1): Fecha  C(2): Monto debitado  D(3): Monto acreditado
+    H(7): Nombre tercero  I(8): DNI tercero  M(12): ID transaccion  N(13): Comentario
+    """
+    wb = _open_workbook(file_path)
+
+    # Find the target sheet
+    ws = None
+    for name in wb.sheetnames:
+        if "Movimientos de cuenta COP" in name:
+            ws = wb[name]
+            break
+    if ws is None:
+        wb.close()
+        raise ValueError("No se encontró hoja 'Movimientos de cuenta COP' en el archivo Global66.")
+
+    movements = []
+    for row in ws.iter_rows(min_row=5, values_only=True):
+        if not row or len(row) < 14:
+            continue
+
+        tipo_tx = str(row[0] or "").strip()
+        fecha_raw = str(row[1] or "").strip()
+        monto_debito = row[2]
+        monto_credito = row[3]
+        nombre_tercero = str(row[7] or "").strip()
+        referencia_id = str(row[12] or "").strip()
+        comentario = str(row[13] or "").strip()
+
+        # Determine tipo and monto
+        has_debito = monto_debito is not None and monto_debito != "" and monto_debito != 0
+        has_credito = monto_credito is not None and monto_credito != "" and monto_credito != 0
+
+        if has_debito:
+            monto_val, _ = _parse_monto(monto_debito)
+            tipo = "debito"
+        elif has_credito:
+            monto_val, _ = _parse_monto(monto_credito)
+            tipo = "credito"
+        else:
+            continue  # Skip rows with no value
+
+        if monto_val == 0:
+            continue
+
+        # Parse fecha: YYYY-MM-DD HH:MM:SS → yyyy-MM-dd
+        fecha = _parse_date(fecha_raw, "%Y-%m-%d %H:%M:%S")
+
+        # Build enriched description
+        parts = [p for p in [tipo_tx, comentario, nombre_tercero] if p]
+        descripcion = " — ".join(parts) if parts else tipo_tx
+
+        movements.append({
+            "fecha": fecha,
+            "descripcion": descripcion,
+            "monto": monto_val,
+            "tipo": tipo,
+            "banco": "Global66",
+            "referencia": referencia_id,
+        })
+
+    wb.close()
     return movements
