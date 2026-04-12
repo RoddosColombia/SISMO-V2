@@ -43,7 +43,7 @@ export default function LoginPage() {
             {/* SISM as continuous word */}
             <text x="0" y="98" fontFamily="'Public Sans', sans-serif" fontWeight="900" fontSize="115" fill="white" letterSpacing="-2">SISM</text>
             {/* O — radar circle matching letter height */}
-            <g transform="translate(380, 52)">
+            <g transform="translate(345, 52)">
               {/* Outer cyan arcs */}
               <path d="M 42 -10 A 44 44 0 0 1 10 42" stroke="#00b4d8" strokeWidth="7" fill="none" strokeLinecap="round" />
               <path d="M -42 10 A 44 44 0 0 1 -10 -42" stroke="#00b4d8" strokeWidth="7" fill="none" strokeLinecap="round" />
