@@ -1,16 +1,18 @@
 services:
   - type: web
-    name: sismo-v2-api
+    name: sismo-v2
     runtime: python
     region: oregon
-    rootDir: backend
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    plan: starter
+    rootDir: .
+    buildCommand: |
+      cd frontend && npm install && npm run build && cd .. && pip install -r backend/requirements.txt
+    startCommand: cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: MONGO_URL
         sync: false
       - key: DB_NAME
-        sync: false
+        value: sismo-v2
       - key: JWT_SECRET
         sync: false
       - key: ALEGRA_EMAIL
@@ -22,4 +24,6 @@ services:
       - key: TOOL_USE_ENABLED
         value: "true"
       - key: PYTHON_VERSION
-        value: "3.11.9"
+        value: "3.11"
+      - key: NODE_VERSION
+        value: "20"

@@ -1,6 +1,8 @@
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from core.database import lifespan
 from routers.auth import router as auth_router
 from routers.chat import router as chat_router
@@ -17,6 +19,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# API routers — MUST be before the SPA mount
 app.include_router(auth_router)
 app.include_router(chat_router)
 app.include_router(conciliacion_router)
@@ -26,3 +29,20 @@ app.include_router(backlog_router)
 @app.get("/health")
 async def health():
     return {"status": "ok", "version": "0.1.0"}
+
+
+# SPA static files — serves React build in production
+# Mount AFTER all API routes so /api/* has priority over catch-all
+class SPAStaticFiles(StaticFiles):
+    async def get_response(self, path, scope):
+        try:
+            return await super().get_response(path, scope)
+        except (StarletteHTTPException,) as ex:
+            if ex.status_code == 404:
+                return await super().get_response("index.html", scope)
+            raise ex
+
+
+frontend_dist = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
+if os.path.isdir(frontend_dist):
+    app.mount("/", SPAStaticFiles(directory=frontend_dist, html=True), name="spa")
