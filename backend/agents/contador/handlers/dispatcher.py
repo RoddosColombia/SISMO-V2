@@ -145,6 +145,7 @@ class ToolDispatcher:
                 handle_registrar_nomina_mensual,
                 handle_consultar_obligaciones_tributarias,
                 handle_calcular_retenciones,
+                handle_provisionar_prestaciones,
             )
             from agents.contador.handlers.cartera import (
                 handle_consultar_cartera,
@@ -153,6 +154,7 @@ class ToolDispatcher:
             self._handlers.update({
                 "registrar_nomina": handle_registrar_nomina_mensual,
                 "consultar_iva_cuatrimestral": handle_consultar_obligaciones_tributarias,
+                "provisionar_prestaciones": handle_provisionar_prestaciones,
                 "consultar_cartera": handle_consultar_cartera,
                 "catalogo_cuentas_roddos": handle_consultar_catalogo_roddos,
             })

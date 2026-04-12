@@ -166,3 +166,105 @@ async def handle_calcular_retenciones(
         "autoretenedor": es_autoretenedor,
         "message": f"Retenciones para {tipo} ${monto:,.0f}: ReteFte ${ret['retefuente_monto']:,.0f} ({ret['retefuente_tasa']*100:.1f}%), ReteICA ${ret['reteica_monto']:,.0f}, Neto ${ret['neto_a_pagar']:,.0f}",
     }
+
+
+# ---------------------------------------------------------------------------
+# Prestaciones sociales — porcentajes sobre salario base (Art. 306 CST + Art. 249 CST)
+# ---------------------------------------------------------------------------
+PRESTACIONES_PORCENTAJES = {
+    "prima": 0.0833,          # 8.33%
+    "cesantias": 0.0833,      # 8.33%
+    "int_cesantias": 0.01,    # 1.00%
+    "vacaciones": 0.0417,     # 4.17%
+}
+
+# Alegra IDs — Gasto (P&L débito) y Provisión (Balance crédito)
+PRESTACIONES_CUENTAS = {
+    "prima":         {"gasto": "5468", "provision": "5418"},  # 510536 / 252005
+    "cesantias":     {"gasto": "5466", "provision": "5416"},  # 510530 / 251010
+    "int_cesantias": {"gasto": "5467", "provision": "5417"},  # 510533 / 251505
+    "vacaciones":    {"gasto": "5469", "provision": "5415"},  # 510539 / 250505
+}
+
+EMPLEADOS_DEFAULT = [
+    {"nombre": "Alexa", "salario": 4_500_000},
+    {"nombre": "Liz", "salario": 2_200_000},
+]
+
+
+async def handle_provisionar_prestaciones(
+    tool_input: dict,
+    alegra: AlegraClient,
+    db: AsyncIOMotorDatabase,
+    event_bus: Any,
+    user_id: str,
+) -> dict:
+    """Provisión mensual de prestaciones sociales por empleado. (PREST-01)"""
+    validate_write_permission("contador", "POST /journals", "alegra")
+
+    mes = tool_input["mes"]  # yyyy-MM format
+    empleados = tool_input.get("empleados") or EMPLEADOS_DEFAULT
+
+    # Derive date range from yyyy-MM
+    date_from = f"{mes}-01"
+    date_to = f"{mes}-28"
+
+    resultados = []
+    for emp in empleados:
+        nombre = emp["nombre"]
+        salario = emp["salario"]
+
+        # Anti-dup: check Alegra journals for this month+employee
+        existing = await alegra.get("journals", params={
+            "date_from": date_from,
+            "date_to": date_to,
+            "limit": 100,
+        })
+        if isinstance(existing, list):
+            dup = any(
+                f"Prestaciones {nombre} {mes}" in j.get("observations", "")
+                for j in existing
+            )
+            if dup:
+                resultados.append({
+                    "nombre": nombre,
+                    "status": "duplicado",
+                    "error": f"Prestaciones {nombre} {mes} ya provisionadas",
+                })
+                continue
+
+        # Build journal entries: 4 debit (gasto) + 4 credit (provisión)
+        entries = []
+        for concepto, pct in PRESTACIONES_PORCENTAJES.items():
+            monto = round(salario * pct, 2)
+            cuentas = PRESTACIONES_CUENTAS[concepto]
+            entries.append({"id": cuentas["gasto"], "debit": monto, "credit": 0})
+            entries.append({"id": cuentas["provision"], "debit": 0, "credit": monto})
+
+        payload = {
+            "date": date_to,
+            "observations": f"Prestaciones {nombre} {mes}",
+            "entries": entries,
+        }
+        result = await alegra.request_with_verify("journals", "POST", payload=payload)
+
+        resultados.append({
+            "nombre": nombre,
+            "status": "creado",
+            "alegra_id": result["_alegra_id"],
+        })
+
+    await publish_event(
+        db=db,
+        event_type="prestaciones.provisionadas",
+        source="agente_contador",
+        datos={"mes": mes, "empleados": len(empleados), "resultados": resultados},
+        alegra_id=None,
+        accion_ejecutada=f"Prestaciones {mes} — {len(empleados)} empleados",
+    )
+
+    return {
+        "success": True,
+        "resultados": resultados,
+        "message": f"Prestaciones {mes} procesadas. {len(resultados)} empleados.",
+    }

@@ -169,6 +169,11 @@ _EGRESOS: list[dict] = [
                 "activo": {"type": "string", "description": "Descripción del activo (ej: 'motos en exhibición')"},
                 "monto": {"type": "number", "description": "Monto de depreciación del período en COP"},
                 "periodo": {"type": "string", "description": "Período (ej: 'enero 2026')"},
+                "tipo_activo": {
+                    "type": "string",
+                    "enum": ["equipo_computo", "muebles", "vehiculos", "edificaciones", "maquinaria"],
+                    "description": "Tipo de activo — determina cuentas y vida útil fiscal Art. 137 ET",
+                },
                 "fecha": {"type": "string", "description": "Fecha yyyy-MM-dd (opcional)"},
             },
         },
@@ -647,6 +652,29 @@ _NOMINA_IMPUESTOS: list[dict] = [
                     "description": "Período cuatrimestral",
                 },
                 "anio": {"type": "integer", "description": "Año (ej: 2026)"},
+            },
+        },
+    },
+    {
+        "name": "provisionar_prestaciones",
+        "description": "Provisiona mensualmente prestaciones sociales (prima 8.33%, cesantías 8.33%, intereses cesantías 1%, vacaciones 4.17%). Crea journal por empleado con gasto (P&L) y provisión (Balance). Anti-dup por mes+empleado.",
+        "input_schema": {
+            "type": "object",
+            "required": ["mes"],
+            "properties": {
+                "mes": {"type": "string", "description": "Período yyyy-MM (ej: '2026-04')"},
+                "empleados": {
+                    "type": "array",
+                    "description": "Lista de empleados. Si no se envía, usa Alexa ($4.5M) y Liz ($2.2M)",
+                    "items": {
+                        "type": "object",
+                        "required": ["nombre", "salario"],
+                        "properties": {
+                            "nombre": {"type": "string"},
+                            "salario": {"type": "number"},
+                        },
+                    },
+                },
             },
         },
     },
