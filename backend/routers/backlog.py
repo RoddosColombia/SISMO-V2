@@ -1,6 +1,10 @@
 """Backlog REST endpoints."""
-from fastapi import APIRouter, Depends
+import uuid
+
+from fastapi import APIRouter, BackgroundTasks, Depends
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pydantic import BaseModel
+
 from core.database import get_db
 
 router = APIRouter(prefix="/api/backlog", tags=["backlog"])
@@ -32,6 +36,161 @@ async def backlog_count(
     """Count pending backlog movements (for badge)."""
     count = await db.backlog_movimientos.count_documents({"estado": "pendiente"})
     return {"success": True, "count": count}
+
+
+# --- Batch causar endpoints (must be BEFORE /{backlog_id}/causar) ---
+
+
+class BatchCausarRequest(BaseModel):
+    confianza_minima: float = 0.70
+
+
+@router.post("/causar-batch")
+async def causar_batch(
+    request: BatchCausarRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Batch-cause all movements with confidence >= threshold. Runs in background."""
+    # Count eligible movements
+    filtro = {
+        "estado": "pendiente",
+        "confianza_v1": {"$gte": request.confianza_minima},
+    }
+    total = await db.backlog_movimientos.count_documents(filtro)
+
+    job_id = str(uuid.uuid4())[:8]
+
+    # Create job tracker
+    await db.conciliacion_jobs.insert_one({
+        "job_id": job_id,
+        "tipo": "causar_batch",
+        "total": total,
+        "procesados": 0,
+        "exitosos": 0,
+        "errores": 0,
+        "detalle_errores": [],
+        "estado": "procesando" if total > 0 else "completado",
+    })
+
+    if total > 0:
+        background_tasks.add_task(_run_batch_causar, job_id, request.confianza_minima, db)
+
+    return {"success": True, "job_id": job_id, "total_elegibles": total}
+
+
+async def _run_batch_causar(job_id: str, confianza_minima: float, db):
+    """Background task: cause each eligible movement via Alegra."""
+    from services.alegra.client import AlegraClient
+    from agents.contador.handlers.conciliacion import _classify_movement, BANCO_CATEGORY_IDS
+    from services.retenciones import calcular_retenciones
+    from core.events import publish_event
+
+    alegra = AlegraClient(db=db)
+
+    filtro = {
+        "estado": "pendiente",
+        "confianza_v1": {"$gte": confianza_minima},
+    }
+    cursor = db.backlog_movimientos.find(filtro)
+
+    procesados = 0
+    exitosos = 0
+    errores = 0
+    detalle_errores = []
+
+    async for mov in cursor:
+        procesados += 1
+        mov_id = mov["_id"]
+
+        try:
+            # Re-verify not already caused (anti-dup)
+            current = await db.backlog_movimientos.find_one({"_id": mov_id, "estado": "pendiente"})
+            if not current:
+                continue
+
+            # Classify movement
+            classification = _classify_movement(mov["descripcion"], mov["monto"])
+            cuenta_id = str(classification["cuenta_id"])
+            tipo = classification["tipo"]
+
+            # Get bank ID
+            banco = mov.get("banco", "Bancolombia")
+            banco_id = BANCO_CATEGORY_IDS.get(banco, "5314")
+
+            # Calculate retenciones
+            ret = calcular_retenciones(tipo, mov["monto"])
+
+            # Build entries
+            entries = [
+                {"id": cuenta_id, "debit": mov["monto"], "credit": 0},
+                {"id": banco_id, "debit": 0, "credit": ret["neto_a_pagar"]},
+            ]
+            if ret["retefuente_monto"] > 0:
+                entries.append({"id": ret["retefuente_alegra_id"], "debit": 0, "credit": ret["retefuente_monto"]})
+            if ret["reteica_monto"] > 0:
+                entries.append({"id": ret["reteica_alegra_id"], "debit": 0, "credit": ret["reteica_monto"]})
+
+            # POST to Alegra
+            payload = {
+                "date": mov.get("fecha", ""),
+                "observations": f"Batch: {mov.get('descripcion', '')[:80]}",
+                "entries": entries,
+            }
+            result = await alegra.request_with_verify("journals", "POST", payload=payload)
+
+            # Mark as causado
+            await db.backlog_movimientos.update_one(
+                {"_id": mov_id},
+                {"$set": {"estado": "causado", "alegra_id": result["_alegra_id"]}},
+            )
+
+            await publish_event(
+                db=db,
+                event_type="gasto.causado",
+                source="batch_causar",
+                datos={"alegra_id": result["_alegra_id"], "origen": "batch", "backlog_id": str(mov_id)},
+                alegra_id=result["_alegra_id"],
+                accion_ejecutada=f"Batch causar — Journal #{result['_alegra_id']}",
+            )
+
+            exitosos += 1
+
+        except Exception as e:
+            errores += 1
+            detalle_errores.append({"movimiento_id": str(mov_id), "error": str(e)[:200]})
+            await db.backlog_movimientos.update_one(
+                {"_id": mov_id},
+                {"$set": {"estado": "error", "razon_pendiente": str(e)[:200]}, "$inc": {"intentos": 1}},
+            )
+
+        # Update job progress every iteration
+        await db.conciliacion_jobs.update_one(
+            {"job_id": job_id},
+            {"$set": {"procesados": procesados, "exitosos": exitosos, "errores": errores, "detalle_errores": detalle_errores}},
+        )
+
+    # Mark job complete
+    await db.conciliacion_jobs.update_one(
+        {"job_id": job_id},
+        {"$set": {"estado": "completado", "procesados": procesados, "exitosos": exitosos, "errores": errores, "detalle_errores": detalle_errores}},
+    )
+
+
+@router.get("/job/{job_id}")
+async def get_job_status(
+    job_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Get batch job status."""
+    job = await db.conciliacion_jobs.find_one({"job_id": job_id})
+    if not job:
+        return {"success": False, "error": "Job no encontrado"}
+    job.pop("_id", None)
+    return {"success": True, **job}
+
+
+# --- Single-movement causar (must be AFTER /causar-batch and /job/{job_id}) ---
 
 
 @router.post("/{backlog_id}/causar")

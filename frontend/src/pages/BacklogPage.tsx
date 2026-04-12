@@ -11,6 +11,7 @@ interface BacklogMovimiento {
   razon_pendiente: string
   intentos: number
   estado: string
+  confianza_v1?: number
 }
 
 const CUENTAS_RODDOS = [
@@ -40,6 +41,9 @@ export default function BacklogPage() {
   const [reteica, setReteica] = useState(0)
   const [causarLoading, setCausarLoading] = useState(false)
   const [causarError, setCausarError] = useState('')
+  const [batchJobId, setBatchJobId] = useState<string | null>(null)
+  const [batchStatus, setBatchStatus] = useState<{estado: string, total: number, procesados: number, exitosos: number, errores: number} | null>(null)
+  const [showBatchConfirm, setShowBatchConfirm] = useState(false)
 
   const fetchBacklog = useCallback(async () => {
     setLoading(true)
@@ -55,6 +59,38 @@ export default function BacklogPage() {
   }, [banco])
 
   useEffect(() => { fetchBacklog() }, [fetchBacklog])
+
+  const elegibles = movimientos.filter(m => (m as any).confianza_v1 >= 0.70).length
+
+  async function startBatch() {
+    setShowBatchConfirm(false)
+    try {
+      const res = await apiPost<{success: boolean, job_id: string, total_elegibles: number}>('/backlog/causar-batch', { confianza_minima: 0.70 })
+      if (res.success && res.total_elegibles > 0) {
+        setBatchJobId(res.job_id)
+        pollJob(res.job_id)
+      }
+    } catch (err) {
+      // silent
+    }
+  }
+
+  function pollJob(jobId: string) {
+    const interval = setInterval(async () => {
+      try {
+        const res = await apiGet<{success: boolean, estado: string, total: number, procesados: number, exitosos: number, errores: number}>(`/backlog/job/${jobId}`)
+        if (res.success) {
+          setBatchStatus(res)
+          if (res.estado === 'completado') {
+            clearInterval(interval)
+            setTimeout(() => { setBatchJobId(null); setBatchStatus(null); fetchBacklog() }, 3000)
+          }
+        }
+      } catch {
+        clearInterval(interval)
+      }
+    }, 2000)
+  }
 
   async function handleCausar() {
     if (!causarTarget) return
@@ -99,6 +135,34 @@ export default function BacklogPage() {
             ${movimientos.reduce((s, m) => s + m.monto, 0).toLocaleString('es-CO')}
           </div>
         </div>
+      </div>
+
+      {/* Batch causar button */}
+      <div className="px-6 pb-4">
+        {batchJobId && batchStatus ? (
+          <div className="bg-surface-container-lowest shadow-ambient-1 rounded-lg p-4">
+            <div className="flex justify-between text-sm mb-2">
+              <span className="text-on-surface font-medium">Causando automaticos...</span>
+              <span className="text-on-surface-variant">{batchStatus.procesados}/{batchStatus.total}</span>
+            </div>
+            <div className="w-full bg-surface-container-low rounded-full h-2">
+              <div className="bg-primary h-2 rounded-full transition-all" style={{width: `${batchStatus.total > 0 ? (batchStatus.procesados / batchStatus.total) * 100 : 0}%`}} />
+            </div>
+            {batchStatus.estado === 'completado' && (
+              <div className="mt-2 text-xs text-on-surface-variant">
+                {batchStatus.exitosos} causados, {batchStatus.errores} errores
+              </div>
+            )}
+          </div>
+        ) : (
+          <button
+            onClick={() => setShowBatchConfirm(true)}
+            disabled={elegibles === 0}
+            className="px-4 py-2 text-sm bg-primary text-white rounded-md hover:brightness-110 disabled:opacity-30 transition-all"
+          >
+            Causar Automaticos ({elegibles} elegibles)
+          </button>
+        )}
       </div>
 
       {/* Filter tabs */}
@@ -168,6 +232,28 @@ export default function BacklogPage() {
           </div>
         )}
       </div>
+
+      {/* Batch Confirm Modal */}
+      {showBatchConfirm && (
+        <div className="fixed inset-0 bg-on-surface/30 flex items-center justify-center z-50">
+          <div className="glass shadow-ambient-3 rounded-lg p-6 max-w-sm mx-4">
+            <h3 className="font-display font-bold text-on-surface mb-3">Causar Automaticos</h3>
+            <p className="text-sm text-on-surface-variant mb-5">
+              Se van a causar {elegibles} movimientos con confianza &ge;70% automaticamente en Alegra. Esta accion no se puede deshacer.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => setShowBatchConfirm(false)}
+                className="px-4 py-2.5 text-sm text-on-surface-variant bg-surface-container-low rounded-md hover:bg-surface transition-colors">
+                Cancelar
+              </button>
+              <button onClick={startBatch}
+                className="px-5 py-2.5 text-sm bg-primary text-white rounded-md hover:brightness-110 transition-all">
+                Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Causar Modal — Glass */}
       {causarTarget && (
