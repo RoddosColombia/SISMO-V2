@@ -95,7 +95,7 @@ async def test_ingreso_cuota_publishes_event(mock_alegra, mock_db):
             assert call_kwargs["event_type"] == "pago.cuota.registrado"
 
 
-# --- Test 5: Ingreso no operacional reads from plan_ingresos_roddos ---
+# --- Test 5: Ingreso no operacional resolves via AlegraAccountsService (ROG-4) ---
 
 @pytest.mark.asyncio
 async def test_ingreso_no_op_reads_account(mock_alegra, mock_db):
@@ -105,7 +105,8 @@ async def test_ingreso_no_op_reads_account(mock_alegra, mock_db):
         with patch("agents.contador.handlers.ingresos.publish_event", new_callable=AsyncMock):
             result = await handle_registrar_ingreso_no_operacional(tool_input, mock_alegra, mock_db, mock_db, "user1")
             assert result["success"] is True
-            mock_db.plan_ingresos_roddos.find_one.assert_called()
+            # ROG-4: no longer reads from MongoDB plan_ingresos_roddos
+            mock_db.plan_ingresos_roddos.find_one.assert_not_called()
 
 
 # --- Test 6: Ingreso no op uses fallback "5436" if account not found ---
@@ -140,8 +141,8 @@ async def test_cxc_socio_debits_cxc(mock_alegra, mock_db):
             call_args = mock_alegra.request_with_verify.call_args
             payload = call_args.kwargs.get("payload", {})
             debit_ids = [e["id"] for e in payload.get("entries", []) if e.get("debit", 0) > 0]
-            # mock_db returns alegra_id=1305 from plan_cuentas_roddos, handler converts to str
-            assert "1305" in debit_ids, f"CXC account 1305 not in debit entries: {debit_ids}"
+            # ROG-4: CXC Socios resolved from AlegraAccountsService → 5329 (132505)
+            assert "5329" in debit_ids, f"CXC account 5329 not in debit entries: {debit_ids}"
             assert "5494" not in debit_ids, "Gasto fallback 5494 should NOT be in CXC debit"
 
 

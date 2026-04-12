@@ -41,6 +41,7 @@ async def handle_registrar_pago_cuota(
     fecha = tool_input.get("fecha") or datetime.date.today().isoformat()
     banco_id = BANCO_PAYMENT_IDS.get(banco, 5)
 
+    # ROG-4 OK: lectura operativa Loanbook, no dato contable
     loanbook = await db.loanbook.find_one({"loanbook_id": loanbook_id})
     if not loanbook:
         return {"success": False, "error": f"Loanbook {loanbook_id} no encontrado"}

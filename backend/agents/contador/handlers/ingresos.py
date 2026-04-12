@@ -66,7 +66,7 @@ async def handle_registrar_ingreso_cuota(
     banco_category_id = BANCO_CATEGORY_IDS.get(banco, "5314")
     banco_payment_id = BANCO_PAYMENT_IDS.get(banco, 5)
 
-    # Look up invoice from loanbook (MongoDB operational data — allowed)
+    # ROG-4 OK: lectura operativa Loanbook, no dato contable
     loanbook = await db.loanbook.find_one({"loanbook_id": loanbook_id})
     if not loanbook:
         return {"success": False, "error": f"Loanbook {loanbook_id} no encontrado"}
@@ -144,9 +144,10 @@ async def handle_registrar_ingreso_no_operacional(
     descripcion = tool_input.get("descripcion", f"Ingreso no operacional — {tipo}")
     banco_category_id = BANCO_CATEGORY_IDS.get(banco, "5314")
 
-    # Read ingreso account from plan_ingresos_roddos, fallback to otros_ingresos
-    ingreso_account = await db.plan_ingresos_roddos.find_one({"tipo": tipo})
-    ingreso_id = ingreso_account["alegra_id"] if ingreso_account else "5436"  # 42 Otros ingresos
+    # ROG-4: resolve from Alegra, not MongoDB
+    from services.alegra_accounts import AlegraAccountsService
+    accounts = AlegraAccountsService(alegra)
+    ingreso_id = await accounts.get_ingreso_id(tipo)
 
     journal_payload = {
         "date": fecha,
@@ -198,11 +199,10 @@ async def handle_registrar_cxc_socio(
     descripcion = tool_input.get("descripcion", f"Retiro personal socio {nombre_socio}")
     banco_category_id = BANCO_CATEGORY_IDS.get(banco, "5314")
 
-    # CXC Socios — real Alegra ID, fallback to hardcoded 5329 (132505)
-    cxc_record = await db.plan_cuentas_roddos.find_one({"tipo": "cxc_socios", "cc": cc})
-    if not cxc_record:
-        cxc_record = await db.plan_cuentas_roddos.find_one({"tipo": "cxc_socios"})
-    cxc_id = cxc_record["alegra_id"] if cxc_record else CXC_SOCIOS_ALEGRA_ID
+    # ROG-4: resolve CXC Socios from Alegra service, not MongoDB
+    from services.alegra_accounts import AlegraAccountsService
+    accounts = AlegraAccountsService(alegra)
+    cxc_id = await accounts.get_cxc_socios_id()
 
     journal_payload = {
         "date": fecha,
@@ -239,15 +239,12 @@ async def handle_consultar_cxc_socios(
 ) -> dict:
     """Read-only: saldo CXC pendiente por socio desde journals Alegra. No MongoDB write. (CXC-02)"""
     try:
+        from services.alegra_accounts import AlegraAccountsService
+        accounts = AlegraAccountsService(alegra)
+        cxc_id = await accounts.get_cxc_socios_id()
+
         resultado = []
         for cc, nombre in SOCIOS.items():
-            cxc_record = await db.plan_cuentas_roddos.find_one({"tipo": "cxc_socios", "cc": cc})
-            if not cxc_record:
-                cxc_record = await db.plan_cuentas_roddos.find_one({"tipo": "cxc_socios"})
-            if not cxc_record:
-                resultado.append({"nombre": nombre, "cc": cc, "saldo_pendiente": 0, "error": "Cuenta CXC no configurada"})
-                continue
-            cxc_id = cxc_record["alegra_id"]
 
             journals = await alegra.get("journals", params={"account": cxc_id, "limit": 200})
             saldo = 0.0

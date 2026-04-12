@@ -47,7 +47,7 @@ async def handle_crear_factura_venta_moto(
     if not moto_vin:
         return {"success": False, "error": "VIN (chasis) es OBLIGATORIO para facturar. No se puede crear factura sin VIN."}
 
-    # Look up moto in inventory (MongoDB operational data — allowed)
+    # ROG-4 OK: lectura operativa inventario_motos, no dato contable
     moto = await db.inventario_motos.find_one({"vin": moto_vin})
     if not moto:
         return {"success": False, "error": f"Moto con VIN {moto_vin} no encontrada en inventario."}
