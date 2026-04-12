@@ -14,19 +14,23 @@ interface BacklogMovimiento {
   confianza_v1?: number
 }
 
-const CUENTAS_RODDOS = [
-  { id: '5480', label: 'Arrendamientos (512010)' },
-  { id: '5485', label: 'Acueducto (513525)' },
-  { id: '5487', label: 'Telefono/Internet (513535)' },
-  { id: '5492', label: 'Construcciones (514510)' },
-  { id: '5497', label: 'Utiles papeleria (519530)' },
-  { id: '5494', label: 'FALLBACK Deudores (51991001)' },
-  { id: '5462', label: 'Sueldos (510506)' },
-  { id: '5475', label: 'Asesoria juridica (511025)' },
-  { id: '5499', label: 'Taxis y buses (519545)' },
-  { id: '5508', label: 'Comisiones bancarias (530515)' },
-  { id: '5507', label: 'Gastos bancarios (530505)' },
-  { id: '5509', label: 'Gravamen 4x1000 (531520)' },
+interface CuentaAlegra {
+  id: string
+  nombre: string
+  codigo: string
+}
+
+const CUENTAS_FALLBACK: CuentaAlegra[] = [
+  { id: '5480', nombre: 'Arrendamientos', codigo: '512010' },
+  { id: '5485', nombre: 'Acueducto', codigo: '513525' },
+  { id: '5487', nombre: 'Telefono / Internet', codigo: '513535' },
+  { id: '5494', nombre: 'Gastos Varios', codigo: '51991001' },
+  { id: '5462', nombre: 'Sueldos y salarios', codigo: '510506' },
+  { id: '5475', nombre: 'Asesoria juridica', codigo: '511025' },
+  { id: '5508', nombre: 'Comisiones', codigo: '530515' },
+  { id: '5507', nombre: 'Gastos bancarios', codigo: '530505' },
+  { id: '5509', nombre: 'Gravamen al movimiento Financiero', codigo: '531520' },
+  { id: '5329', nombre: 'CXC Socios y accionistas', codigo: '132505' },
 ]
 
 const BANCOS = ['Bancolombia', 'BBVA', 'Davivienda', 'Nequi', 'Global66']
@@ -41,6 +45,8 @@ export default function BacklogPage() {
   const [reteica, setReteica] = useState(0)
   const [causarLoading, setCausarLoading] = useState(false)
   const [causarError, setCausarError] = useState('')
+  const [cuentas, setCuentas] = useState<CuentaAlegra[]>(CUENTAS_FALLBACK)
+  const [cuentaSearch, setCuentaSearch] = useState('')
   const [batchJobId, setBatchJobId] = useState<string | null>(null)
   const [batchStatus, setBatchStatus] = useState<{estado: string, total: number, procesados: number, exitosos: number, errores: number} | null>(null)
   const [showBatchConfirm, setShowBatchConfirm] = useState(false)
@@ -59,6 +65,16 @@ export default function BacklogPage() {
   }, [banco])
 
   useEffect(() => { fetchBacklog() }, [fetchBacklog])
+
+  useEffect(() => {
+    apiGet<{ success: boolean; data: CuentaAlegra[] }>('/alegra/cuentas')
+      .then(res => { if (res.success && res.data.length > 0) setCuentas(res.data) })
+      .catch(() => {})
+  }, [])
+
+  const cuentasFiltradas = cuentaSearch
+    ? cuentas.filter(c => `${c.id} ${c.nombre} ${c.codigo}`.toLowerCase().includes(cuentaSearch.toLowerCase()))
+    : cuentas
 
   const elegibles = movimientos.filter(m => (m as any).confianza_v1 >= 0.70).length
 
@@ -268,13 +284,23 @@ export default function BacklogPage() {
             </div>
 
             <label className="block text-xs font-medium text-on-surface-variant uppercase tracking-wider mb-2">Cuenta contable</label>
+            <input
+              type="text"
+              value={cuentaSearch}
+              onChange={(e) => setCuentaSearch(e.target.value)}
+              placeholder="Buscar cuenta..."
+              className="w-full px-3 py-2 bg-surface-container-low rounded-md text-sm text-on-surface mb-1 focus:outline-none focus:ring-2 focus:ring-primary/30"
+            />
             <select
               value={cuentaId}
               onChange={(e) => setCuentaId(e.target.value)}
-              className="w-full px-3 py-2.5 bg-surface-container-low rounded-md text-sm text-on-surface mb-4 focus:outline-none focus:ring-2 focus:ring-primary/30"
+              size={Math.min(cuentasFiltradas.length, 6)}
+              className="w-full px-3 py-1 bg-surface-container-low rounded-md text-sm text-on-surface mb-4 focus:outline-none focus:ring-2 focus:ring-primary/30"
             >
-              {CUENTAS_RODDOS.map((c) => (
-                <option key={c.id} value={c.id}>{c.id} — {c.label}</option>
+              {cuentasFiltradas.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.id} — {c.id === '5494' ? 'Gastos Varios' : c.nombre} ({c.codigo})
+                </option>
               ))}
             </select>
 
