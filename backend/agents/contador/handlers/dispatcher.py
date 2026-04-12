@@ -25,6 +25,7 @@ READ_ONLY_TOOLS = frozenset({
     "consultar_inventario",
     "consultar_bills",
     "catalogo_cuentas_roddos",
+    "consultar_calendario_tributario",
 })
 
 # Conciliation tools — implemented in Phase 3
@@ -146,6 +147,7 @@ class ToolDispatcher:
                 handle_consultar_obligaciones_tributarias,
                 handle_calcular_retenciones,
                 handle_provisionar_prestaciones,
+                handle_consultar_calendario_tributario,
             )
             from agents.contador.handlers.cartera import (
                 handle_consultar_cartera,
@@ -157,6 +159,7 @@ class ToolDispatcher:
                 "provisionar_prestaciones": handle_provisionar_prestaciones,
                 "consultar_cartera": handle_consultar_cartera,
                 "catalogo_cuentas_roddos": handle_consultar_catalogo_roddos,
+                "consultar_calendario_tributario": handle_consultar_calendario_tributario,
             })
         except ImportError:
             pass

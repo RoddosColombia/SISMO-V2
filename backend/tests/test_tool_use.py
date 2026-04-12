@@ -28,8 +28,8 @@ from agents.contador.tools import (
 
 # --- Tool count ---
 
-def test_contador_has_exactly_35_tools():
-    assert len(CONTADOR_TOOLS) == 35
+def test_contador_has_exactly_36_tools():
+    assert len(CONTADOR_TOOLS) == 36
 
 
 def test_egresos_has_7_tools():
@@ -56,8 +56,8 @@ def test_cartera_has_2_tools():
     assert len(_CARTERA) == 2
 
 
-def test_nomina_impuestos_has_4_tools():
-    assert len(_NOMINA_IMPUESTOS) == 4
+def test_nomina_impuestos_has_5_tools():
+    assert len(_NOMINA_IMPUESTOS) == 5
 
 
 def test_catalogo_has_1_tool():
@@ -88,7 +88,7 @@ def test_all_tool_names_are_unique():
 
 def test_get_tools_for_contador():
     tools = get_tools_for_agent('contador')
-    assert len(tools) == 35
+    assert len(tools) == 36
 
 
 def test_get_tools_for_cfo_returns_empty():
@@ -162,6 +162,7 @@ EXPECTED_TOOLS = [
     'consultar_proveedores',
     'consultar_cartera', 'consultar_recaudo_semanal',
     'registrar_nomina', 'registrar_cxc_socio', 'consultar_iva_cuatrimestral',
+    'consultar_calendario_tributario',
     'catalogo_cuentas_roddos',
 ]
 
