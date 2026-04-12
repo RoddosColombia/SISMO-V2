@@ -32,36 +32,30 @@ export default function LoginPage() {
       <div className="hidden lg:flex lg:w-1/2 bg-on-surface flex-col justify-between p-12 text-surface-container-lowest">
         <div>
           <img src="/logo-roddos-dark.png" alt="RODDOS" className="h-10 mb-12" />
-          <h1 className="font-display text-3xl font-bold leading-tight mb-10 text-white/80">
+          <h1 className="font-display text-3xl font-bold leading-tight mb-16 text-white/80">
             Precision.<br />
             Administrative.<br />
             Excellence.
           </h1>
 
-          {/* SISMO Logo */}
-          <svg viewBox="0 0 520 100" className="w-full max-w-md mb-3" aria-label="SISMO">
-            {/* S */}
-            <text x="0" y="82" fontFamily="'Public Sans', sans-serif" fontWeight="800" fontSize="90" fill="white">S</text>
-            {/* I */}
-            <text x="62" y="82" fontFamily="'Public Sans', sans-serif" fontWeight="800" fontSize="90" fill="white">I</text>
-            {/* S */}
-            <text x="105" y="82" fontFamily="'Public Sans', sans-serif" fontWeight="800" fontSize="90" fill="white">S</text>
-            {/* M */}
-            <text x="168" y="82" fontFamily="'Public Sans', sans-serif" fontWeight="800" fontSize="90" fill="white">M</text>
-            {/* O — replaced by radar circle */}
-            <g transform="translate(310, 50)">
-              {/* Outer cyan arc */}
-              <path d="M 38 -8 A 40 40 0 0 1 8 38" stroke="#00b4d8" strokeWidth="6" fill="none" strokeLinecap="round" />
-              <path d="M -38 8 A 40 40 0 0 1 -8 -38" stroke="#00b4d8" strokeWidth="6" fill="none" strokeLinecap="round" />
-              {/* Middle green arc */}
-              <path d="M 28 -6 A 30 30 0 0 1 6 28" stroke="#006e2a" strokeWidth="6" fill="none" strokeLinecap="round" />
-              <path d="M -28 6 A 30 30 0 0 1 -6 -28" stroke="#006e2a" strokeWidth="6" fill="none" strokeLinecap="round" />
-              {/* Inner cyan arc */}
-              <path d="M 18 -4 A 20 20 0 0 1 4 18" stroke="#00b4d8" strokeWidth="5" fill="none" strokeLinecap="round" />
-              <path d="M -18 4 A 20 20 0 0 1 -4 -18" stroke="#00b4d8" strokeWidth="5" fill="none" strokeLinecap="round" />
-              {/* Center dot */}
-              <circle cx="0" cy="0" r="5" fill="#00b4d8" />
-              <circle cx="0" cy="0" r="8" stroke="#00b4d8" strokeWidth="2" fill="none" />
+          {/* SISMO Logo — SISM + radar O */}
+          <svg viewBox="0 0 480 120" className="w-full max-w-lg mb-4" aria-label="SISMO">
+            {/* SISM as continuous word */}
+            <text x="0" y="98" fontFamily="'Public Sans', sans-serif" fontWeight="900" fontSize="115" fill="white" letterSpacing="-2">SISM</text>
+            {/* O — radar circle matching letter height */}
+            <g transform="translate(380, 52)">
+              {/* Outer cyan arcs */}
+              <path d="M 42 -10 A 44 44 0 0 1 10 42" stroke="#00b4d8" strokeWidth="7" fill="none" strokeLinecap="round" />
+              <path d="M -42 10 A 44 44 0 0 1 -10 -42" stroke="#00b4d8" strokeWidth="7" fill="none" strokeLinecap="round" />
+              {/* Mid green arcs */}
+              <path d="M 30 -7 A 32 32 0 0 1 7 30" stroke="#006e2a" strokeWidth="7" fill="none" strokeLinecap="round" />
+              <path d="M -30 7 A 32 32 0 0 1 -7 -30" stroke="#006e2a" strokeWidth="7" fill="none" strokeLinecap="round" />
+              {/* Inner cyan arcs */}
+              <path d="M 19 -4 A 20 20 0 0 1 4 19" stroke="#00b4d8" strokeWidth="6" fill="none" strokeLinecap="round" />
+              <path d="M -19 4 A 20 20 0 0 1 -4 -19" stroke="#00b4d8" strokeWidth="6" fill="none" strokeLinecap="round" />
+              {/* Center */}
+              <circle cx="0" cy="0" r="6" fill="#00b4d8" />
+              <circle cx="0" cy="0" r="10" stroke="#00b4d8" strokeWidth="2.5" fill="none" />
             </g>
           </svg>
           <p className="text-white/40 text-sm tracking-widest uppercase">
