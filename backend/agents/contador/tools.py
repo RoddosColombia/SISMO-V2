@@ -613,6 +613,10 @@ _NOMINA_IMPUESTOS: list[dict] = [
                         },
                     },
                 },
+                "incluir_sgsss": {
+                    "type": "boolean",
+                    "description": "Incluir seguridad social y parafiscales (default: true). Si false, solo causa salario basico.",
+                },
             },
         },
     },
@@ -676,6 +680,19 @@ _NOMINA_IMPUESTOS: list[dict] = [
                     },
                 },
             },
+        },
+    },
+    {
+        "name": "consultar_calendario_tributario",
+        "description": (
+            "Muestra el calendario tributario de RODDOS con las próximas fechas de vencimiento "
+            "y semáforo: VERDE (>30 días), AMARILLO (7-30 días), ROJO (<7 días), VENCIDO. "
+            "Obligaciones: ReteFuente (mensual), IVA (cuatrimestral), ReteICA Bogotá (bimestral), "
+            "ICA Bogotá (anual)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
         },
     },
 ]
