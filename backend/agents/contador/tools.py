@@ -367,7 +367,7 @@ _CONCILIACION: list[dict] = [
 ]
 
 # ---------------------------------------------------------------------------
-# CATEGORÍA 4 — FACTURACIÓN E INVENTARIO (4 tools)
+# CATEGORÍA 4 — FACTURACIÓN E INVENTARIO (6 tools)
 # ---------------------------------------------------------------------------
 
 _FACTURACION: list[dict] = [
@@ -434,6 +434,50 @@ _FACTURACION: list[dict] = [
                 "fecha_desde": {"type": "string", "description": "yyyy-MM-dd"},
                 "fecha_hasta": {"type": "string", "description": "yyyy-MM-dd"},
                 "proveedor": {"type": "string", "description": "Nombre o NIT del proveedor"},
+            },
+        },
+    },
+    {
+        "name": "anular_factura",
+        "description": (
+            "Anula (void) una factura de venta en Alegra. "
+            "Ejecuta POST /invoices/{id}/void con motivo. "
+            "Publica evento factura.venta.anulada al bus."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["invoice_id"],
+            "properties": {
+                "invoice_id": {"type": "string", "description": "ID de la factura en Alegra a anular"},
+                "motivo": {"type": "string", "description": "Razón de la anulación"},
+            },
+        },
+    },
+    {
+        "name": "crear_nota_credito",
+        "description": (
+            "Crea una nota crédito asociada a una factura en Alegra via POST /credit-notes. "
+            "Ejecuta via request_with_verify(). Publica evento nota_credito.creada."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["invoice_id", "motivo"],
+            "properties": {
+                "invoice_id": {"type": "string", "description": "ID de la factura original en Alegra"},
+                "motivo": {"type": "string", "description": "Razón de la nota crédito"},
+                "items": {
+                    "type": "array",
+                    "description": "Items de la nota crédito (parcial o total)",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "price": {"type": "number"},
+                            "quantity": {"type": "number"},
+                        },
+                    },
+                },
+                "fecha": {"type": "string", "description": "Fecha yyyy-MM-dd (opcional, default: hoy)"},
             },
         },
     },

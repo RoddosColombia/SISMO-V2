@@ -28,8 +28,8 @@ from agents.contador.tools import (
 
 # --- Tool count ---
 
-def test_contador_has_exactly_36_tools():
-    assert len(CONTADOR_TOOLS) == 36
+def test_contador_has_exactly_38_tools():
+    assert len(CONTADOR_TOOLS) == 38
 
 
 def test_egresos_has_7_tools():
@@ -44,8 +44,8 @@ def test_conciliacion_has_5_tools():
     assert len(_CONCILIACION) == 5
 
 
-def test_facturacion_has_4_tools():
-    assert len(_FACTURACION) == 4
+def test_facturacion_has_6_tools():
+    assert len(_FACTURACION) == 6
 
 
 def test_consultas_alegra_has_8_tools():
@@ -88,7 +88,7 @@ def test_all_tool_names_are_unique():
 
 def test_get_tools_for_contador():
     tools = get_tools_for_agent('contador')
-    assert len(tools) == 36
+    assert len(tools) == 38
 
 
 def test_get_tools_for_cfo_returns_empty():

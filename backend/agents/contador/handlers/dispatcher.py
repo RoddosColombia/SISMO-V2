@@ -136,6 +136,8 @@ class ToolDispatcher:
             self._handlers.update({
                 "crear_factura_venta": handle_crear_factura_venta_moto,
                 "consultar_facturas": handle_consultar_facturas,
+                "anular_factura": handle_anular_factura,
+                "crear_nota_credito": handle_crear_nota_credito,
             })
         except ImportError:
             pass
