@@ -397,6 +397,23 @@ async def handle_registrar_ajuste_contable(
 # HANDLER 7: registrar_depreciacion
 # ═══════════════════════════════════════════════════════
 
+# Art. 137 ET — Vida útil fiscal Colombia (línea recta)
+VIDA_UTIL_FISCAL = {
+    "edificaciones": {"anios": 20, "mensual_pct": 0.00417},
+    "maquinaria": {"anios": 10, "mensual_pct": 0.00833},
+    "vehiculos": {"anios": 5, "mensual_pct": 0.01667},
+    "equipo_computo": {"anios": 5, "mensual_pct": 0.01667},
+    "muebles": {"anios": 10, "mensual_pct": 0.00833},
+}
+
+# Alegra accounts per asset type: {gasto_id, contra_activo_id}
+DEPRECIACION_CUENTAS = {
+    "equipo_computo": {"gasto": "5503", "contra": "5360"},   # 516020 / 15922001
+    "muebles": {"gasto": "5502", "contra": "5358"},          # 516015 / 15921501
+    "vehiculos": {"gasto": "5504", "contra": "5358"},        # 523040 / fallback 15921501
+}
+
+
 async def handle_registrar_depreciacion(
     tool_input: dict,
     alegra: AlegraClient,
@@ -411,23 +428,44 @@ async def handle_registrar_depreciacion(
     monto = tool_input["monto"]
     periodo = tool_input.get("periodo", "")
     fecha = tool_input.get("fecha") or datetime.date.today().isoformat()
+    tipo_activo = tool_input.get("tipo_activo", "equipo_computo")
+
+    # Look up accounts for asset type, fall back to equipo_computo
+    cuentas = DEPRECIACION_CUENTAS.get(tipo_activo, DEPRECIACION_CUENTAS["equipo_computo"])
+
+    # Anti-dup: GET /journals checking for existing depreciation with same observation
+    obs_text = f"Depreciación {activo} {periodo}"
+    existing = await alegra.get("journals", params={"limit": 100})
+    if isinstance(existing, list):
+        dup = any(obs_text in j.get("observations", "") for j in existing)
+        if dup:
+            return {
+                "success": False,
+                "error": f"Depreciación duplicada: '{obs_text}' ya existe en Alegra.",
+            }
 
     entries = [
-        {"id": "5502", "debit": monto, "credit": 0},  # 516015 Depreciación Equipo de oficina
-        {"id": "5358", "debit": 0, "credit": monto},  # 15921501 Depreciación acumulada Eq oficina
+        {"id": cuentas["gasto"], "debit": monto, "credit": 0},
+        {"id": cuentas["contra"], "debit": 0, "credit": monto},
     ]
-    result = await _post_journal(entries, fecha, f"Depreciación {activo} {periodo}", alegra)
+    result = await _post_journal(entries, fecha, obs_text, alegra)
 
     await publish_event(
         db=db,
         event_type="gasto.causado",
         source="agente_contador",
-        datos={"alegra_id": result["_alegra_id"], "tipo": "depreciacion", "activo": activo, "monto": monto},
+        datos={
+            "alegra_id": result["_alegra_id"],
+            "tipo": "depreciacion",
+            "activo": activo,
+            "tipo_activo": tipo_activo,
+            "monto": monto,
+        },
         alegra_id=result["_alegra_id"],
-        accion_ejecutada=f"Depreciación {activo} {periodo} ${monto:,.0f}",
+        accion_ejecutada=f"Depreciación {activo} ({tipo_activo}) {periodo} ${monto:,.0f}",
     )
     return {
         "success": True,
         "alegra_id": result["_alegra_id"],
-        "message": f"Depreciación registrada. Journal #{result['_alegra_id']} — {activo} {periodo}",
+        "message": f"Depreciación registrada. Journal #{result['_alegra_id']} — {activo} ({tipo_activo}) {periodo}",
     }
