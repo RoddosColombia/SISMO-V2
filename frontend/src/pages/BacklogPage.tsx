@@ -260,7 +260,11 @@ export default function BacklogPage() {
                             'Bancolombia': '5314', 'BBVA': '5318', 'Davivienda': '5322',
                             'Nequi': '5314', 'Global66': '5536',
                           }
-                          setCuentaOrigen(bancoMap[m.banco] || '5314')
+                          const origen = bancoMap[m.banco] || '5314'
+                          setCuentaOrigen(origen)
+                          // Pre-select a different bank as destino
+                          const destinos = Object.values(bancoMap).filter(v => v !== origen)
+                          setCuentaDestino(destinos[0] || '5314')
                         }}
                         className="px-3 py-1.5 text-xs bg-primary text-white rounded-md hover:brightness-110 transition-all"
                       >
