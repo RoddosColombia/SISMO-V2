@@ -57,6 +57,13 @@ SGSSS_GASTO_CUENTAS = {
 RETEFUENTE_ACCOUNT_IDS = {"5381", "5382", "5383", "5384", "5386", "5388"}
 RETEICA_ACCOUNT_IDS = {"5392", "5393"}
 
+def _prefix_obs(prefix: str, observations: str) -> str:
+    """Prepend classification prefix [XX] to observations if not already present."""
+    if observations.startswith(f"[{prefix}]"):
+        return observations
+    return f"[{prefix}] {observations}"
+
+
 IVA_CUATRIMESTRES = {
     1: "ene-abr", 2: "ene-abr", 3: "ene-abr", 4: "ene-abr",
     5: "may-ago", 6: "may-ago", 7: "may-ago", 8: "may-ago",
@@ -144,7 +151,7 @@ async def handle_registrar_nomina_mensual(
         fecha = f"{anio}-{mes:02d}-28"
         payload = {
             "date": fecha,
-            "observations": f"Nómina {nombre} {mes}/{anio}",
+            "observations": _prefix_obs("NO", f"Nómina {nombre} {mes}/{anio}"),
             "entries": entries_final,
         }
         result = await alegra.request_with_verify("journals", "POST", payload=payload)
@@ -307,7 +314,7 @@ async def handle_provisionar_prestaciones(
 
         payload = {
             "date": date_to,
-            "observations": f"Prestaciones {nombre} {mes}",
+            "observations": _prefix_obs("NO", f"Prestaciones {nombre} {mes}"),
             "entries": entries,
         }
         result = await alegra.request_with_verify("journals", "POST", payload=payload)

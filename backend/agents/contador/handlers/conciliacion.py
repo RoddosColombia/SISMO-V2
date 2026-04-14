@@ -65,6 +65,13 @@ CLASSIFICATION_RULES: list[tuple[str, str, int, float]] = [
 SOCIOS_CC = {"80075452": "Andrés Sanjuan", "80086601": "Iván Echeverri"}
 
 
+def _prefix_obs(prefix: str, observations: str) -> str:
+    """Prepend classification prefix [XX] to observations if not already present."""
+    if observations.startswith(f"[{prefix}]"):
+        return observations
+    return f"[{prefix}] {observations}"
+
+
 def _classify_movement(descripcion: str, monto: float) -> dict:
     """Classify a bank movement with confidence 0-1."""
     desc_lower = descripcion.lower()
@@ -173,7 +180,7 @@ async def handle_conciliar_extracto_bancario(
 
                 payload = {
                     "date": mov["fecha"],
-                    "observations": f"Conciliación {banco}: {mov['descripcion']}",
+                    "observations": _prefix_obs("AC", f"Conciliación {banco}: {mov['descripcion']}"),
                     "entries": entries,
                 }
                 result = await alegra.request_with_verify("journals", "POST", payload=payload)
@@ -323,7 +330,7 @@ async def handle_causar_desde_backlog(
     try:
         payload = {
             "date": mov["fecha"],
-            "observations": f"Backlog: {mov['descripcion']}",
+            "observations": _prefix_obs("AC", f"Backlog: {mov['descripcion']}"),
             "entries": entries,
         }
         result = await alegra.request_with_verify("journals", "POST", payload=payload)

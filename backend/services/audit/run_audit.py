@@ -49,7 +49,7 @@ async def main(use_cache: bool = True, output: str = "audit_report.html"):
 
     # Generate HTML
     output_path = Path(output)
-    print(f"\nStep 3: Generating HTML report → {output_path}")
+    print(f"\nStep 3: Generating HTML report -> {output_path}")
     generate_report_html(classifications, str(output_path))
     print(f"  Report saved to {output_path.absolute()}")
 

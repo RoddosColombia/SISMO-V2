@@ -139,7 +139,7 @@ async def _run_batch_causar(job_id: str, confianza_minima: float, db):
             # POST to Alegra
             payload = {
                 "date": mov.get("fecha", ""),
-                "observations": f"Batch: {mov.get('descripcion', '')[:80]}",
+                "observations": f"[AC] Batch: {mov.get('descripcion', '')[:80]}",
                 "entries": entries,
             }
             result = await alegra.request_with_verify("journals", "POST", payload=payload)
@@ -216,7 +216,7 @@ async def causar_transferencia(
     alegra = AlegraClient(db=db)
     payload = {
         "date": mov.get("fecha", ""),
-        "observations": f"Transferencia entre cuentas: {request.cuenta_origen} -> {request.cuenta_destino} — {mov.get('descripcion', '')[:80]}",
+        "observations": f"[TR] Transferencia entre cuentas: {request.cuenta_origen} -> {request.cuenta_destino} — {mov.get('descripcion', '')[:80]}",
         "entries": [
             {"id": request.cuenta_destino, "debit": mov["monto"], "credit": 0},
             {"id": request.cuenta_origen, "debit": 0, "credit": mov["monto"]},

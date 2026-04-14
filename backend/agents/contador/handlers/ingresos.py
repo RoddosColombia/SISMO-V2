@@ -24,6 +24,13 @@ SOCIOS: dict[str, str] = {
 CXC_SOCIOS_ALEGRA_ID = "5329"             # 132505 Cuentas por cobrar a socios
 INGRESO_CREDITOS_RODDOS_ID = "5456"       # 41502001 Creditos Directos Roddos
 
+
+def _prefix_obs(prefix: str, observations: str) -> str:
+    """Prepend classification prefix [XX] to observations if not already present."""
+    if observations.startswith(f"[{prefix}]"):
+        return observations
+    return f"[{prefix}] {observations}"
+
 # Alegra category IDs for journal entries
 BANCO_CATEGORY_IDS: dict[str, str] = {
     "Bancolombia": "5314", "Bancolombia 2029": "5314", "Bancolombia 2540": "5315",
@@ -92,7 +99,7 @@ async def handle_registrar_ingreso_cuota(
     try:
         journal_payload = {
             "date": fecha,
-            "observations": f"Ingreso cuota {numero_cuota} — loanbook {loanbook_id}",
+            "observations": _prefix_obs("RDX", f"Ingreso cuota {numero_cuota} — loanbook {loanbook_id}"),
             "entries": [
                 {"id": banco_category_id, "debit": monto, "credit": 0},
                 {"id": INGRESO_CREDITOS_RODDOS_ID, "debit": 0, "credit": monto},
@@ -151,7 +158,7 @@ async def handle_registrar_ingreso_no_operacional(
 
     journal_payload = {
         "date": fecha,
-        "observations": descripcion,
+        "observations": _prefix_obs("ING", descripcion),
         "entries": [
             {"id": banco_category_id, "debit": monto, "credit": 0},
             {"id": str(ingreso_id), "debit": 0, "credit": monto},
@@ -206,7 +213,7 @@ async def handle_registrar_cxc_socio(
 
     journal_payload = {
         "date": fecha,
-        "observations": f"CXC Socio {nombre_socio} — {descripcion}",
+        "observations": _prefix_obs("CXC", f"CXC Socio {nombre_socio} — {descripcion}"),
         "entries": [
             {"id": str(cxc_id), "debit": monto, "credit": 0},
             {"id": banco_category_id, "debit": 0, "credit": monto},

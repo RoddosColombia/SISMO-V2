@@ -20,6 +20,13 @@ from core.events import publish_event
 from services.retenciones import calcular_retenciones
 
 SOCIOS_CC = {"80075452": "Andrés Sanjuan", "80086601": "Iván Echeverri"}
+
+
+def _prefix_obs(prefix: str, observations: str) -> str:
+    """Prepend classification prefix [XX] to observations if not already present."""
+    if observations.startswith(f"[{prefix}]"):
+        return observations
+    return f"[{prefix}] {observations}"
 CXC_SOCIOS_ALEGRA_ID = "5329"  # 132505 Cuentas por cobrar a socios y accionistas
 FALLBACK_GASTO_ID = "5494"     # 51991001 Deudores (hijo de Gastos Generales) — NUNCA 5495
 
@@ -145,13 +152,14 @@ async def handle_crear_causacion(
     validate_write_permission("contador", "POST /journals", "alegra")
 
     entries = [{"id": str(e["id"]), "debit": e["debit"], "credit": e["credit"]} for e in raw_entries]
-    result = await _post_journal(entries, tool_input["date"], tool_input["observations"], alegra)
+    obs = _prefix_obs("AC", tool_input["observations"])
+    result = await _post_journal(entries, tool_input["date"], obs, alegra)
 
     await publish_event(
         db=db,
         event_type="gasto.causado",
         source="agente_contador",
-        datos={"alegra_id": result["_alegra_id"], "entries": len(entries), "observations": tool_input["observations"]},
+        datos={"alegra_id": result["_alegra_id"], "entries": len(entries), "observations": obs},
         alegra_id=result["_alegra_id"],
         accion_ejecutada=f"Journal #{result['_alegra_id']} creado. {tool_input['observations']}",
     )
@@ -191,7 +199,7 @@ async def handle_registrar_gasto(
             {"id": CXC_SOCIOS_ALEGRA_ID, "debit": monto, "credit": 0},  # 132505 CXC Socios
             {"id": banco_id, "debit": 0, "credit": monto},
         ]
-        result = await _post_journal(entries, fecha, f"CXC Socio {socio_name}: {descripcion}", alegra)
+        result = await _post_journal(entries, fecha, _prefix_obs("CXC", f"CXC Socio {socio_name}: {descripcion}"), alegra)
         await publish_event(
             db=db,
             event_type="cxc.socio.registrada",
@@ -210,7 +218,7 @@ async def handle_registrar_gasto(
     tipo, cuenta_gasto = _classify_gasto(descripcion, tool_input.get("tipo_persona"))
     ret = calcular_retenciones(tipo, monto, nit)
     entries = _build_entries(cuenta_gasto, monto, banco_id, ret)
-    result = await _post_journal(entries, fecha, descripcion, alegra)
+    result = await _post_journal(entries, fecha, _prefix_obs("AC", descripcion), alegra)
 
     await publish_event(
         db=db,
@@ -251,7 +259,7 @@ async def handle_registrar_gasto_recurrente(
 
     ret = calcular_retenciones(tipo, monto, nit)
     entries = _build_entries(cuenta_gasto, monto, banco_id, ret)
-    result = await _post_journal(entries, fecha, f"{tipo_gasto} {periodo}", alegra)
+    result = await _post_journal(entries, fecha, _prefix_obs("AC", f"{tipo_gasto} {periodo}"), alegra)
 
     await publish_event(
         db=db,
@@ -335,7 +343,7 @@ async def handle_causar_movimiento_bancario(
     tipo, cuenta_gasto = _classify_gasto(descripcion)
     ret = calcular_retenciones(tipo, monto, nit)
     entries = _build_entries(cuenta_gasto, monto, banco_id, ret)
-    result = await _post_journal(entries, fecha, descripcion, alegra)
+    result = await _post_journal(entries, fecha, _prefix_obs("AC", descripcion), alegra)
 
     await publish_event(
         db=db,
@@ -376,7 +384,7 @@ async def handle_registrar_ajuste_contable(
         {"id": str(cuenta_destino), "debit": monto, "credit": 0},
         {"id": str(cuenta_origen), "debit": 0, "credit": monto},
     ]
-    result = await _post_journal(entries, fecha, f"Ajuste: {motivo}", alegra)
+    result = await _post_journal(entries, fecha, _prefix_obs("AC", f"Ajuste: {motivo}"), alegra)
 
     await publish_event(
         db=db,
@@ -434,7 +442,7 @@ async def handle_registrar_depreciacion(
     cuentas = DEPRECIACION_CUENTAS.get(tipo_activo, DEPRECIACION_CUENTAS["equipo_computo"])
 
     # Anti-dup: GET /journals checking for existing depreciation with same observation
-    obs_text = f"Depreciación {activo} {periodo}"
+    obs_text = _prefix_obs("D", f"Depreciación {activo} {periodo}")
     existing = await alegra.get("journals", params={"limit": 100})
     if isinstance(existing, list):
         dup = any(obs_text in j.get("observations", "") for j in existing)
