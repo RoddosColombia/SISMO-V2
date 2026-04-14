@@ -6,11 +6,12 @@ that can be tested without any infrastructure.
 
 Business rules:
 - 9 estados: pendiente_entrega → activo → al_dia → en_riesgo → mora → mora_grave → reestructurado → saldado → castigado
-- 4 modalidades: semanal (×plan), quincenal (×plan), mensual (×plan), cuota_unica
+- 3 modalidades de crédito: semanal, quincenal, mensual (INDEPENDIENTES del plan)
+- contado = venta directa, NO crea loanbook
 - Mora: $2,000 COP/dia de atraso desde el DIA SIGUIENTE a fecha de cuota
 - ANZI: % de cada cuota va a CXP ANZI (garante) — leido de catalogo_planes
 - Waterfall: ANZI → mora → vencidas → corriente → abono capital
-- Multiplicadores: leidos de catalogo_planes, NUNCA hardcodeados
+- Cuotas: plan define cuotas_base y cuotas_modelo (precio por modelo), modalidad define multiplicador/divisor
 """
 from __future__ import annotations
 
@@ -23,6 +24,18 @@ from typing import Any
 # ═══════════════════════════════════════════
 
 MORA_TASA_DIARIA = 2_000  # $2,000 COP/dia
+
+VENTA_CONTADO = "contado"
+
+# Modalidades de crédito — INDEPENDIENTES del plan
+# multiplicador: factor sobre cuota_base del modelo
+# divisor: divide cuotas_base del plan para obtener num_cuotas
+# dias: intervalo entre cuotas
+MODALIDADES: dict[str, dict] = {
+    "semanal":    {"multiplicador": 1.0, "divisor": 1, "dias": 7},
+    "quincenal":  {"multiplicador": 2.2, "divisor": 2, "dias": 14},
+    "mensual":    {"multiplicador": 4.4, "divisor": 4, "dias": 28},
+}
 
 # 9 estados del credito
 ESTADOS = [
@@ -148,20 +161,37 @@ def aplicar_waterfall(
 
 
 # ═══════════════════════════════════════════
-# Cuota calculation
+# Cuota calculation — modalidad independent of plan
 # ═══════════════════════════════════════════
 
 
-def calcular_cuota(monto_financiar: float, plan: dict) -> int:
+def calcular_cuota(cuota_base: int, modalidad: str) -> int:
     """
-    Calculate cuota amount from financing amount and plan.
-    Multiplier comes from the plan (catalogo_planes), NEVER hardcoded.
+    Calculate cuota amount from base price and modalidad.
+    Multiplier comes from MODALIDADES constant.
 
-    Formula: (monto_financiar / num_cuotas) * multiplicador
+    Formula: cuota_base × multiplicador
     """
-    num_cuotas = plan["cuotas"]
-    multiplicador = plan["multiplicador"]
-    return round((monto_financiar / num_cuotas) * multiplicador)
+    if modalidad not in MODALIDADES:
+        raise ValueError(
+            f"Modalidad '{modalidad}' no válida. "
+            f"Use: {list(MODALIDADES.keys())}. "
+            f"Para contado, no se crea loanbook."
+        )
+    multiplicador = MODALIDADES[modalidad]["multiplicador"]
+    return round(cuota_base * multiplicador)
+
+
+def calcular_num_cuotas(plan: dict, modalidad: str) -> int:
+    """
+    Calculate number of cuotas from plan and modalidad.
+    Formula: cuotas_base / divisor (integer division)
+    """
+    if modalidad not in MODALIDADES:
+        raise ValueError(f"Modalidad '{modalidad}' no válida.")
+    cuotas_base = plan["cuotas_base"]
+    divisor = MODALIDADES[modalidad]["divisor"]
+    return cuotas_base // divisor
 
 
 # ═══════════════════════════════════════════
@@ -173,15 +203,59 @@ def crear_loanbook(
     vin: str,
     cliente: dict,
     plan: dict,
-    monto_financiar: float,
+    modelo: str,
+    modalidad: str,
     fecha_entrega: date,
+    fecha_primer_pago: date | None = None,
 ) -> dict[str, Any]:
     """
     Create a new loanbook document.
-    Cuota dates are NOT calculated here — that's Sprint 4 (Wednesday Rule).
+
+    Args:
+        vin: Vehicle identification number
+        cliente: Client info dict (nombre, cedula)
+        plan: Plan from catalogo_planes (codigo, cuotas_base, cuotas_modelo, anzi_pct)
+        modelo: Motorcycle model name (must exist in plan's cuotas_modelo)
+        modalidad: Payment modality (semanal, quincenal, mensual) — NOT contado
+        fecha_entrega: Delivery date
+        fecha_primer_pago: First payment date (required for quincenal/mensual, must be Wednesday)
+
+    Raises:
+        ValueError: If contado, invalid modelo, or missing/invalid fecha_primer_pago
     """
-    cuota_monto = calcular_cuota(monto_financiar, plan)
-    num_cuotas = plan["cuotas"]
+    # Reject contado — no loanbook for cash sales
+    if modalidad == VENTA_CONTADO:
+        raise ValueError("Contado no crea loanbook. Venta directa sin crédito.")
+
+    # Validate modalidad
+    if modalidad not in MODALIDADES:
+        raise ValueError(f"Modalidad '{modalidad}' no válida. Use: {list(MODALIDADES.keys())}.")
+
+    # Validate modelo exists in plan
+    cuotas_modelo = plan.get("cuotas_modelo", {})
+    if modelo not in cuotas_modelo:
+        raise ValueError(
+            f"modelo '{modelo}' no existe en plan '{plan.get('codigo', '?')}'. "
+            f"Modelos disponibles: {list(cuotas_modelo.keys())}"
+        )
+
+    # Quincenal/mensual require fecha_primer_pago
+    if modalidad in ("quincenal", "mensual") and fecha_primer_pago is None:
+        raise ValueError(
+            f"Modalidad '{modalidad}' requiere fecha_primer_pago (debe ser miércoles)."
+        )
+
+    # If provided, fecha_primer_pago must be Wednesday (weekday 2)
+    if fecha_primer_pago is not None and fecha_primer_pago.weekday() != 2:
+        raise ValueError(
+            f"fecha_primer_pago debe ser miércoles (Wednesday). "
+            f"Fecha recibida: {fecha_primer_pago.isoformat()} "
+            f"(dia {fecha_primer_pago.strftime('%A')})."
+        )
+
+    cuota_base = cuotas_modelo[modelo]
+    cuota_monto = calcular_cuota(cuota_base, modalidad)
+    num_cuotas = calcular_num_cuotas(plan, modalidad)
 
     cuotas = []
     for i in range(1, num_cuotas + 1):
@@ -198,18 +272,20 @@ def crear_loanbook(
         "loanbook_id": str(uuid.uuid4()),
         "vin": vin,
         "cliente": cliente,
-        "plan": plan,
-        "modalidad": plan["modalidad"],
+        "plan_codigo": plan["codigo"],
+        "modelo": modelo,
+        "modalidad": modalidad,
         "estado": "pendiente_entrega",
-        "monto_financiar": monto_financiar,
         "cuota_monto": cuota_monto,
         "num_cuotas": num_cuotas,
         "cuotas": cuotas,
-        "saldo_capital": monto_financiar,
+        "saldo_capital": num_cuotas * cuota_monto,
         "total_pagado": 0,
         "total_mora_pagada": 0,
         "total_anzi_pagado": 0,
+        "anzi_pct": plan.get("anzi_pct", 0.02),
         "fecha_entrega": fecha_entrega.isoformat(),
+        "fecha_primer_pago": fecha_primer_pago.isoformat() if fecha_primer_pago else None,
         "fecha_creacion": date.today().isoformat(),
     }
 
