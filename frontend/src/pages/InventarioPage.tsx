@@ -7,6 +7,9 @@ import { apiGet, apiPost } from '@/lib/api'
 
 interface Moto {
   id_alegra: string
+  vin: string
+  motor: string
+  color: string
   nombre: string
   descripcion: string
   referencia: string
@@ -15,6 +18,7 @@ interface Moto {
   precio: number
   costo_unitario: number
   estado: string
+  tiene_vin: boolean
   apartado?: {
     cliente: string
     monto_acumulado: number
@@ -74,6 +78,7 @@ function estadoBadge(estado: string) {
   const map: Record<string, string> = {
     Disponible: 'bg-emerald-500/10 text-emerald-700',
     Apartada: 'bg-amber-500/10 text-amber-700',
+    'Sin VIN': 'bg-blue-500/10 text-blue-700',
     Agotada: 'bg-neutral-400/10 text-neutral-500',
   }
   return map[estado] || 'bg-neutral-400/10 text-neutral-500'
@@ -86,6 +91,101 @@ function kitSemaforo(n: number) {
 }
 
 // ═══════════════════════════════════════════
+// Registrar VIN Modal
+// ═══════════════════════════════════════════
+
+function RegistrarVINModal({ moto, onClose, onSuccess }: {
+  moto: Moto
+  onClose: () => void
+  onSuccess: () => void
+}) {
+  const [form, setForm] = useState({
+    vin: '',
+    motor: '',
+    color: '',
+    modelo: moto.nombre || 'Sport 100',
+    notas: '',
+    item_id_alegra: moto.id_alegra,
+  })
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  const handleSubmit = async () => {
+    if (!form.vin.trim()) {
+      setError('El VIN es obligatorio')
+      return
+    }
+    setLoading(true)
+    setError('')
+    try {
+      await apiPost('/inventario/motos/registrar-manual', form)
+      onSuccess()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error al registrar VIN')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-surface-container-lowest rounded-xl shadow-ambient-2 w-full max-w-md mx-4 p-6" onClick={e => e.stopPropagation()}>
+        <h3 className="font-display font-bold text-on-surface text-base mb-1">Registrar VIN</h3>
+        <p className="text-xs text-on-surface-variant mb-1">{moto.nombre}</p>
+        <p className="text-[10px] text-on-surface-variant/60 mb-4">
+          {moto.stock} unidad{moto.stock !== 1 ? 'es' : ''} sin VIN registrado en Alegra
+        </p>
+
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs text-on-surface-variant">VIN *</label>
+            <input className="w-full rounded-md bg-surface-container-low px-3 py-2 text-sm font-mono text-on-surface placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-primary/30"
+              placeholder="Ej: 9C2JC4140NR000123" value={form.vin}
+              onChange={e => setForm({ ...form, vin: e.target.value.toUpperCase() })} />
+          </div>
+          <div>
+            <label className="text-xs text-on-surface-variant">Motor</label>
+            <input className="w-full rounded-md bg-surface-container-low px-3 py-2 text-sm font-mono text-on-surface placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-primary/30"
+              placeholder="Numero de motor" value={form.motor}
+              onChange={e => setForm({ ...form, motor: e.target.value.toUpperCase() })} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-on-surface-variant">Color</label>
+              <input className="w-full rounded-md bg-surface-container-low px-3 py-2 text-sm text-on-surface placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-primary/30"
+                placeholder="Ej: Negro" value={form.color}
+                onChange={e => setForm({ ...form, color: e.target.value })} />
+            </div>
+            <div>
+              <label className="text-xs text-on-surface-variant">Modelo</label>
+              <input className="w-full rounded-md bg-surface-container-low px-3 py-2 text-sm text-on-surface placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-primary/30"
+                value={form.modelo}
+                onChange={e => setForm({ ...form, modelo: e.target.value })} />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs text-on-surface-variant">Notas</label>
+            <input className="w-full rounded-md bg-surface-container-low px-3 py-2 text-sm text-on-surface placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-primary/30"
+              placeholder="Notas opcionales" value={form.notas}
+              onChange={e => setForm({ ...form, notas: e.target.value })} />
+          </div>
+        </div>
+
+        {error && <p className="text-xs text-red-600 mt-3">{error}</p>}
+
+        <div className="flex gap-3 mt-5">
+          <button onClick={onClose} className="flex-1 rounded-md bg-surface-container-low px-4 py-2 text-sm text-on-surface-variant hover:bg-surface-container-low/80">Cancelar</button>
+          <button onClick={handleSubmit} disabled={loading}
+            className="flex-1 rounded-md bg-primary px-4 py-2 text-sm text-white font-medium hover:bg-primary/90 disabled:opacity-50">
+            {loading ? 'Registrando...' : 'Registrar VIN'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════
 // Apartar Modal
 // ═══════════════════════════════════════════
 
@@ -95,6 +195,7 @@ function ApartarModal({ moto, onClose, onSuccess }: {
   onSuccess: () => void
 }) {
   const [form, setForm] = useState({
+    vin: moto.vin,
     cliente_nombre: '',
     cliente_cedula: '',
     cliente_telefono: '',
@@ -127,7 +228,8 @@ function ApartarModal({ moto, onClose, onSuccess }: {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm" onClick={onClose}>
       <div className="bg-surface-container-lowest rounded-xl shadow-ambient-2 w-full max-w-md mx-4 p-6" onClick={e => e.stopPropagation()}>
         <h3 className="font-display font-bold text-on-surface text-base mb-1">Apartar moto</h3>
-        <p className="text-xs text-on-surface-variant mb-4">{moto.nombre} — {moto.descripcion}</p>
+        <p className="text-xs text-on-surface-variant mb-1">{moto.nombre}</p>
+        <p className="text-[10px] font-mono text-on-surface-variant/60 mb-4">VIN: {moto.vin}</p>
 
         <div className="space-y-3">
           <input className="w-full rounded-md bg-surface-container-low px-3 py-2 text-sm text-on-surface placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-primary/30"
@@ -191,11 +293,14 @@ function DetalleApartadoModal({ moto, onClose, onSuccess }: {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
+  // Use VIN as the identifier for pago-parcial and liberar
+  const itemKey = moto.vin || moto.id_alegra
+
   const handlePago = async () => {
     if (pagoMonto <= 0) { setError('Ingrese un monto'); return }
     setLoading(true); setError('')
     try {
-      await apiPost(`/inventario/motos/${moto.id_alegra}/pago-parcial`, { monto_pago: pagoMonto, banco_recibo: pagoBanco })
+      await apiPost(`/inventario/motos/${itemKey}/pago-parcial`, { monto_pago: pagoMonto, banco_recibo: pagoBanco })
       onSuccess()
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Error')
@@ -206,7 +311,7 @@ function DetalleApartadoModal({ moto, onClose, onSuccess }: {
     if (!confirm('Liberar esta moto? El apartado se cancelara.')) return
     setLoading(true)
     try {
-      await apiPost(`/inventario/motos/${moto.id_alegra}/liberar`, {})
+      await apiPost(`/inventario/motos/${itemKey}/liberar`, {})
       onSuccess()
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Error')
@@ -217,7 +322,8 @@ function DetalleApartadoModal({ moto, onClose, onSuccess }: {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm" onClick={onClose}>
       <div className="bg-surface-container-lowest rounded-xl shadow-ambient-2 w-full max-w-md mx-4 p-6" onClick={e => e.stopPropagation()}>
         <h3 className="font-display font-bold text-on-surface text-base mb-1">Detalle apartado</h3>
-        <p className="text-xs text-on-surface-variant mb-4">{moto.nombre} — {moto.descripcion}</p>
+        <p className="text-xs text-on-surface-variant mb-1">{moto.nombre}</p>
+        {moto.vin && <p className="text-[10px] font-mono text-on-surface-variant/60 mb-4">VIN: {moto.vin}</p>}
 
         <div className="space-y-3 mb-4">
           <div className="flex justify-between text-sm">
@@ -290,7 +396,7 @@ export default function InventarioPage() {
   const [repuestos, setRepuestos] = useState<Repuesto[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedMoto, setSelectedMoto] = useState<Moto | null>(null)
-  const [modalType, setModalType] = useState<'apartar' | 'detalle' | null>(null)
+  const [modalType, setModalType] = useState<'registrar-vin' | 'apartar' | 'detalle' | null>(null)
   const [filtroEstado, setFiltroEstado] = useState('')
 
   const loadMotos = useCallback(async () => {
@@ -322,8 +428,13 @@ export default function InventarioPage() {
 
   const handleMotoClick = (moto: Moto) => {
     setSelectedMoto(moto)
-    if (moto.estado === 'Disponible') setModalType('apartar')
-    else if (moto.estado === 'Apartada') setModalType('detalle')
+    if (moto.estado === 'Sin VIN') {
+      setModalType('registrar-vin')
+    } else if (moto.estado === 'Disponible' && moto.tiene_vin) {
+      setModalType('apartar')
+    } else if (moto.estado === 'Apartada') {
+      setModalType('detalle')
+    }
   }
 
   const handleModalSuccess = () => {
@@ -332,13 +443,20 @@ export default function InventarioPage() {
     loadMotos()
   }
 
+  const handleModalClose = () => {
+    setModalType(null)
+    setSelectedMoto(null)
+  }
+
   const filteredMotos = filtroEstado
     ? motos.filter(m => m.estado.toLowerCase() === filtroEstado.toLowerCase())
     : motos
 
   const totalStock = motos.reduce((sum, m) => sum + m.stock, 0)
-  const disponibles = motos.filter(m => m.estado === 'Disponible').reduce((s, m) => s + m.stock, 0)
+  const conVin = motos.filter(m => m.tiene_vin).length
+  const disponibles = motos.filter(m => m.estado === 'Disponible').length
   const apartadas = motos.filter(m => m.estado === 'Apartada').length
+  const sinVin = motos.filter(m => m.estado === 'Sin VIN').reduce((s, m) => s + m.stock, 0)
 
   return (
     <div className="flex flex-col h-full bg-surface">
@@ -370,24 +488,30 @@ export default function InventarioPage() {
         ) : tab === 'motos' ? (
           <>
             {/* Summary cards */}
-            <div className="grid grid-cols-3 gap-4 mb-5">
+            <div className="grid grid-cols-4 gap-4 mb-5">
               <div className="bg-surface-container-lowest shadow-ambient-1 rounded-lg px-4 py-3">
                 <div className="text-xs text-on-surface-variant uppercase tracking-wider">Total stock</div>
                 <div className="font-display text-2xl font-bold text-on-surface">{totalStock}</div>
               </div>
               <div className="bg-surface-container-lowest shadow-ambient-1 rounded-lg px-4 py-3">
-                <div className="text-xs text-on-surface-variant uppercase tracking-wider">Disponibles</div>
-                <div className="font-display text-2xl font-bold text-emerald-600">{disponibles}</div>
+                <div className="text-xs text-on-surface-variant uppercase tracking-wider">Con VIN</div>
+                <div className="font-display text-2xl font-bold text-emerald-600">{conVin}</div>
+                <div className="text-[10px] text-on-surface-variant">{disponibles} disponibles</div>
               </div>
               <div className="bg-surface-container-lowest shadow-ambient-1 rounded-lg px-4 py-3">
                 <div className="text-xs text-on-surface-variant uppercase tracking-wider">Apartadas</div>
                 <div className="font-display text-2xl font-bold text-amber-600">{apartadas}</div>
               </div>
+              <div className="bg-surface-container-lowest shadow-ambient-1 rounded-lg px-4 py-3">
+                <div className="text-xs text-on-surface-variant uppercase tracking-wider">Sin VIN</div>
+                <div className="font-display text-2xl font-bold text-blue-600">{sinVin}</div>
+                <div className="text-[10px] text-on-surface-variant">Requieren registro</div>
+              </div>
             </div>
 
             {/* Filter */}
             <div className="flex gap-2 mb-4">
-              {['', 'Disponible', 'Apartada', 'Agotada'].map(est => (
+              {['', 'Disponible', 'Apartada', 'Sin VIN', 'Agotada'].map(est => (
                 <button key={est} onClick={() => setFiltroEstado(est)}
                   className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${filtroEstado === est ? 'bg-primary/10 text-primary' : 'bg-surface-container-low text-on-surface-variant hover:bg-surface-container-low/80'}`}>
                   {est || 'Todas'}
@@ -397,8 +521,8 @@ export default function InventarioPage() {
 
             {/* Moto cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredMotos.map(moto => (
-                <div key={moto.id_alegra}
+              {filteredMotos.map((moto, idx) => (
+                <div key={moto.vin || `${moto.id_alegra}-${idx}`}
                   onClick={() => handleMotoClick(moto)}
                   className={`bg-surface-container-lowest shadow-ambient-1 rounded-lg px-5 py-4 cursor-pointer transition-shadow hover:shadow-ambient-2 ${moto.estado === 'Agotada' ? 'opacity-50' : ''}`}>
                   <div className="flex items-start justify-between mb-2">
@@ -407,10 +531,23 @@ export default function InventarioPage() {
                       {moto.estado}
                     </span>
                   </div>
-                  <p className="text-xs text-on-surface-variant line-clamp-2 mb-3">{moto.descripcion || 'Sin descripcion'}</p>
+
+                  {/* VIN and motor info */}
+                  {moto.tiene_vin ? (
+                    <div className="mb-2 space-y-0.5">
+                      <p className="text-[11px] font-mono text-on-surface-variant">VIN: {moto.vin}</p>
+                      {moto.motor && <p className="text-[11px] font-mono text-on-surface-variant">Motor: {moto.motor}</p>}
+                      {moto.color && <p className="text-[11px] text-on-surface-variant">Color: {moto.color}</p>}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-blue-600/80 mb-2">
+                      {moto.stock} unidad{moto.stock !== 1 ? 'es' : ''} — Registrar VIN para apartar
+                    </p>
+                  )}
+
                   <div className="flex items-center justify-between text-xs">
                     <span className="text-on-surface-variant">{moto.categoria}</span>
-                    <span className="font-medium text-on-surface">Stock: {moto.stock}</span>
+                    {!moto.tiene_vin && <span className="font-medium text-on-surface">Stock: {moto.stock}</span>}
                   </div>
                   {moto.precio > 0 && (
                     <div className="text-xs font-medium text-primary mt-1">{formatCOP(moto.precio)}</div>
@@ -450,7 +587,7 @@ export default function InventarioPage() {
                         <div className="text-xs mt-2 pt-2 border-t border-current/10">
                           <span className="opacity-70">Limitante: </span>
                           <span className="font-medium">{kit.componente_limitante.item_id_alegra}</span>
-                          <span className="opacity-70"> (stock: {kit.componente_limitante.stock}, necesita: {kit.componente_limitante.necesita})</span>
+                          <span className="opacity-70"> (stock: {kit.componente_limitante.stock_alegra}, necesita: {kit.componente_limitante.necesita})</span>
                         </div>
                       )}
                       {kit.precio_kit > 0 && (
@@ -467,8 +604,8 @@ export default function InventarioPage() {
               <h2 className="font-display font-bold text-on-surface text-sm mb-3">Repuestos individuales</h2>
               {repuestos.length === 0 ? (
                 <div className="bg-surface-container-lowest shadow-ambient-1 rounded-lg p-8 text-center">
-                  <p className="text-sm text-on-surface-variant">No hay repuestos registrados en Alegra</p>
-                  <p className="text-xs text-on-surface-variant/60 mt-1">Agregue items tipo "product" con categorias de repuestos en Alegra</p>
+                  <p className="text-sm text-on-surface-variant">Los repuestos se cargaran en Alegra proximamente</p>
+                  <p className="text-xs text-on-surface-variant/60 mt-1">Cuando esten disponibles, apareceran aqui automaticamente</p>
                 </div>
               ) : (
                 <div className="bg-surface-container-lowest shadow-ambient-1 rounded-lg overflow-hidden">
@@ -503,11 +640,14 @@ export default function InventarioPage() {
       </div>
 
       {/* Modals */}
+      {selectedMoto && modalType === 'registrar-vin' && (
+        <RegistrarVINModal moto={selectedMoto} onClose={handleModalClose} onSuccess={handleModalSuccess} />
+      )}
       {selectedMoto && modalType === 'apartar' && (
-        <ApartarModal moto={selectedMoto} onClose={() => { setModalType(null); setSelectedMoto(null) }} onSuccess={handleModalSuccess} />
+        <ApartarModal moto={selectedMoto} onClose={handleModalClose} onSuccess={handleModalSuccess} />
       )}
       {selectedMoto && modalType === 'detalle' && selectedMoto.apartado && (
-        <DetalleApartadoModal moto={selectedMoto} onClose={() => { setModalType(null); setSelectedMoto(null) }} onSuccess={handleModalSuccess} />
+        <DetalleApartadoModal moto={selectedMoto} onClose={handleModalClose} onSuccess={handleModalSuccess} />
       )}
     </div>
   )

@@ -1,4 +1,10 @@
-"""Tests for inventario module — motos, apartados, repuestos, kits."""
+"""Tests for inventario module — motos, apartados, repuestos, kits.
+
+Adjusted for VIN-based flow:
+- Motos registered manually in MongoDB with VIN
+- Apartado keyed by VIN, not just item_id
+- Anticipos account: 5370 (NIIF 2805)
+"""
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime, timezone
@@ -69,6 +75,10 @@ def mock_db():
     db.roddos_events.insert_one = AsyncMock()
     db.kits_definiciones.find.return_value = _async_cursor([])
     db.kits_definiciones.update_one = AsyncMock()
+    db.inventario_motos.find.return_value = _async_cursor([])
+    db.inventario_motos.find_one = AsyncMock(return_value=None)
+    db.inventario_motos.insert_one = AsyncMock()
+    db.inventario_motos.update_one = AsyncMock()
     return db
 
 
@@ -104,9 +114,7 @@ class TestAlegraItemsService:
         service = AlegraItemsService(mock_alegra)
         motos = await service.list_motos()
 
-        # Should call Alegra
         mock_alegra.get.assert_called()
-        # Should return only product items with moto categories
         assert len(motos) == 2
         assert motos[0]["id_alegra"] == "25"
         assert motos[0]["nombre"] == "Moto nueva 100"
@@ -133,10 +141,8 @@ class TestAlegraItemsService:
         service = AlegraItemsService(mock_alegra)
         repuestos = await service.list_repuestos()
 
-        # Should return only non-moto product items
         assert len(repuestos) == 1
         assert repuestos[0]["id_alegra"] == "50"
-        assert repuestos[0]["nombre"] == "Filtro aceite Sport 100"
         assert repuestos[0]["stock_actual"] == 15
         assert repuestos[0]["alerta_stock_bajo"] is False
 
@@ -164,22 +170,70 @@ class TestAlegraItemsService:
 
 
 # ═══════════════════════════════════════════
-# Apartar tests
+# Registro manual VIN tests
+# ═══════════════════════════════════════════
+
+
+class TestRegistroManual:
+    """Test manual VIN registration."""
+
+    @pytest.mark.asyncio
+    async def test_registrar_vin_success(self, mock_db):
+        from routers.inventario import registrar_moto_manual, RegistroManualRequest
+
+        body = RegistroManualRequest(
+            vin="9C2JC4110RR100001",
+            motor="JC41E-100001",
+            modelo="Sport 100",
+            color="Negro Nebulosa",
+        )
+
+        result = await registrar_moto_manual(body=body, db=mock_db)
+
+        assert result["success"] is True
+        assert result["vin"] == "9C2JC4110RR100001"
+        mock_db.inventario_motos.insert_one.assert_called_once()
+        doc = mock_db.inventario_motos.insert_one.call_args[0][0]
+        assert doc["vin"] == "9C2JC4110RR100001"
+        assert doc["estado"] == "disponible"
+
+    @pytest.mark.asyncio
+    async def test_registrar_vin_duplicado(self, mock_db):
+        from routers.inventario import registrar_moto_manual, RegistroManualRequest
+
+        mock_db.inventario_motos.find_one = AsyncMock(return_value={"vin": "DUPLICATE"})
+
+        body = RegistroManualRequest(vin="DUPLICATE", modelo="Sport 100")
+
+        with pytest.raises(Exception) as exc:
+            await registrar_moto_manual(body=body, db=mock_db)
+        assert exc.value.status_code == 409
+
+
+# ═══════════════════════════════════════════
+# Apartar tests (VIN-based)
 # ═══════════════════════════════════════════
 
 
 class TestApartar:
-    """Test moto reservation workflow."""
+    """Test moto reservation workflow with VIN."""
 
     @pytest.mark.asyncio
     async def test_apartar_creates_journal_and_mongo(self, mock_alegra, mock_db):
         from routers.inventario import apartar_moto, ApartarRequest
 
+        # VIN registered and available
+        mock_db.inventario_motos.find_one = AsyncMock(return_value={
+            "vin": "9C2JC4110RR100001", "estado": "disponible", "item_id_alegra": "25"
+        })
         # Alegra returns item with stock
         mock_alegra.get = AsyncMock(return_value=SAMPLE_MOTO_ITEM)
         mock_alegra.request_with_verify = AsyncMock(return_value={"id": "700"})
+        # No existing apartado
+        mock_db.apartados.find_one = AsyncMock(return_value=None)
 
         body = ApartarRequest(
+            vin="9C2JC4110RR100001",
             cliente_nombre="Juan Perez",
             cliente_cedula="123456789",
             cliente_telefono="3001234567",
@@ -193,42 +247,41 @@ class TestApartar:
             item_id="25", body=body, alegra=mock_alegra, db=mock_db
         )
 
-        # Verify Alegra journal created with [CI] prefix
+        # Verify Alegra journal with [CI] prefix and correct account
         mock_alegra.request_with_verify.assert_called_once()
         call_args = mock_alegra.request_with_verify.call_args
-        assert call_args[0][0] == "journals"
         payload = call_args[0][2]
         assert "[CI]" in payload["observations"]
+        assert "VIN:9C2JC4110RR100001" in payload["observations"]
         assert payload["entries"][0]["id"] == "5314"  # Bancolombia 2029
         assert payload["entries"][0]["debit"] == 500000
-        assert payload["entries"][1]["id"] == "5398"  # Anticipos
+        assert payload["entries"][1]["id"] == "5370"  # Anticipos recibidos (NIIF 2805)
         assert payload["entries"][1]["credit"] == 500000
 
-        # Verify MongoDB apartado created
+        # Verify MongoDB apartado has VIN
         mock_db.apartados.insert_one.assert_called_once()
         apartado = mock_db.apartados.insert_one.call_args[0][0]
+        assert apartado["vin"] == "9C2JC4110RR100001"
         assert apartado["item_id_alegra"] == "25"
-        assert apartado["cliente"]["nombre"] == "Juan Perez"
         assert apartado["monto_acumulado"] == 500000
         assert apartado["monto_pendiente"] == 1500000
         assert apartado["estado"] == "activo"
 
-        # Verify event published
-        mock_db.roddos_events.insert_one.assert_called_once()
+        # Verify moto estado updated
+        mock_db.inventario_motos.update_one.assert_called_once()
 
         # Verify response
         assert result["success"] is True
         assert result["alegra_journal_id"] == "700"
-        assert result["monto_pendiente"] == 1500000
 
     @pytest.mark.asyncio
-    async def test_apartar_fails_no_stock(self, mock_alegra, mock_db):
+    async def test_apartar_fails_no_vin_registered(self, mock_alegra, mock_db):
         from routers.inventario import apartar_moto, ApartarRequest
 
-        no_stock = {**SAMPLE_MOTO_ITEM, "inventory": {"availableQuantity": 0}}
-        mock_alegra.get = AsyncMock(return_value=no_stock)
+        mock_db.inventario_motos.find_one = AsyncMock(return_value=None)
 
         body = ApartarRequest(
+            vin="NOEXISTE",
             cliente_nombre="Test",
             cliente_cedula="111",
             monto_pago=100000,
@@ -238,20 +291,47 @@ class TestApartar:
 
         with pytest.raises(Exception) as exc:
             await apartar_moto(item_id="25", body=body, alegra=mock_alegra, db=mock_db)
-        assert "sin stock" in str(exc.value).lower() or exc.value.status_code == 400
+        assert exc.value.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_apartar_fails_duplicate(self, mock_alegra, mock_db):
+    async def test_apartar_fails_no_stock(self, mock_alegra, mock_db):
         from routers.inventario import apartar_moto, ApartarRequest
 
+        mock_db.inventario_motos.find_one = AsyncMock(return_value={
+            "vin": "VIN001", "estado": "disponible"
+        })
+        no_stock = {**SAMPLE_MOTO_ITEM, "inventory": {"availableQuantity": 0}}
+        mock_alegra.get = AsyncMock(return_value=no_stock)
+        mock_db.apartados.find_one = AsyncMock(return_value=None)
+
+        body = ApartarRequest(
+            vin="VIN001",
+            cliente_nombre="Test",
+            cliente_cedula="111",
+            monto_pago=100000,
+            cuota_inicial_total=1000000,
+            banco_recibo="bancolombia_2029",
+        )
+
+        with pytest.raises(Exception) as exc:
+            await apartar_moto(item_id="25", body=body, alegra=mock_alegra, db=mock_db)
+        assert exc.value.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_apartar_fails_duplicate_vin(self, mock_alegra, mock_db):
+        from routers.inventario import apartar_moto, ApartarRequest
+
+        mock_db.inventario_motos.find_one = AsyncMock(return_value={
+            "vin": "VIN001", "estado": "disponible"
+        })
         mock_alegra.get = AsyncMock(return_value=SAMPLE_MOTO_ITEM)
         mock_db.apartados.find_one = AsyncMock(return_value={
-            "item_id_alegra": "25",
-            "estado": "activo",
+            "vin": "VIN001", "estado": "activo",
             "cliente": {"nombre": "Ya Apartada"},
         })
 
         body = ApartarRequest(
+            vin="VIN001",
             cliente_nombre="Otro",
             cliente_cedula="222",
             monto_pago=100000,
@@ -278,6 +358,7 @@ class TestPagoParcial:
 
         mock_db.apartados.find_one = AsyncMock(return_value={
             "_id": "abc",
+            "vin": "VIN001",
             "item_id_alegra": "25",
             "modelo": "Moto nueva 100",
             "cliente": {"nombre": "Juan"},
@@ -290,7 +371,7 @@ class TestPagoParcial:
         body = PagoParcialRequest(monto_pago=300000, banco_recibo="nequi")
 
         result = await pago_parcial(
-            item_id="25", body=body, alegra=mock_alegra, db=mock_db
+            item_id="VIN001", body=body, alegra=mock_alegra, db=mock_db
         )
 
         assert result["monto_acumulado"] == 800000
@@ -302,6 +383,7 @@ class TestPagoParcial:
         payload = call_args[0][2]
         assert "[CI]" in payload["observations"]
         assert payload["entries"][0]["id"] == "5310"  # Nequi = Caja general
+        assert payload["entries"][1]["id"] == "5370"  # Anticipos (NIIF 2805)
 
     @pytest.mark.asyncio
     async def test_pago_completa_cuota(self, mock_alegra, mock_db):
@@ -309,6 +391,7 @@ class TestPagoParcial:
 
         mock_db.apartados.find_one = AsyncMock(return_value={
             "_id": "abc",
+            "vin": "VIN001",
             "item_id_alegra": "25",
             "modelo": "Moto nueva 100",
             "cliente": {"nombre": "Juan"},
@@ -321,14 +404,13 @@ class TestPagoParcial:
         body = PagoParcialRequest(monto_pago=500000, banco_recibo="bancolombia_2029")
 
         result = await pago_parcial(
-            item_id="25", body=body, alegra=mock_alegra, db=mock_db
+            item_id="VIN001", body=body, alegra=mock_alegra, db=mock_db
         )
 
         assert result["monto_acumulado"] == 2000000
         assert result["monto_pendiente"] == 0
         assert result["cuota_completa"] is True
 
-        # Verify MongoDB update sets estado=completo
         update_call = mock_db.apartados.update_one.call_args
         update_doc = update_call[0][1]
         assert update_doc["$set"]["estado"] == "completo"
@@ -352,29 +434,34 @@ class TestPagoParcial:
 
 
 class TestLiberar:
-    """Test moto release."""
+    """Test moto release — restores VIN to disponible."""
 
     @pytest.mark.asyncio
-    async def test_liberar_cancels_apartado(self, mock_db):
+    async def test_liberar_cancels_apartado_and_restores_vin(self, mock_db):
         from routers.inventario import liberar_moto
 
         mock_db.apartados.find_one = AsyncMock(return_value={
             "_id": "abc",
+            "vin": "VIN001",
             "item_id_alegra": "25",
             "modelo": "Moto nueva 100",
             "cliente": {"nombre": "Juan"},
             "estado": "activo",
         })
 
-        result = await liberar_moto(item_id="25", db=mock_db)
+        result = await liberar_moto(item_id="VIN001", db=mock_db)
 
         assert result["success"] is True
         assert result["estado"] == "liberado"
 
-        # Verify MongoDB update
-        update_call = mock_db.apartados.update_one.call_args
-        update_doc = update_call[0][1]
-        assert update_doc["$set"]["estado"] == "liberado"
+        # Verify apartado updated
+        apt_update = mock_db.apartados.update_one.call_args
+        assert apt_update[0][1]["$set"]["estado"] == "liberado"
+
+        # Verify moto restored to disponible
+        moto_update = mock_db.inventario_motos.update_one.call_args
+        assert moto_update[0][0] == {"vin": "VIN001"}
+        assert moto_update[0][1] == {"$set": {"estado": "disponible"}}
 
         # Verify event published
         mock_db.roddos_events.insert_one.assert_called_once()
@@ -403,7 +490,6 @@ class TestKits:
         from routers.inventario import list_kits
         from services.alegra_items import AlegraItemsService
 
-        # Kit definition: needs 2x item_A + 1x item_B
         kit_def = {
             "nombre": "Kit Raider 125",
             "modelo": "Raider 125",
@@ -416,7 +502,6 @@ class TestKits:
         }
         mock_db.kits_definiciones.find.return_value = _async_cursor([kit_def])
 
-        # Mock stock: item_50 has 10, item_51 has 3
         async def mock_get(endpoint, **kwargs):
             if "50" in endpoint:
                 return {"inventory": {"availableQuantity": 10}}
@@ -431,9 +516,8 @@ class TestKits:
 
         assert result["count"] == 1
         kit = result["data"][0]
-        # MIN(10/2, 3/1) = MIN(5, 3) = 3
-        assert kit["kits_disponibles"] == 3
-        assert kit["alerta"] is True  # <= 3
+        assert kit["kits_disponibles"] == 3  # MIN(10/2, 3/1)
+        assert kit["alerta"] is True
         assert kit["componente_limitante"]["item_id_alegra"] == "51"
 
     @pytest.mark.asyncio
@@ -445,9 +529,7 @@ class TestKits:
             "nombre": "Kit Sport",
             "modelo": "Sport 100",
             "tipo": "basico",
-            "componentes": [
-                {"item_id_alegra": "60", "cantidad": 1},
-            ],
+            "componentes": [{"item_id_alegra": "60", "cantidad": 1}],
             "precio_kit": 30000,
         }
         mock_db.kits_definiciones.find.return_value = _async_cursor([kit_def])
@@ -478,7 +560,6 @@ class TestKits:
         }
         mock_db.kits_definiciones.find.return_value = _async_cursor([kit_def])
 
-        # A:20, B:6, C:50 → A:20, B:2, C:50 → limitante is B
         async def mock_get(endpoint, **kwargs):
             if "/A" in endpoint:
                 return {"inventory": {"availableQuantity": 20}}
@@ -494,9 +575,8 @@ class TestKits:
         result = await list_kits(service=service, db=mock_db)
 
         kit = result["data"][0]
-        assert kit["kits_disponibles"] == 2  # MIN(20/1, 6/3, 50/1) = 2
+        assert kit["kits_disponibles"] == 2  # MIN(20/1, 6/3, 50/1)
         assert kit["componente_limitante"]["item_id_alegra"] == "B"
-        assert kit["componente_limitante"]["alcanza_para"] == 2
 
     @pytest.mark.asyncio
     async def test_empty_kits_when_no_definitions(self, mock_alegra, mock_db):

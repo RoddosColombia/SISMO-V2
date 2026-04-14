@@ -83,9 +83,9 @@ async def test_depreciacion_anti_dup(mock_alegra, mock_db):
     from agents.contador.handlers.egresos import handle_registrar_depreciacion
 
     # Mock GET /journals returning an existing depreciation with matching observations
-    # Must use the exact accented string the handler generates: "Depreciación"
+    # Must include [D] prefix — _prefix_obs("D", ...) was added in classification prefix phase
     mock_alegra.get = AsyncMock(return_value=[
-        {"id": 800, "observations": "Depreciación Computadores oficina marzo 2026"},
+        {"id": 800, "observations": "[D] Depreciación Computadores oficina marzo 2026"},
     ])
 
     tool_input = {

@@ -6,7 +6,7 @@ MongoDB ONLY stores operational state: apartados (workflow) and kit definitions.
 
 Accounts used:
 - Banco entries: per banco_recibo mapping
-- Anticipos recibidos: 5398 (liability — TODO: create proper 2805 account)
+- Anticipos recibidos: 5370 (NIIF 2805 — Anticipos y avances recibidos)
 """
 import uuid
 from datetime import datetime, timezone, timedelta
@@ -23,9 +23,8 @@ from services.alegra_items import AlegraItemsService
 router = APIRouter(prefix="/api/inventario", tags=["inventario"])
 
 # --- Alegra account IDs ---
-# TODO: Create proper "Anticipos recibidos de clientes" account (NIIF 2805)
-# Using 5398 (Devoluciones de clientes — liability) as temporary placeholder
-ANTICIPOS_RECIBIDOS_ID = "5398"
+# Anticipos y avances recibidos (NIIF 2805) — verified in Alegra 2026-04-14
+ANTICIPOS_RECIBIDOS_ID = "5370"
 
 BANCO_CATEGORY_MAP = {
     "bancolombia_2029": "5314",
@@ -63,6 +62,50 @@ async def _get_items_service(
 # ═══════════════════════════════════════════
 
 
+# --- Registro manual de VIN (para las 10 Sport 100 ya en Alegra como SKU) ---
+
+class RegistroManualRequest(BaseModel):
+    vin: str
+    motor: str = ""
+    modelo: str = "Sport 100"
+    color: str = ""
+    notas: str = ""
+    item_id_alegra: str = "25"  # Default: Sport 100 SKU
+
+
+@router.post("/motos/registrar-manual")
+async def registrar_moto_manual(
+    body: RegistroManualRequest,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """
+    Register VIN for an existing Alegra SKU moto (operational data in MongoDB).
+    The 10 Sport 100 already exist in Alegra as 1 SKU — this adds individual VIN tracking.
+    Future motos will be created directly in Alegra with VIN by the Agente Contador.
+    """
+    # Validate no duplicate VIN
+    existing = await db.inventario_motos.find_one({"vin": body.vin})
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Ya existe una moto con VIN {body.vin}"
+        )
+
+    doc = {
+        "vin": body.vin,
+        "motor": body.motor,
+        "modelo": body.modelo,
+        "color": body.color,
+        "notas": body.notas,
+        "item_id_alegra": body.item_id_alegra,
+        "estado": "disponible",
+        "fecha_registro": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.inventario_motos.insert_one(doc)
+
+    return {"success": True, "vin": body.vin, "modelo": body.modelo}
+
+
 @router.get("/motos")
 async def list_motos(
     estado: str | None = None,
@@ -70,48 +113,100 @@ async def list_motos(
     service: AlegraItemsService = Depends(_get_items_service),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    """List moto inventory — reads from Alegra, enriches with apartado status from MongoDB."""
+    """
+    List moto inventory — combines:
+    1. Motos with VIN registered in MongoDB (can be reserved)
+    2. Alegra SKU stock info (for motos without VIN yet)
+    """
     try:
-        motos = await service.list_motos()
+        alegra_motos = await service.list_motos()
     except AlegraError as e:
         raise HTTPException(status_code=502, detail=str(e))
 
-    # Enrich with apartado info from MongoDB
-    item_ids = [m["id_alegra"] for m in motos]
-    apartados_activos = {}
-    if item_ids:
-        cursor = db.apartados.find(
-            {"item_id_alegra": {"$in": item_ids}, "estado": "activo"}
-        )
-        async for apt in cursor:
-            apartados_activos[apt["item_id_alegra"]] = {
-                "cliente": apt.get("cliente", {}).get("nombre", ""),
-                "monto_acumulado": apt.get("monto_acumulado", 0),
-                "cuota_inicial_total": apt.get("cuota_inicial_total", 0),
-                "fecha_apartado": apt.get("fecha_apartado", ""),
-                "fecha_limite": apt.get("fecha_limite", ""),
-            }
+    # Load manually registered motos (with VIN) from MongoDB
+    registered_cursor = db.inventario_motos.find({"estado": {"$ne": "eliminada"}})
+    registered = await registered_cursor.to_list(length=500)
 
-    for moto in motos:
+    # Load active apartados
+    apartados_activos = {}
+    apt_cursor = db.apartados.find({"estado": "activo"})
+    async for apt in apt_cursor:
+        key = apt.get("vin") or apt.get("item_id_alegra", "")
+        apartados_activos[key] = {
+            "cliente": apt.get("cliente", {}).get("nombre", ""),
+            "monto_acumulado": apt.get("monto_acumulado", 0),
+            "cuota_inicial_total": apt.get("cuota_inicial_total", 0),
+            "fecha_apartado": apt.get("fecha_apartado", ""),
+            "fecha_limite": apt.get("fecha_limite", ""),
+        }
+
+    # Count registered VINs per Alegra item
+    registered_per_item: dict[str, int] = {}
+    for reg in registered:
+        aid = reg.get("item_id_alegra", "")
+        registered_per_item[aid] = registered_per_item.get(aid, 0) + 1
+
+    result = []
+
+    # 1. Add individually registered motos (with VIN)
+    for reg in registered:
+        vin = reg.get("vin", "")
+        estado_moto = "Disponible"
+        apartado_info = None
+
+        if vin in apartados_activos:
+            estado_moto = "Apartada"
+            apartado_info = apartados_activos[vin]
+
+        result.append({
+            "id_alegra": reg.get("item_id_alegra", ""),
+            "vin": vin,
+            "motor": reg.get("motor", ""),
+            "nombre": reg.get("modelo", ""),
+            "descripcion": f"VIN: {vin}" + (f" | Motor: {reg.get('motor', '')}" if reg.get("motor") else ""),
+            "referencia": "",
+            "categoria": "Motos nuevas",
+            "color": reg.get("color", ""),
+            "stock": 1,
+            "precio": 0,
+            "costo_unitario": 0,
+            "estado": estado_moto,
+            "tiene_vin": True,
+            "apartado": apartado_info,
+        })
+
+    # 2. For each Alegra SKU, show remaining unregistered units
+    for moto in alegra_motos:
         aid = moto["id_alegra"]
-        if aid in apartados_activos:
-            moto["estado"] = "Apartada"
-            moto["apartado"] = apartados_activos[aid]
-        elif moto["stock"] <= 0:
-            moto["estado"] = "Agotada"
+        total_stock = moto["stock"]
+        registered_count = registered_per_item.get(aid, 0)
+        sin_vin = max(total_stock - registered_count, 0)
+
+        if sin_vin > 0:
+            result.append({
+                **moto,
+                "vin": "",
+                "motor": "",
+                "color": "",
+                "stock": sin_vin,
+                "estado": "Sin VIN",
+                "tiene_vin": False,
+                "descripcion": moto["descripcion"] or moto["nombre"],
+            })
 
     # Apply filters
     if estado:
-        motos = [m for m in motos if m["estado"].lower() == estado.lower()]
+        result = [m for m in result if m["estado"].lower() == estado.lower()]
     if categoria:
-        motos = [m for m in motos if categoria.lower() in m["categoria"].lower()]
+        result = [m for m in result if categoria.lower() in m.get("categoria", "").lower()]
 
-    return {"success": True, "data": motos, "count": len(motos)}
+    return {"success": True, "data": result, "count": len(result)}
 
 
 # --- Apartar ---
 
 class ApartarRequest(BaseModel):
+    vin: str
     cliente_nombre: str
     cliente_cedula: str
     cliente_telefono: str = ""
@@ -129,13 +224,22 @@ async def apartar_moto(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
-    Reserve a moto:
-    a) Verify item exists in Alegra with stock > 0
-    b) Create apartado record in MongoDB (operational workflow)
+    Reserve a moto by VIN:
+    a) Verify VIN is registered in MongoDB and available
+    b) Verify Alegra SKU has stock > 0
     c) Create journal in Alegra: D:banco / C:anticipos recibidos
-    d) Publish event moto.apartada
+    d) Create apartado in MongoDB keyed by VIN
+    e) Publish event moto.apartada
     """
-    # a) Verify item in Alegra
+    # a) Verify VIN exists in MongoDB
+    moto_reg = await db.inventario_motos.find_one({"vin": body.vin, "estado": "disponible"})
+    if not moto_reg:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No hay moto disponible con VIN {body.vin}. Registre el VIN primero."
+        )
+
+    # b) Verify Alegra SKU stock
     try:
         item = await alegra.get(f"items/{item_id}")
     except AlegraError as e:
@@ -146,14 +250,12 @@ async def apartar_moto(
     if stock <= 0:
         raise HTTPException(status_code=400, detail="Moto sin stock disponible en Alegra")
 
-    # Check no active apartado exists
-    existing = await db.apartados.find_one(
-        {"item_id_alegra": item_id, "estado": "activo"}
-    )
+    # Check no active apartado for this VIN
+    existing = await db.apartados.find_one({"vin": body.vin, "estado": "activo"})
     if existing:
         raise HTTPException(
             status_code=409,
-            detail=f"Ya existe un apartado activo para este item (cliente: {existing.get('cliente', {}).get('nombre', '?')})"
+            detail=f"Ya existe un apartado activo para VIN {body.vin} (cliente: {existing.get('cliente', {}).get('nombre', '?')})"
         )
 
     # Resolve bank account
@@ -164,9 +266,9 @@ async def apartar_moto(
             detail=f"Banco no reconocido: {body.banco_recibo}. Opciones: {list(BANCO_CATEGORY_MAP.keys())}"
         )
 
-    # b) Create journal in Alegra
+    # c) Create journal in Alegra
     modelo = item.get("name", "Moto")
-    obs = f"[CI] Apartado moto {modelo} -- {body.cliente_nombre} -- Pago parcial ${body.monto_pago:,.0f}"
+    obs = f"[CI] Apartado moto {modelo} VIN:{body.vin} -- {body.cliente_nombre} -- ${body.monto_pago:,.0f}"
 
     try:
         journal = await alegra.request_with_verify(
@@ -184,10 +286,11 @@ async def apartar_moto(
 
     alegra_journal_id = str(journal.get("id", ""))
 
-    # c) Create apartado in MongoDB
+    # d) Create apartado in MongoDB keyed by VIN
     now = datetime.now(timezone.utc)
     apartado = {
         "apartado_id": str(uuid.uuid4()),
+        "vin": body.vin,
         "item_id_alegra": item_id,
         "modelo": modelo,
         "descripcion": item.get("description") or "",
@@ -214,12 +317,18 @@ async def apartar_moto(
     }
     await db.apartados.insert_one(apartado)
 
-    # d) Publish event
+    # Mark moto as apartada in inventario_motos
+    await db.inventario_motos.update_one(
+        {"vin": body.vin}, {"$set": {"estado": "apartada"}}
+    )
+
+    # e) Publish event
     await publish_event(
         db=db,
         event_type="moto.apartada",
         source="inventario",
         datos={
+            "vin": body.vin,
             "item_id_alegra": item_id,
             "modelo": modelo,
             "cliente": body.cliente_nombre,
@@ -227,7 +336,7 @@ async def apartar_moto(
             "cuota_inicial_total": body.cuota_inicial_total,
         },
         alegra_id=alegra_journal_id,
-        accion_ejecutada=f"Moto {modelo} apartada para {body.cliente_nombre}",
+        accion_ejecutada=f"Moto {modelo} VIN:{body.vin} apartada para {body.cliente_nombre}",
     )
 
     return {
@@ -253,13 +362,17 @@ async def pago_parcial(
     alegra: AlegraClient = Depends(_get_alegra),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    """Add partial payment to an active apartado."""
-    # a) Find active apartado
+    """Add partial payment to an active apartado. item_id can be VIN or Alegra ID."""
+    # a) Find active apartado (try VIN first, then item_id_alegra)
     apartado = await db.apartados.find_one(
-        {"item_id_alegra": item_id, "estado": "activo"}
+        {"vin": item_id, "estado": "activo"}
     )
     if not apartado:
-        raise HTTPException(status_code=404, detail="No hay apartado activo para este item")
+        apartado = await db.apartados.find_one(
+            {"item_id_alegra": item_id, "estado": "activo"}
+        )
+    if not apartado:
+        raise HTTPException(status_code=404, detail="No hay apartado activo para este item/VIN")
 
     banco_cat_id = BANCO_CATEGORY_MAP.get(body.banco_recibo)
     if not banco_cat_id:
@@ -344,17 +457,26 @@ async def liberar_moto(
     item_id: str,
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    """Release a reserved moto — set apartado to liberado."""
-    apartado = await db.apartados.find_one(
-        {"item_id_alegra": item_id, "estado": "activo"}
-    )
+    """Release a reserved moto — set apartado to liberado. item_id can be VIN or Alegra ID."""
+    apartado = await db.apartados.find_one({"vin": item_id, "estado": "activo"})
     if not apartado:
-        raise HTTPException(status_code=404, detail="No hay apartado activo para este item")
+        apartado = await db.apartados.find_one(
+            {"item_id_alegra": item_id, "estado": "activo"}
+        )
+    if not apartado:
+        raise HTTPException(status_code=404, detail="No hay apartado activo para este item/VIN")
 
     await db.apartados.update_one(
         {"_id": apartado["_id"]},
         {"$set": {"estado": "liberado", "fecha_liberacion": datetime.now(timezone.utc).isoformat()}},
     )
+
+    # Restore moto to disponible if it has a VIN
+    vin = apartado.get("vin")
+    if vin:
+        await db.inventario_motos.update_one(
+            {"vin": vin}, {"$set": {"estado": "disponible"}}
+        )
 
     await publish_event(
         db=db,
