@@ -9,6 +9,7 @@ from routers.chat import router as chat_router
 from routers.conciliacion import router as conciliacion_router
 from routers.backlog import router as backlog_router
 from routers.alegra import router as alegra_router
+from routers.cierre import router as cierre_router
 
 app = FastAPI(title="SISMO V2", version="0.1.0", lifespan=lifespan)
 
@@ -26,6 +27,7 @@ app.include_router(chat_router)
 app.include_router(conciliacion_router)
 app.include_router(backlog_router)
 app.include_router(alegra_router)
+app.include_router(cierre_router)
 
 
 @app.get("/health")
