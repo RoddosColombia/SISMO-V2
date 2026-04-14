@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 02
+current_phase: 03
 status: unknown
-last_updated: "2026-04-10T00:53:25.802Z"
+last_updated: "2026-04-10T00:55:08.958Z"
 progress:
   total_phases: 4
   completed_phases: 1
@@ -16,7 +16,7 @@ progress:
 # STATE: SISMO V2
 
 **Last updated:** 2026-04-09  
-**Current phase:** 02
+**Current phase:** 03
 
 ---
 
@@ -32,8 +32,8 @@ progress:
 
 ## Current Position
 
-Phase: 02 (Core Accounting Operations) — EXECUTING
-Plan: 1 of 7
+Phase: 03 (Conciliacion Bancaria) — EXECUTING
+Plan: 1 of 3
 | Item | Status |
 |------|--------|
 | Milestone | 1 (Phases 1-4, 27 requirements) |
@@ -109,6 +109,33 @@ Plan: 1 of 7
 - `.planning/ROADMAP.md` — phase structure, success criteria, dependencies
 - `.planning/STATE.md` — this file
 - `.planning/REQUIREMENTS.md` — traceability section (updated below)
+
+---
+
+---
+
+## Deuda Tecnica Documentada
+
+### DEUDA: Inventario sin integracion con flujo completo
+**Modulo:** routers/inventario.py + services/alegra_items.py  
+**Fecha:** 14-abr-2026  
+**Se resuelve en:** Phase 7
+
+**GAPS IDENTIFICADOS:**
+
+1. Las motos actuales (10 Sport 100) se registran con VIN manualmente — no hay flujo automatico
+2. Cuando lleguen motos nuevas de Auteco, el Agente Contador debe crear items en Alegra con VIN individual. Hoy esa funcionalidad no existe.
+3. El apartado "completo" (cuota inicial pagada) no trigger nada — deberia publicar evento `apartado.completo` al bus para que el Loanbook cree la factura + credito
+4. No hay DataKeeper que consuma eventos y sincronice inventario
+5. Los repuestos llegaran en 5 dias — los endpoints funcionan pero retornan vacio
+
+**SE RESUELVE EN:**
+- Phase 7 Sprint 1: DataKeeper consume eventos y sincroniza
+- Phase 7 Sprint 3: 3 Momentos del credito (Factura Auteco → inventario individual)
+- Phase 7 Sprint 7: Tools Loanbook (apartado.completo → factura venta)
+- Phase 7 Sprint 8: Integracion Loanbook <-> Contador via bus
+
+**NO TOCAR hasta Phase 7.** El modulo funciona para operacion diaria actual.
 
 ---
 
