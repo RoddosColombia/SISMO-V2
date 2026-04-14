@@ -274,6 +274,13 @@ class TestR7Duplicates:
         findings = rule_7_duplicates(j1, [], [j1, j2])
         assert len(findings) == 0
 
+    def test_different_observations_no_dup(self):
+        """Same monto + same date but different observations = NOT a duplicate (e.g. two different socios)."""
+        j1 = _journal(jid="103", date="2026-01-02", observations="[CXC] Anticipo nomina Andres Sanjuan CC 80075452", total=2250000)
+        j2 = _journal(jid="574", date="2026-01-02", observations="[CXC] Anticipo nomina Ivan Echeverri CC 80086601", total=2250000)
+        findings = rule_7_duplicates(j1, [], [j1, j2])
+        assert len(findings) == 0, f"False positive: different socios flagged as duplicates"
+
 
 # ───────────────────────────────────────────────
 # R8 — Transfers

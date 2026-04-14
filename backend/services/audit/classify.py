@@ -349,11 +349,15 @@ def rule_7_duplicates(journal: dict, entries: list[dict], all_journals: list[dic
     return findings
 
 
-def _similar_text(a: str, b: str, threshold: float = 0.6) -> bool:
-    """Simple similarity check: ratio of common words."""
+def _similar_text(a: str, b: str, threshold: float = 0.8) -> bool:
+    """Similarity check: ratio of common words. Threshold 0.8 to avoid false positives."""
     words_a = set(a.lower().split())
     words_b = set(b.lower().split())
     if not words_a or not words_b:
+        return False
+    # If observations differ in unique words (names, IDs), they're different journals
+    diff = words_a.symmetric_difference(words_b)
+    if len(diff) >= 2:
         return False
     common = words_a & words_b
     return len(common) / max(len(words_a), len(words_b)) >= threshold
