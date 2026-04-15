@@ -37,11 +37,13 @@ class AlegraItemsService:
         return all_items
 
     async def list_motos(self) -> list[dict]:
-        """Return only moto items (nuevas + usadas) with stock info."""
+        """Return only ACTIVE moto items (nuevas + usadas) with stock info."""
         items = await self.list_all_items()
         motos = []
         for item in items:
             if item.get("type") != "product":
+                continue
+            if item.get("status") == "inactive":
                 continue
             cat = item.get("itemCategory") or {}
             cat_id = str(cat.get("id", ""))

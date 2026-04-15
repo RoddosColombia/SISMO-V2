@@ -38,11 +38,11 @@ class TestToolUseNative:
                     f"Tool '{tool['name']}' references /journal-entries without NUNCA warning"
                 )
 
-    def test_only_contador_has_tools(self):
-        """D-05: CFO, RADAR, Loanbook get no tools in Phase 1."""
+    def test_cfo_and_radar_have_no_tools(self):
+        """D-05: CFO, RADAR get no tools. Loanbook has 11 tools (Phase 7)."""
         assert get_tools_for_agent('cfo') == []
         assert get_tools_for_agent('radar') == []
-        assert get_tools_for_agent('loanbook') == []
+        assert len(get_tools_for_agent('loanbook')) == 11
 
     def test_registrar_gasto_or_crear_causacion_tool_exists(self):
         names = {t['name'] for t in CONTADOR_TOOLS}

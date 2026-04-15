@@ -99,8 +99,9 @@ def test_get_tools_for_radar_returns_empty():
     assert get_tools_for_agent('radar') == []
 
 
-def test_get_tools_for_loanbook_returns_empty():
-    assert get_tools_for_agent('loanbook') == []
+def test_get_tools_for_loanbook_returns_11():
+    """Phase 7 Sprint 7: Loanbook agent now has 11 tools."""
+    assert len(get_tools_for_agent('loanbook')) == 11
 
 
 def test_unknown_agent_returns_empty():

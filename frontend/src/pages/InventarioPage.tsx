@@ -519,55 +519,86 @@ export default function InventarioPage() {
               ))}
             </div>
 
-            {/* Moto cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredMotos.map((moto, idx) => (
-                <div key={moto.vin || `${moto.id_alegra}-${idx}`}
-                  onClick={() => handleMotoClick(moto)}
-                  className={`bg-surface-container-lowest shadow-ambient-1 rounded-lg px-5 py-4 cursor-pointer transition-shadow hover:shadow-ambient-2 ${moto.estado === 'Agotada' ? 'opacity-50' : ''}`}>
-                  <div className="flex items-start justify-between mb-2">
-                    <div className="font-display font-bold text-on-surface text-sm">{moto.nombre}</div>
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${estadoBadge(moto.estado)}`}>
-                      {moto.estado}
-                    </span>
-                  </div>
-
-                  {/* VIN and motor info */}
-                  {moto.tiene_vin ? (
-                    <div className="mb-2 space-y-0.5">
-                      <p className="text-[11px] font-mono text-on-surface-variant">VIN: {moto.vin}</p>
-                      {moto.motor && <p className="text-[11px] font-mono text-on-surface-variant">Motor: {moto.motor}</p>}
-                      {moto.color && <p className="text-[11px] text-on-surface-variant">Color: {moto.color}</p>}
-                    </div>
-                  ) : (
-                    <p className="text-xs text-blue-600/80 mb-2">
-                      {moto.stock} unidad{moto.stock !== 1 ? 'es' : ''} — Registrar VIN para apartar
-                    </p>
-                  )}
-
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-on-surface-variant">{moto.categoria}</span>
-                    {!moto.tiene_vin && <span className="font-medium text-on-surface">Stock: {moto.stock}</span>}
-                  </div>
-                  {moto.precio > 0 && (
-                    <div className="text-xs font-medium text-primary mt-1">{formatCOP(moto.precio)}</div>
-                  )}
-                  {moto.apartado && (
-                    <div className="mt-2 pt-2 border-t border-surface-container-low">
-                      <div className="text-xs text-amber-700 font-medium">{moto.apartado.cliente}</div>
-                      <div className="text-[10px] text-on-surface-variant">
-                        {formatCOP(moto.apartado.monto_acumulado)} / {formatCOP(moto.apartado.cuota_inicial_total)}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
-              {filteredMotos.length === 0 && (
-                <div className="col-span-full text-center text-sm text-on-surface-variant py-8">
-                  No hay motos {filtroEstado ? `con estado "${filtroEstado}"` : ''}
-                </div>
-              )}
-            </div>
+            {/* Moto table */}
+            {filteredMotos.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-on-surface-variant">
+                <svg className="w-12 h-12 mb-3 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" />
+                </svg>
+                <p className="text-sm font-medium">No hay motos {filtroEstado ? `con estado "${filtroEstado}"` : ''}</p>
+              </div>
+            ) : (
+              <div className="bg-surface-container-lowest shadow-ambient-1 rounded-lg overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-surface-container-low">
+                      <th className="text-left px-4 py-2.5 text-xs text-on-surface-variant font-medium">Modelo</th>
+                      <th className="text-left px-4 py-2.5 text-xs text-on-surface-variant font-medium">VIN</th>
+                      <th className="text-left px-4 py-2.5 text-xs text-on-surface-variant font-medium">Color</th>
+                      <th className="text-center px-4 py-2.5 text-xs text-on-surface-variant font-medium">Estado</th>
+                      <th className="text-right px-4 py-2.5 text-xs text-on-surface-variant font-medium">Stock</th>
+                      <th className="text-right px-4 py-2.5 text-xs text-on-surface-variant font-medium">Precio</th>
+                      <th className="text-left px-4 py-2.5 text-xs text-on-surface-variant font-medium">Cliente</th>
+                      <th className="text-center px-4 py-2.5 text-xs text-on-surface-variant font-medium">Accion</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredMotos.map((moto, idx) => (
+                      <tr key={moto.vin || `${moto.id_alegra}-${idx}`}
+                        className={`border-t border-surface-container-low hover:bg-surface-container-low/40 transition-colors ${moto.estado === 'Agotada' ? 'opacity-50' : ''}`}>
+                        <td className="px-4 py-2.5">
+                          <div className="font-medium text-on-surface">{moto.nombre}</div>
+                          <div className="text-[10px] text-on-surface-variant">{moto.categoria}</div>
+                        </td>
+                        <td className="px-4 py-2.5 font-mono text-xs text-on-surface-variant">
+                          {moto.tiene_vin ? moto.vin : <span className="text-blue-600/80">Sin VIN</span>}
+                        </td>
+                        <td className="px-4 py-2.5 text-on-surface-variant text-xs">{moto.color || '—'}</td>
+                        <td className="px-4 py-2.5 text-center">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${estadoBadge(moto.estado)}`}>
+                            {moto.estado}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-medium text-on-surface">{moto.stock}</td>
+                        <td className="px-4 py-2.5 text-right text-on-surface">{moto.precio > 0 ? formatCOP(moto.precio) : '—'}</td>
+                        <td className="px-4 py-2.5">
+                          {moto.apartado ? (
+                            <div>
+                              <div className="text-xs text-amber-700 font-medium">{moto.apartado.cliente}</div>
+                              <div className="text-[10px] text-on-surface-variant">
+                                {formatCOP(moto.apartado.monto_acumulado)} / {formatCOP(moto.apartado.cuota_inicial_total)}
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-on-surface-variant">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5 text-center">
+                          {moto.estado === 'Sin VIN' && (
+                            <button onClick={() => handleMotoClick(moto)}
+                              className="px-2.5 py-1 rounded-md bg-blue-500/10 text-blue-700 text-[11px] font-medium hover:bg-blue-500/20 transition-colors">
+                              Registrar VIN
+                            </button>
+                          )}
+                          {moto.estado === 'Disponible' && moto.tiene_vin && (
+                            <button onClick={() => handleMotoClick(moto)}
+                              className="px-2.5 py-1 rounded-md bg-primary/10 text-primary text-[11px] font-medium hover:bg-primary/20 transition-colors">
+                              Apartar
+                            </button>
+                          )}
+                          {moto.estado === 'Apartada' && (
+                            <button onClick={() => handleMotoClick(moto)}
+                              className="px-2.5 py-1 rounded-md bg-amber-500/10 text-amber-700 text-[11px] font-medium hover:bg-amber-500/20 transition-colors">
+                              Ver detalle
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </>
         ) : (
           <>

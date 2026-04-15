@@ -8,6 +8,7 @@ import BacklogPage from '@/pages/BacklogPage'
 import DashboardPage from '@/pages/DashboardPage'
 import InventarioPage from '@/pages/InventarioPage'
 import LoanbookPage from '@/pages/LoanbookPage'
+import CrmPage from '@/pages/CrmPage'
 
 function App() {
   return (
@@ -27,6 +28,7 @@ function App() {
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/inventario" element={<InventarioPage />} />
             <Route path="/loanbook" element={<LoanbookPage />} />
+            <Route path="/crm" element={<CrmPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/chat" replace />} />
         </Routes>
