@@ -212,7 +212,11 @@ class TestMomento2EntregaRealizada:
             "loanbook_id": str(uuid.uuid4()),
             "vin": vin,
             "estado": "pendiente_entrega",
-            "cuotas": [{"numero": 1, "monto": 160_000, "estado": "pendiente"}],
+            "modalidad": "semanal",
+            "num_cuotas": 1,
+            "fecha_entrega": "2026-04-14",
+            "fecha_primer_pago": None,
+            "cuotas": [{"numero": 1, "monto": 160_000, "estado": "pendiente", "fecha": None, "fecha_pago": None, "mora_acumulada": 0}],
         }
 
     @pytest.mark.asyncio

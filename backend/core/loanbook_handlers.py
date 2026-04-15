@@ -20,6 +20,8 @@ from core.loanbook_model import (
     calcular_dpd,
     estado_from_dpd,
     calcular_mora,
+    calcular_cronograma,
+    asignar_cronograma,
 )
 
 logger = logging.getLogger("datakeeper.loanbook")
@@ -104,12 +106,32 @@ async def handle_entrega_realizada(event: dict, db: AsyncIOMotorDatabase):
             f"para VIN {vin}."
         )
 
-    # Update loanbook state
+    # Calculate cronograma (Wednesday Rule)
+    fecha_entrega = date.fromisoformat(lb["fecha_entrega"])
+    modalidad = lb["modalidad"]
+    num_cuotas = lb["num_cuotas"]
+    fecha_primer_pago_str = lb.get("fecha_primer_pago")
+    fecha_primer_pago = date.fromisoformat(fecha_primer_pago_str) if fecha_primer_pago_str else None
+
+    cronograma = calcular_cronograma(
+        fecha_entrega=fecha_entrega,
+        modalidad=modalidad,
+        num_cuotas=num_cuotas,
+        fecha_primer_pago=fecha_primer_pago,
+    )
+
+    # Assign dates to cuotas
+    resultado = asignar_cronograma(lb["cuotas"], cronograma)
+
+    # Update loanbook: state + cronograma
     await db.loanbook.update_one(
         {"vin": vin},
         {"$set": {
             "estado": "activo",
             "fecha_activacion": event["timestamp"],
+            "cuotas": resultado["cuotas"],
+            "fecha_primera_cuota": resultado["fecha_primera_cuota"],
+            "fecha_ultima_cuota": resultado["fecha_ultima_cuota"],
         }},
     )
 
@@ -122,7 +144,10 @@ async def handle_entrega_realizada(event: dict, db: AsyncIOMotorDatabase):
         }},
     )
 
-    logger.info(f"Momento 2: Loanbook activated for VIN {vin}")
+    logger.info(
+        f"Momento 2: Loanbook activated for VIN {vin} — "
+        f"cronograma {resultado['fecha_primera_cuota']} → {resultado['fecha_ultima_cuota']}"
+    )
 
 
 # ═══════════════════════════════════════════

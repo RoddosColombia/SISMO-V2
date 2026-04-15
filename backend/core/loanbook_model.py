@@ -16,7 +16,7 @@ Business rules:
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 # ═══════════════════════════════════════════
@@ -287,6 +287,100 @@ def crear_loanbook(
         "fecha_entrega": fecha_entrega.isoformat(),
         "fecha_primer_pago": fecha_primer_pago.isoformat() if fecha_primer_pago else None,
         "fecha_creacion": date.today().isoformat(),
+    }
+
+
+# ═══════════════════════════════════════════
+# Cronograma de cuotas — Regla del Miércoles
+# ═══════════════════════════════════════════
+
+WEDNESDAY = 2  # date.weekday() == 2
+
+
+def _next_wednesday(d: date) -> date:
+    """Return d if it's Wednesday, otherwise the next Wednesday after d."""
+    days_ahead = WEDNESDAY - d.weekday()
+    if days_ahead < 0:
+        days_ahead += 7
+    elif days_ahead == 0:
+        return d
+    return d + timedelta(days=days_ahead)
+
+
+def calcular_cronograma(
+    fecha_entrega: date,
+    modalidad: str,
+    num_cuotas: int,
+    fecha_primer_pago: date | None = None,
+) -> list[date]:
+    """
+    Calculate cuota schedule respecting the Wednesday Rule.
+
+    - Semanal: first Wednesday >= entrega + 7 days, then every 7 days
+    - Quincenal: fecha_primer_pago (must be Wednesday), then every 14 days
+    - Mensual: fecha_primer_pago (must be Wednesday), then every 28 days
+
+    ALL dates are ALWAYS Wednesdays. No exceptions.
+    """
+    if modalidad not in MODALIDADES:
+        raise ValueError(f"Modalidad '{modalidad}' no válida.")
+
+    dias = MODALIDADES[modalidad]["dias"]
+    min_first_date = fecha_entrega + timedelta(days=7)
+
+    if modalidad == "semanal":
+        # Auto-calculate: first Wednesday >= entrega + 7 days
+        primer_cobro = _next_wednesday(min_first_date)
+    else:
+        # Quincenal/mensual: user-provided fecha_primer_pago
+        if fecha_primer_pago is None:
+            raise ValueError(
+                f"Modalidad '{modalidad}' requiere fecha_primer_pago."
+            )
+        if fecha_primer_pago.weekday() != WEDNESDAY:
+            raise ValueError(
+                f"fecha_primer_pago debe ser miércoles (Wednesday). "
+                f"Fecha recibida: {fecha_primer_pago.isoformat()}."
+            )
+        if fecha_primer_pago < min_first_date:
+            raise ValueError(
+                f"fecha_primer_pago debe ser >= fecha_entrega + 7 días "
+                f"({min_first_date.isoformat()})."
+            )
+        primer_cobro = fecha_primer_pago
+
+    # Generate all dates
+    fechas = []
+    for i in range(num_cuotas):
+        fechas.append(primer_cobro + timedelta(days=dias * i))
+
+    return fechas
+
+
+def asignar_cronograma(
+    cuotas: list[dict],
+    fechas: list[date],
+) -> dict:
+    """
+    Assign calculated dates to loanbook cuotas.
+
+    Returns dict with:
+    - cuotas: updated cuotas list with fecha set
+    - fecha_primera_cuota: first date ISO string
+    - fecha_ultima_cuota: last date ISO string
+    """
+    if len(cuotas) != len(fechas):
+        raise ValueError(
+            f"Mismatch: {len(cuotas)} cuotas vs {len(fechas)} fechas."
+        )
+
+    for cuota, fecha in zip(cuotas, fechas):
+        cuota["fecha"] = fecha.isoformat()
+
+    return {
+        "cuotas": cuotas,
+        "fecha_primera_cuota": fechas[0].isoformat(),
+        "fecha_ultima_cuota": fechas[-1].isoformat(),
     }
 
 
