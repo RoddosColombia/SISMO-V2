@@ -7,6 +7,7 @@ import ChatPage from '@/pages/ChatPage'
 import BacklogPage from '@/pages/BacklogPage'
 import DashboardPage from '@/pages/DashboardPage'
 import InventarioPage from '@/pages/InventarioPage'
+import LoanbookPage from '@/pages/LoanbookPage'
 
 function App() {
   return (
@@ -25,6 +26,7 @@ function App() {
             <Route path="/backlog" element={<BacklogPage />} />
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/inventario" element={<InventarioPage />} />
+            <Route path="/loanbook" element={<LoanbookPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/chat" replace />} />
         </Routes>
