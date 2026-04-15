@@ -9,7 +9,8 @@ All handlers are CRITICAL — loanbook writes are on the critical path.
 They use pure domain logic from loanbook_model.py and write to MongoDB.
 """
 import logging
-from datetime import date
+import uuid
+from datetime import date, datetime, timezone
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from core.event_handlers import on_event
@@ -72,6 +73,22 @@ async def handle_apartado_completo(event: dict, db: AsyncIOMotorDatabase):
         {"vin": vin},
         {"$set": {"estado": "apartada"}},
     )
+
+    # Publish loanbook.creado event for CRM sync
+    await db.roddos_events.insert_one({
+        "event_id": str(uuid.uuid4()),
+        "event_type": "loanbook.creado",
+        "source": "datakeeper.loanbook",
+        "correlation_id": event.get("correlation_id", str(uuid.uuid4())),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "datos": {
+            "loanbook_id": lb["loanbook_id"],
+            "vin": vin,
+            "cliente": cliente,
+        },
+        "alegra_id": None,
+        "accion_ejecutada": f"Loanbook creado para VIN {vin}",
+    })
 
     logger.info(
         f"Momento 1: Loanbook created for VIN {vin} — "

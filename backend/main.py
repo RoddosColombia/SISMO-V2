@@ -12,6 +12,7 @@ from routers.alegra import router as alegra_router
 from routers.cierre import router as cierre_router
 from routers.inventario import router as inventario_router
 from routers.datakeeper import router as datakeeper_router
+from routers.crm import router as crm_router
 
 app = FastAPI(title="SISMO V2", version="0.1.0", lifespan=lifespan)
 
@@ -32,6 +33,7 @@ app.include_router(alegra_router)
 app.include_router(cierre_router)
 app.include_router(inventario_router)
 app.include_router(datakeeper_router)
+app.include_router(crm_router)
 
 
 @app.get("/health")
