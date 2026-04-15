@@ -827,11 +827,13 @@ CONTADOR_TOOLS: list[dict] = (
     + _CATALOGO
 )
 
+from agents.loanbook.tools import LOANBOOK_TOOLS
+
 AGENT_TOOLS: dict[str, list[dict]] = {
     'contador': CONTADOR_TOOLS,
     'cfo': [],      # No tools — CFO solo lee de Alegra (GET)
     'radar': [],    # No tools — RADAR solo gestiona cobranza
-    'loanbook': [], # No tools — Loanbook solo gestiona créditos
+    'loanbook': LOANBOOK_TOOLS,  # 11 tools — Sprint 7
 }
 
 

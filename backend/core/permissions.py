@@ -21,7 +21,7 @@ WRITE_PERMISSIONS: dict[str, dict[str, list[str]]] = {
         'alegra': [],
     },
     'loanbook': {
-        'mongodb': ['inventario_motos', 'loanbook', 'roddos_events'],
+        'mongodb': ['inventario_motos', 'loanbook', 'roddos_events', 'apartados', 'crm_clientes'],
         'alegra': [],
     },
 }

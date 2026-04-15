@@ -31,6 +31,9 @@ KEYWORDS: dict[str, list[str]] = {
         "loanbook", "crédito", "credito", "entrega de moto", "cronograma",
         "cuotas del crédito", "moto entregada", "plan de pago",
         "saldo del crédito", "saldo del credito", "lb-",
+        "mora", "apartar", "apartado", "liquidar", "liquidación", "liquidacion",
+        "pago cuota", "pago de cuota", "inventario", "motos disponibles",
+        "cartera", "dpd", "entrega", "registrar entrega",
     ],
 }
 
