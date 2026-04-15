@@ -446,7 +446,15 @@ class LoanToolDispatcher:
             }},
         )
 
-        # Publish cuota.pagada event
+        # Identify which cuota number was paid (first pagada with this fecha_pago)
+        cuota_numero = None
+        for c in cuotas:
+            if c.get("fecha_pago") == fecha_pago_str and c["estado"] == "pagada":
+                cuota_numero = c["numero"]
+                break
+
+        # Publish cuota.pagada event — enriched payload for contabilidad handler
+        banco_recibo = tool_input.get("banco", "5314")  # default Bancolombia 2029
         await self.db.roddos_events.insert_one({
             "event_id": str(uuid.uuid4()),
             "event_type": "cuota.pagada",
@@ -454,16 +462,54 @@ class LoanToolDispatcher:
             "correlation_id": str(uuid.uuid4()),
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "datos": {
+                "loanbook_id": lb.get("loanbook_id", ""),
                 "vin": vin,
-                "monto_pago": monto_pago,
+                "cliente_nombre": lb.get("cliente", {}).get("nombre", ""),
+                "cliente_cedula": lb.get("cliente", {}).get("cedula", ""),
+                "cuota_numero": cuota_numero,
+                "monto_total_pagado": monto_pago,
+                "desglose": {
+                    "cuota_corriente": allocation["corriente"],
+                    "vencidas": allocation["vencidas"],
+                    "anzi": allocation["anzi"],
+                    "mora": allocation["mora"],
+                    "capital_extra": allocation["capital"],
+                },
+                "banco_recibo": banco_recibo,
                 "fecha_pago": fecha_pago_str,
-                "waterfall": allocation,
+                "modelo_moto": lb.get("modelo", ""),
+                "plan_codigo": lb.get("plan_codigo", ""),
+                "modalidad": lb.get("modalidad", ""),
                 "nuevo_estado": new_estado,
                 "dpd": dpd,
             },
             "alegra_id": None,
             "accion_ejecutada": f"Pago ${monto_pago:,.0f} en VIN {vin}",
         })
+
+        # If all cuotas are paid → publish loanbook.saldado
+        cuotas_pendientes = sum(1 for c in cuotas if c["estado"] != "pagada")
+        if cuotas_pendientes == 0 and max(new_saldo, 0) == 0:
+            await self.db.roddos_events.insert_one({
+                "event_id": str(uuid.uuid4()),
+                "event_type": "loanbook.saldado",
+                "source": "agent.loanbook",
+                "correlation_id": str(uuid.uuid4()),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "datos": {
+                    "loanbook_id": lb.get("loanbook_id", ""),
+                    "vin": vin,
+                    "cliente_nombre": lb.get("cliente", {}).get("nombre", ""),
+                    "cliente_cedula": lb.get("cliente", {}).get("cedula", ""),
+                },
+                "alegra_id": None,
+                "accion_ejecutada": f"Credito saldado VIN {vin}",
+            })
+            # Update loanbook state to saldado
+            await self.db.loanbook.update_one(
+                {"vin": vin},
+                {"$set": {"estado": "saldado"}},
+            )
 
         logger.info(f"Pago cuota ${monto_pago:,.0f} VIN {vin}: {allocation}")
         return {
