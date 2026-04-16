@@ -68,6 +68,19 @@ async def test_lookup_not_found_raises_404():
 
 
 @pytest.mark.asyncio
+async def test_vinless_comparendo_accessible_by_loanbook_id():
+    """BUG 2 regression: comparendo/licencia (VIN=null) must be fetchable by loanbook_id."""
+    db = MagicMock()
+    db.loanbook = MagicMock()
+    doc = _sample_doc(vin=None, lb_id="LB-2026-0025", tipo="comparendo")
+    db.loanbook.find_one = AsyncMock(return_value=doc)
+    result = await get_loanbook(identifier="LB-2026-0025", db=db)
+    assert result["loanbook_id"] == "LB-2026-0025"
+    assert result["tipo_producto"] == "comparendo"
+    assert result["vin"] is None
+
+
+@pytest.mark.asyncio
 async def test_response_includes_computed_fields():
     """Response must include dpd, cuotas_pagadas, proxima_cuota, timeline_status."""
     db = MagicMock()

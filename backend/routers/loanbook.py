@@ -30,19 +30,29 @@ async def loanbook_stats(db: AsyncIOMotorDatabase = Depends(get_db)):
     all_lbs = await db.loanbook.find().to_list(length=1000)
     total = len(all_lbs)
     activos = 0
+    saldados = 0
+    pendiente_entrega = 0
     cartera_total = 0
     recaudo_semanal = 0
     en_mora = 0
 
     for lb in all_lbs:
         estado = lb.get("estado", "")
-        if estado not in ("saldado", "castigado", "pendiente_entrega"):
-            activos += 1
-            cartera_total += lb.get("saldo_capital", 0)
+        if estado in ("saldado", "castigado"):
+            saldados += 1
+            continue
+        if estado == "pendiente_entrega":
+            pendiente_entrega += 1
+        # Cartera viva: todo lo que no esté saldado/castigado, incluyendo
+        # pendiente_entrega (son créditos reales esperando activación).
+        activos += 1
+        cartera_total += lb.get("saldo_capital", 0) or lb.get("saldo_pendiente", 0)
 
-            # Recaudo semanal: cuota_monto for semanal, cuota/2 for quincenal, cuota/4 for mensual
+        # Recaudo semanal: cuota_monto for semanal, cuota/2 for quincenal, cuota/4 for mensual
+        # Solo considera créditos activados (pendiente_entrega aún no genera recaudo).
+        if estado != "pendiente_entrega":
             modalidad = lb.get("modalidad", "semanal")
-            cuota = lb.get("cuota_monto", 0)
+            cuota = lb.get("cuota_monto", 0) or 0
             if modalidad == "semanal":
                 recaudo_semanal += cuota
             elif modalidad == "quincenal":
@@ -58,6 +68,8 @@ async def loanbook_stats(db: AsyncIOMotorDatabase = Depends(get_db)):
     return {
         "total": total,
         "activos": activos,
+        "saldados": saldados,
+        "pendiente_entrega": pendiente_entrega,
         "cartera_total": round(cartera_total),
         "recaudo_semanal": round(recaudo_semanal),
         "en_mora": en_mora,

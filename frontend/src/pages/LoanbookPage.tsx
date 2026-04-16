@@ -53,6 +53,8 @@ interface Loanbook {
 interface Stats {
   total: number
   activos: number
+  saldados?: number
+  pendiente_entrega?: number
   cartera_total: number
   recaudo_semanal: number
   en_mora: number
@@ -164,10 +166,19 @@ function moraAcumulada(cuotas: Cuota[] | undefined): number {
 
 // ═══════════════════════════════════════════
 // Detail view is now /loanbook/:id — see LoanDetailPage.tsx
+// DEPRECATED: Inline modal removed. All navigation uses loanbook_id (works
+// for VIN-less products like comparendo/licencia).
+// Dead function kept below with no-op body to preserve line ordering but
+// prefixed with _ to signal unused. Will be removed in a cleanup pass.
 // ═══════════════════════════════════════════
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-function _DetalleModal_DEPRECATED({ vin, onClose }: { vin: string; onClose: () => void }) {
+function _DetalleModal_DEPRECATED(_props: { vin: string; onClose: () => void }) {
+  return null
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function _DetalleModal_DEPRECATED_OLD({ vin, onClose }: { vin: string; onClose: () => void }) {
   const [lb, setLb] = useState<Loanbook | null>(null)
   const [loading, setLoading] = useState(true)
 
