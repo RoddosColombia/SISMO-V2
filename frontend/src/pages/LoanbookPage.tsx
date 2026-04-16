@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { apiGet } from '@/lib/api'
+import LoanDetailPage from '@/pages/LoanDetailPage'
 
 // ═══════════════════════════════════════════
 // Types
@@ -392,11 +392,12 @@ const ESTADO_FILTER_LABELS: Record<string, string> = {
 }
 
 export default function LoanbookPage() {
-  const navigate = useNavigate()
   const [loanbooks, setLoanbooks] = useState<Loanbook[]>([])
   const [stats, setStats] = useState<Stats | null>(null)
   const [loading, setLoading] = useState(true)
   const [filtroEstado, setFiltroEstado] = useState('')
+  const [search, setSearch] = useState('')
+  const [openLoanId, setOpenLoanId] = useState<string | null>(null)
 
   const loadData = useCallback(async () => {
     try {
@@ -414,9 +415,17 @@ export default function LoanbookPage() {
     loadData().finally(() => setLoading(false))
   }, [loadData])
 
-  const filtered = filtroEstado
-    ? loanbooks.filter(lb => lb.estado === filtroEstado)
-    : loanbooks
+  const searchNormalized = search.trim().toLowerCase()
+  const filtered = loanbooks.filter(lb => {
+    if (filtroEstado && lb.estado !== filtroEstado) return false
+    if (!searchNormalized) return true
+    const haystack = [
+      lb.cliente?.nombre || '',
+      lb.cliente?.cedula || '',
+      lb.loanbook_id || '',
+    ].join(' ').toLowerCase()
+    return haystack.includes(searchNormalized)
+  })
 
   return (
     <div className="flex flex-col h-full bg-surface">
@@ -459,6 +468,29 @@ export default function LoanbookPage() {
               </div>
             </div>
 
+            {/* Search bar */}
+            <div className="mb-3 relative">
+              <input
+                type="search"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Buscar por nombre, cédula o código de crédito..."
+                className="w-full rounded-lg bg-surface-container-lowest shadow-ambient-1 pl-10 pr-3 py-2 text-sm text-on-surface placeholder:text-on-surface-variant/60 outline-none focus:ring-2 focus:ring-primary/30"
+              />
+              <svg className="w-4 h-4 text-on-surface-variant absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M17 10.5a6.5 6.5 0 11-13 0 6.5 6.5 0 0113 0z" />
+              </svg>
+              {search && (
+                <button onClick={() => setSearch('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-surface p-1">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              )}
+            </div>
+
             {/* Filters */}
             <div className="flex gap-2 mb-4 flex-wrap">
               {ESTADO_FILTERS.map(est => (
@@ -491,7 +523,7 @@ export default function LoanbookPage() {
                   const saldoMostrar = lb.saldo_pendiente ?? lb.saldo_capital
                   return (
                     <div key={lb.loanbook_id}
-                      onClick={() => navigate(`/loanbook/${lb.loanbook_id}`)}
+                      onClick={() => setOpenLoanId(lb.loanbook_id)}
                       className="bg-surface-container-lowest shadow-ambient-1 rounded-lg px-4 py-4 sm:px-5 cursor-pointer transition-shadow hover:shadow-ambient-2">
                       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                         {/* Left: client + modelo + tipo */}
@@ -579,6 +611,25 @@ export default function LoanbookPage() {
           </>
         )}
       </div>
+
+      {/* Drawer lateral con detalle del credito */}
+      {openLoanId && (
+        <>
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm animate-in fade-in duration-150"
+            onClick={() => setOpenLoanId(null)}
+          />
+          {/* Slide-in panel */}
+          <div
+            className="fixed top-0 right-0 z-50 h-screen w-full sm:w-[80%] md:w-[75%] lg:w-[70%] xl:w-[65%] bg-surface shadow-2xl overflow-hidden animate-in slide-in-from-right duration-200"
+            role="dialog"
+            aria-modal="true"
+          >
+            <LoanDetailPage idProp={openLoanId} onClose={() => setOpenLoanId(null)} />
+          </div>
+        </>
+      )}
     </div>
   )
 }

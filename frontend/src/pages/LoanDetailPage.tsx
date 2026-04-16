@@ -2,6 +2,13 @@ import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { apiGet } from '@/lib/api'
 
+interface LoanDetailPageProps {
+  /** If provided, overrides useParams id. Used when rendered inside a drawer. */
+  idProp?: string
+  /** If provided, renders an X button instead of back-to-list. */
+  onClose?: () => void
+}
+
 // ═══════════════════════════════════════════
 // Types
 // ═══════════════════════════════════════════
@@ -172,9 +179,10 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
 // Main Page
 // ═══════════════════════════════════════════
 
-export default function LoanDetailPage() {
-  const { id } = useParams<{ id: string }>()
+export default function LoanDetailPage({ idProp, onClose }: LoanDetailPageProps = {}) {
+  const params = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const id = idProp ?? params.id
   const [lb, setLb] = useState<Loanbook | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -200,9 +208,9 @@ export default function LoanDetailPage() {
     return (
       <div className="flex flex-col items-center justify-center h-full bg-surface p-6 text-center">
         <p className="text-sm text-red-600 mb-3">{error || 'Crédito no encontrado'}</p>
-        <button onClick={() => navigate('/loanbook')}
+        <button onClick={() => (onClose ? onClose() : navigate('/loanbook'))}
           className="px-4 py-2 rounded-md bg-primary text-white text-sm font-medium">
-          ← Volver a Créditos
+          {onClose ? 'Cerrar' : '← Volver a Créditos'}
         </button>
       </div>
     )
@@ -253,13 +261,23 @@ export default function LoanDetailPage() {
     <div className="flex flex-col h-full bg-surface overflow-y-auto">
       {/* Header */}
       <div className="sticky top-0 z-10 bg-surface/95 backdrop-blur-sm px-4 py-3 sm:px-6">
-        <button onClick={() => navigate('/loanbook')}
-          className="text-xs text-on-surface-variant hover:text-on-surface mb-2 flex items-center gap-1">
-          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
-          </svg>
-          Volver a Créditos
-        </button>
+        {onClose ? (
+          <button onClick={onClose}
+            className="text-xs text-on-surface-variant hover:text-on-surface mb-2 flex items-center gap-1">
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+            Cerrar
+          </button>
+        ) : (
+          <button onClick={() => navigate('/loanbook')}
+            className="text-xs text-on-surface-variant hover:text-on-surface mb-2 flex items-center gap-1">
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+            </svg>
+            Volver a Créditos
+          </button>
+        )}
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
             <h1 className="font-display text-lg sm:text-xl font-bold text-on-surface break-words">
