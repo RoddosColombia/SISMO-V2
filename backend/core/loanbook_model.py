@@ -338,10 +338,17 @@ def crear_loanbook(
 
 WEDNESDAY = 2  # date.weekday() == 2
 
+# Mapping from Spanish weekday names to Python weekday() numbers.
+# Used for EXCEPTIONAL cases only (default is always miercoles).
+DIAS_COBRO: dict[str, int] = {
+    "lunes": 0, "martes": 1, "miercoles": 2, "miércoles": 2,
+    "jueves": 3, "viernes": 4, "sabado": 5, "sábado": 5, "domingo": 6,
+}
 
-def _next_wednesday(d: date) -> date:
-    """Return d if it's Wednesday, otherwise the next Wednesday after d."""
-    days_ahead = WEDNESDAY - d.weekday()
+
+def _next_weekday(d: date, weekday: int) -> date:
+    """Return d if it matches weekday, otherwise the next occurrence after d."""
+    days_ahead = weekday - d.weekday()
     if days_ahead < 0:
         days_ahead += 7
     elif days_ahead == 0:
@@ -349,11 +356,17 @@ def _next_wednesday(d: date) -> date:
     return d + timedelta(days=days_ahead)
 
 
+def _next_wednesday(d: date) -> date:
+    """Backward-compat: return next Wednesday (or d if Wednesday)."""
+    return _next_weekday(d, WEDNESDAY)
+
+
 def calcular_cronograma(
     fecha_entrega: date,
     modalidad: str,
     num_cuotas: int,
     fecha_primer_pago: date | None = None,
+    dia_cobro_especial: str | None = None,
 ) -> list[date]:
     """
     Calculate cuota schedule respecting the Wednesday Rule.
@@ -362,26 +375,40 @@ def calcular_cronograma(
     - Quincenal: fecha_primer_pago (must be Wednesday), then every 14 days
     - Mensual: fecha_primer_pago (must be Wednesday), then every 28 days
 
-    ALL dates are ALWAYS Wednesdays. No exceptions.
+    Default: ALL dates are miércoles. Pass `dia_cobro_especial` for exceptional
+    cases (e.g. a client paid only on Thursdays due to their income schedule).
     """
     if modalidad not in MODALIDADES:
         raise ValueError(f"Modalidad '{modalidad}' no válida.")
+
+    # Resolve target weekday (default Wednesday)
+    if dia_cobro_especial:
+        key = dia_cobro_especial.strip().lower()
+        if key not in DIAS_COBRO:
+            raise ValueError(
+                f"dia_cobro_especial '{dia_cobro_especial}' no válido. "
+                f"Use: {list(DIAS_COBRO.keys())}."
+            )
+        target_weekday = DIAS_COBRO[key]
+    else:
+        target_weekday = WEDNESDAY
 
     dias = MODALIDADES[modalidad]["dias"]
     min_first_date = fecha_entrega + timedelta(days=7)
 
     if modalidad == "semanal":
-        # Auto-calculate: first Wednesday >= entrega + 7 days
-        primer_cobro = _next_wednesday(min_first_date)
+        # Auto-calculate: first target weekday >= entrega + 7 days
+        primer_cobro = _next_weekday(min_first_date, target_weekday)
     else:
         # Quincenal/mensual: user-provided fecha_primer_pago
         if fecha_primer_pago is None:
             raise ValueError(
                 f"Modalidad '{modalidad}' requiere fecha_primer_pago."
             )
-        if fecha_primer_pago.weekday() != WEDNESDAY:
+        if fecha_primer_pago.weekday() != target_weekday:
+            dia_nombre = dia_cobro_especial or "miércoles"
             raise ValueError(
-                f"fecha_primer_pago debe ser miércoles (Wednesday). "
+                f"fecha_primer_pago debe ser {dia_nombre}. "
                 f"Fecha recibida: {fecha_primer_pago.isoformat()}."
             )
         if fecha_primer_pago < min_first_date:
