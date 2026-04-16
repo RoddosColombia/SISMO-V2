@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { apiGet } from '@/lib/api'
 
 // ═══════════════════════════════════════════
@@ -22,7 +23,8 @@ interface Cuota {
 
 interface Loanbook {
   loanbook_id: string
-  vin: string
+  tipo_producto?: string
+  vin: string | null
   cliente: { nombre: string; cedula: string; telefono?: string }
   plan_codigo: string
   modelo: string
@@ -31,6 +33,7 @@ interface Loanbook {
   cuota_monto: number
   num_cuotas: number
   saldo_capital: number
+  saldo_pendiente?: number
   total_pagado: number
   total_mora_pagada: number
   total_anzi_pagado: number
@@ -44,6 +47,7 @@ interface Loanbook {
   dpd: number
   proxima_cuota: ProximaCuota | null
   cuotas?: Cuota[]
+  score_bucket?: string
 }
 
 interface Stats {
@@ -114,11 +118,56 @@ function formatDate(d: string | null) {
   }
 }
 
+const MORA_TASA = 2000 // COP/dia
+
+function tipoProductoBadge(tipo: string | undefined) {
+  const t = (tipo || 'moto').toLowerCase()
+  const map: Record<string, string> = {
+    moto: 'bg-neutral-200 text-neutral-700',
+    comparendo: 'bg-blue-500/15 text-blue-700',
+    licencia: 'bg-purple-500/15 text-purple-700',
+  }
+  return map[t] || 'bg-neutral-200 text-neutral-700'
+}
+
+function scoreClass(bucket: string | undefined) {
+  if (!bucket) return ''
+  const map: Record<string, string> = {
+    'A+': 'bg-emerald-700 text-white',
+    'A': 'bg-emerald-500 text-white',
+    'B': 'bg-amber-400 text-neutral-900',
+    'C': 'bg-orange-500 text-white',
+    'D': 'bg-red-500 text-white',
+    'E': 'bg-red-700 text-white',
+  }
+  return map[bucket] || ''
+}
+
+function cleanPhone(p: string | undefined | null) {
+  if (!p) return ''
+  return p.replace(/[^\d]/g, '')
+}
+
+function moraAcumulada(cuotas: Cuota[] | undefined): number {
+  if (!cuotas) return 0
+  const today = new Date()
+  today.setHours(12, 0, 0, 0)
+  let total = 0
+  for (const c of cuotas) {
+    if (c.estado === 'pagada' || !c.fecha) continue
+    const fc = new Date(c.fecha + 'T12:00:00')
+    const dias = Math.floor((today.getTime() - fc.getTime()) / (1000 * 60 * 60 * 24))
+    if (dias > 0) total += dias * MORA_TASA
+  }
+  return total
+}
+
 // ═══════════════════════════════════════════
-// Detail Modal
+// Detail view is now /loanbook/:id — see LoanDetailPage.tsx
 // ═══════════════════════════════════════════
 
-function DetalleModal({ vin, onClose }: { vin: string; onClose: () => void }) {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function _DetalleModal_DEPRECATED({ vin, onClose }: { vin: string; onClose: () => void }) {
   const [lb, setLb] = useState<Loanbook | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -332,11 +381,11 @@ const ESTADO_FILTER_LABELS: Record<string, string> = {
 }
 
 export default function LoanbookPage() {
+  const navigate = useNavigate()
   const [loanbooks, setLoanbooks] = useState<Loanbook[]>([])
   const [stats, setStats] = useState<Stats | null>(null)
   const [loading, setLoading] = useState(true)
   const [filtroEstado, setFiltroEstado] = useState('')
-  const [selectedVIN, setSelectedVIN] = useState<string | null>(null)
 
   const loadData = useCallback(async () => {
     try {
@@ -424,76 +473,101 @@ export default function LoanbookPage() {
               </div>
             ) : (
               <div className="space-y-2">
-                {filtered.map(lb => (
-                  <div key={lb.loanbook_id}
-                    onClick={() => setSelectedVIN(lb.vin)}
-                    className="bg-surface-container-lowest shadow-ambient-1 rounded-lg px-5 py-4 cursor-pointer transition-shadow hover:shadow-ambient-2">
-                    <div className="flex items-center justify-between">
-                      {/* Left: client + moto */}
-                      <div className="flex items-center gap-4 min-w-0 flex-1">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2 mb-0.5">
+                {filtered.map(lb => {
+                  const tipo = (lb.tipo_producto || 'moto').toLowerCase()
+                  const mora = moraAcumulada(lb.cuotas)
+                  const telClean = cleanPhone(lb.cliente?.telefono)
+                  const saldoMostrar = lb.saldo_pendiente ?? lb.saldo_capital
+                  return (
+                    <div key={lb.loanbook_id}
+                      onClick={() => navigate(`/loanbook/${lb.loanbook_id}`)}
+                      className="bg-surface-container-lowest shadow-ambient-1 rounded-lg px-4 py-4 sm:px-5 cursor-pointer transition-shadow hover:shadow-ambient-2">
+                      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                        {/* Left: client + modelo + tipo */}
+                        <div className="min-w-0 flex-1 w-full">
+                          <div className="flex items-center gap-2 mb-1 flex-wrap">
                             <span className="font-display font-bold text-sm text-on-surface truncate">{lb.cliente.nombre}</span>
                             <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold shrink-0 ${estadoBadge(lb.estado)}`}>
                               {estadoLabel(lb.estado)}
                             </span>
+                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold shrink-0 uppercase tracking-wider ${tipoProductoBadge(tipo)}`}>
+                              {tipo}
+                            </span>
+                            {lb.score_bucket && (
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${scoreClass(lb.score_bucket)}`}>
+                                {lb.score_bucket}
+                              </span>
+                            )}
                           </div>
-                          <div className="flex items-center gap-3 text-[11px] text-on-surface-variant">
+                          <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-[11px] text-on-surface-variant">
                             <span>CC {lb.cliente.cedula}</span>
-                            <span className="text-on-surface-variant/40">·</span>
+                            {lb.cliente.telefono && (
+                              <>
+                                <span className="text-on-surface-variant/40 hidden sm:inline">·</span>
+                                <a href={`tel:+${telClean}`}
+                                   onClick={e => e.stopPropagation()}
+                                   className="text-primary hover:underline font-mono">
+                                  {lb.cliente.telefono}
+                                </a>
+                              </>
+                            )}
+                            <span className="text-on-surface-variant/40 hidden sm:inline">·</span>
                             <span>{lb.modelo}</span>
-                            <span className="text-on-surface-variant/40">·</span>
-                            <span className="font-mono">...{shortVIN(lb.vin)}</span>
+                            {lb.vin && (
+                              <>
+                                <span className="text-on-surface-variant/40 hidden sm:inline">·</span>
+                                <span className="font-mono">...{shortVIN(lb.vin)}</span>
+                              </>
+                            )}
                           </div>
                         </div>
-                      </div>
 
-                      {/* Center: plan + progress */}
-                      <div className="flex items-center gap-6 shrink-0 px-4">
-                        <div className="text-center">
-                          <div className="text-[10px] text-on-surface-variant uppercase">Plan</div>
-                          <div className="text-xs font-medium text-on-surface">{lb.plan_codigo}</div>
-                          <div className="text-[10px] text-on-surface-variant">{modalidadLabel(lb.modalidad)}</div>
-                        </div>
-                        <div className="text-center">
-                          <div className="text-[10px] text-on-surface-variant uppercase">Cuotas</div>
-                          <div className="text-xs font-medium text-on-surface">{lb.cuotas_pagadas}/{lb.cuotas_total}</div>
-                          {/* Mini progress */}
-                          <div className="w-16 h-1 bg-surface-container-low rounded-full mt-1 overflow-hidden">
-                            <div className="h-full bg-primary rounded-full" style={{ width: `${(lb.cuotas_pagadas / lb.cuotas_total) * 100}%` }} />
+                        {/* Center: plan + progress + DPD */}
+                        <div className="flex items-center gap-4 sm:gap-6 shrink-0 w-full sm:w-auto justify-between sm:justify-start">
+                          <div className="text-center">
+                            <div className="text-[10px] text-on-surface-variant uppercase">Plan</div>
+                            <div className="text-xs font-medium text-on-surface">{lb.plan_codigo}</div>
+                            <div className="text-[10px] text-on-surface-variant">{modalidadLabel(lb.modalidad)}</div>
+                          </div>
+                          <div className="text-center">
+                            <div className="text-[10px] text-on-surface-variant uppercase">Cuotas</div>
+                            <div className="text-xs font-medium text-on-surface">{lb.cuotas_pagadas}/{lb.cuotas_total}</div>
+                            <div className="w-16 h-1 bg-surface-container-low rounded-full mt-1 overflow-hidden">
+                              <div className="h-full bg-primary rounded-full" style={{ width: `${lb.cuotas_total ? (lb.cuotas_pagadas / lb.cuotas_total) * 100 : 0}%` }} />
+                            </div>
+                          </div>
+                          <div className="text-center">
+                            <div className="text-[10px] text-on-surface-variant uppercase">DPD</div>
+                            <div className={`text-xs font-bold ${lb.dpd > 15 ? 'text-red-600' : lb.dpd > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                              {lb.dpd}
+                            </div>
                           </div>
                         </div>
-                        <div className="text-center">
-                          <div className="text-[10px] text-on-surface-variant uppercase">DPD</div>
-                          <div className={`text-xs font-bold ${lb.dpd > 15 ? 'text-red-600' : lb.dpd > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
-                            {lb.dpd}
-                          </div>
-                        </div>
-                      </div>
 
-                      {/* Right: amounts */}
-                      <div className="text-right shrink-0">
-                        <div className="text-sm font-display font-bold text-on-surface">{formatCOP(lb.saldo_capital)}</div>
-                        <div className="text-[10px] text-on-surface-variant">Saldo pendiente</div>
-                        {lb.proxima_cuota && (
-                          <div className="text-[10px] text-primary mt-1">
-                            Próx: {formatDate(lb.proxima_cuota.fecha)}
-                          </div>
-                        )}
+                        {/* Right: amounts */}
+                        <div className="text-right shrink-0 w-full sm:w-auto">
+                          <div className="text-sm font-display font-bold text-on-surface">{formatCOP(saldoMostrar)}</div>
+                          <div className="text-[10px] text-on-surface-variant">Saldo pendiente</div>
+                          {mora > 0 && (
+                            <div className="text-[10px] text-red-600 font-medium mt-0.5">
+                              Mora: {formatCOP(mora)}
+                            </div>
+                          )}
+                          {lb.proxima_cuota && (
+                            <div className="text-[10px] text-primary mt-1">
+                              Próx: {formatDate(lb.proxima_cuota.fecha)}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             )}
           </>
         )}
       </div>
-
-      {/* Detail modal */}
-      {selectedVIN && (
-        <DetalleModal vin={selectedVIN} onClose={() => setSelectedVIN(null)} />
-      )}
     </div>
   )
 }

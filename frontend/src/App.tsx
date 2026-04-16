@@ -8,6 +8,7 @@ import BacklogPage from '@/pages/BacklogPage'
 import DashboardPage from '@/pages/DashboardPage'
 import InventarioPage from '@/pages/InventarioPage'
 import LoanbookPage from '@/pages/LoanbookPage'
+import LoanDetailPage from '@/pages/LoanDetailPage'
 import CrmPage from '@/pages/CrmPage'
 
 function App() {
@@ -28,6 +29,7 @@ function App() {
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/inventario" element={<InventarioPage />} />
             <Route path="/loanbook" element={<LoanbookPage />} />
+            <Route path="/loanbook/:id" element={<LoanDetailPage />} />
             <Route path="/crm" element={<CrmPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/chat" replace />} />

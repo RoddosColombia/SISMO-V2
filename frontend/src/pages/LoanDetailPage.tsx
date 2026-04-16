@@ -1,0 +1,516 @@
+import { useEffect, useState } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
+import { apiGet } from '@/lib/api'
+
+// ═══════════════════════════════════════════
+// Types
+// ═══════════════════════════════════════════
+
+interface Cuota {
+  numero: number
+  monto: number
+  estado: string
+  fecha: string | null
+  fecha_pago: string | null
+  mora_acumulada: number
+  timeline_status?: string
+}
+
+interface Cliente {
+  nombre: string
+  cedula: string
+  telefono?: string
+  telefono_alternativo?: string | null
+}
+
+interface Moto {
+  modelo?: string
+  vin?: string | null
+  motor?: string | null
+}
+
+interface Plan {
+  codigo?: string
+  modalidad?: string
+  cuota_valor?: number
+  cuota_inicial?: number
+  total_cuotas?: number
+}
+
+interface Fechas {
+  factura?: string
+  entrega?: string
+  primera_cuota?: string
+}
+
+interface Loanbook {
+  loanbook_id: string
+  tipo_producto?: string
+  cliente: Cliente
+  moto?: Moto | null
+  plan?: Plan
+  fechas?: Fechas
+  cuotas: Cuota[]
+  estado: string
+  valor_total?: number
+  saldo_pendiente?: number
+  saldo_capital?: number
+  vin?: string | null
+  modelo?: string
+  modalidad?: string
+  plan_codigo?: string
+  cuota_monto?: number
+  num_cuotas?: number
+  total_pagado?: number
+  total_mora_pagada?: number
+  total_anzi_pagado?: number
+  anzi_pct?: number
+  alegra_factura_id?: string | null
+  cuotas_pagadas?: number
+  cuotas_total?: number
+  dpd?: number
+  proxima_cuota?: { fecha: string; monto: number } | null
+  fecha_entrega?: string
+  fecha_primer_pago?: string | null
+  score_bucket?: string
+  score?: number
+}
+
+// ═══════════════════════════════════════════
+// Helpers
+// ═══════════════════════════════════════════
+
+const MORA_TASA = 2000 // COP/dia
+
+function formatCOP(n: number | undefined | null) {
+  if (n === undefined || n === null) return '—'
+  return new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(n)
+}
+
+function formatDate(d: string | null | undefined) {
+  if (!d) return '—'
+  try {
+    return new Date(d + 'T12:00:00').toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' })
+  } catch { return d }
+}
+
+function estadoBadge(estado: string) {
+  const map: Record<string, string> = {
+    activo: 'bg-emerald-500/15 text-emerald-700',
+    al_dia: 'bg-emerald-500/15 text-emerald-700',
+    mora: 'bg-red-500/15 text-red-700',
+    mora_grave: 'bg-red-600/20 text-red-800',
+    en_riesgo: 'bg-amber-500/15 text-amber-700',
+    saldado: 'bg-neutral-400/20 text-neutral-600',
+    pendiente_entrega: 'bg-orange-500/15 text-orange-700',
+    reestructurado: 'bg-purple-500/15 text-purple-700',
+    castigado: 'bg-neutral-500/20 text-neutral-700',
+  }
+  return map[estado] || 'bg-neutral-400/15 text-neutral-600'
+}
+
+function estadoLabel(estado: string) {
+  const map: Record<string, string> = {
+    activo: 'Activo', al_dia: 'Al día', mora: 'Mora', mora_grave: 'Mora grave',
+    en_riesgo: 'En riesgo', saldado: 'Saldado', pendiente_entrega: 'Pend. entrega',
+    reestructurado: 'Reestructurado', castigado: 'Castigado',
+  }
+  return map[estado] || estado
+}
+
+function tipoBadge(tipo: string | undefined) {
+  const t = (tipo || 'moto').toLowerCase()
+  const map: Record<string, string> = {
+    moto: 'bg-neutral-200 text-neutral-700',
+    comparendo: 'bg-blue-500/15 text-blue-700',
+    licencia: 'bg-purple-500/15 text-purple-700',
+  }
+  return map[t] || 'bg-neutral-200 text-neutral-700'
+}
+
+function scoreBadge(bucket: string | undefined) {
+  if (!bucket) return null
+  const map: Record<string, string> = {
+    'A+': 'bg-emerald-700 text-white',
+    'A': 'bg-emerald-500 text-white',
+    'B': 'bg-amber-400 text-neutral-900',
+    'C': 'bg-orange-500 text-white',
+    'D': 'bg-red-500 text-white',
+    'E': 'bg-red-700 text-white',
+  }
+  return map[bucket] || 'bg-neutral-400 text-white'
+}
+
+function cleanPhone(p: string | undefined | null) {
+  if (!p) return ''
+  return p.replace(/[^\d]/g, '')
+}
+
+// ═══════════════════════════════════════════
+// Small UI components
+// ═══════════════════════════════════════════
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="bg-white rounded-xl shadow-sm px-4 py-4 sm:px-5 sm:py-5">
+      <h2 className="font-display font-bold text-on-surface text-sm mb-3 uppercase tracking-wider">{title}</h2>
+      {children}
+    </section>
+  )
+}
+
+function Row({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex justify-between items-start gap-3 py-1.5 text-sm">
+      <span className="text-on-surface-variant shrink-0">{label}</span>
+      <span className="text-on-surface font-medium text-right break-all">{value}</span>
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════
+// Main Page
+// ═══════════════════════════════════════════
+
+export default function LoanDetailPage() {
+  const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
+  const [lb, setLb] = useState<Loanbook | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!id) return
+    setLoading(true)
+    apiGet<Loanbook>(`/loanbook/${id}`)
+      .then(setLb)
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : 'Error cargando crédito'))
+      .finally(() => setLoading(false))
+  }, [id])
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-full bg-surface">
+        <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+      </div>
+    )
+  }
+
+  if (error || !lb) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full bg-surface p-6 text-center">
+        <p className="text-sm text-red-600 mb-3">{error || 'Crédito no encontrado'}</p>
+        <button onClick={() => navigate('/loanbook')}
+          className="px-4 py-2 rounded-md bg-primary text-white text-sm font-medium">
+          ← Volver a Créditos
+        </button>
+      </div>
+    )
+  }
+
+  const tipo = (lb.tipo_producto || 'moto').toLowerCase()
+  const esMoto = tipo === 'moto'
+  const cuotas = lb.cuotas || []
+  const pagadas = cuotas.filter(c => c.estado === 'pagada').length
+  const vencidas = cuotas.filter(c => c.timeline_status === 'vencida').length
+  const totalCuotas = cuotas.length
+  const saldo = lb.saldo_pendiente ?? lb.saldo_capital ?? 0
+  const valorTotal = lb.valor_total ?? (lb.num_cuotas ?? 0) * (lb.cuota_monto ?? 0)
+  const totalPagado = lb.total_pagado ?? (valorTotal - saldo)
+  const cuotaMonto = lb.cuota_monto ?? lb.plan?.cuota_valor ?? 0
+  const anziPct = lb.anzi_pct ?? 0.02
+
+  // Mora acumulada $ = sum(dias_atraso × $2000) de cuotas no pagadas con fecha vencida
+  const today = new Date()
+  today.setHours(12, 0, 0, 0)
+  let moraAcumTotal = 0
+  for (const c of cuotas) {
+    if (c.estado === 'pagada' || !c.fecha) continue
+    const fc = new Date(c.fecha + 'T12:00:00')
+    const dias = Math.floor((today.getTime() - fc.getTime()) / (1000 * 60 * 60 * 24))
+    if (dias > 0) moraAcumTotal += dias * MORA_TASA
+  }
+
+  // Waterfall de un pago típico (cuota del miércoles)
+  const ejemploPago = cuotaMonto
+  const wfAnzi = Math.round(ejemploPago * anziPct)
+  const wfMora = Math.min(ejemploPago - wfAnzi, moraAcumTotal)
+  const wfVencidas = Math.min(
+    ejemploPago - wfAnzi - wfMora,
+    vencidas * cuotaMonto
+  )
+  const wfCorriente = Math.max(0, ejemploPago - wfAnzi - wfMora - wfVencidas)
+  const wfCapital = 0 // Solo hay abono a capital cuando pago > cuota + mora + vencidas
+  const wfTotal = Math.max(1, wfAnzi + wfMora + wfVencidas + wfCorriente + wfCapital)
+
+  const tel = lb.cliente?.telefono
+  const telAlt = lb.cliente?.telefono_alternativo
+  const telClean = cleanPhone(tel)
+
+  const pagadasList = cuotas.filter(c => c.estado === 'pagada')
+
+  return (
+    <div className="flex flex-col h-full bg-surface overflow-y-auto">
+      {/* Header */}
+      <div className="sticky top-0 z-10 bg-surface/95 backdrop-blur-sm px-4 py-3 sm:px-6">
+        <button onClick={() => navigate('/loanbook')}
+          className="text-xs text-on-surface-variant hover:text-on-surface mb-2 flex items-center gap-1">
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+          </svg>
+          Volver a Créditos
+        </button>
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <h1 className="font-display text-lg sm:text-xl font-bold text-on-surface break-words">
+              {lb.cliente?.nombre || '—'}
+            </h1>
+            <p className="text-xs text-on-surface-variant mt-0.5">{lb.loanbook_id}</p>
+          </div>
+          <div className="flex gap-2 flex-wrap">
+            <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${tipoBadge(lb.tipo_producto)}`}>
+              {(lb.tipo_producto || 'moto').toUpperCase()}
+            </span>
+            <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${estadoBadge(lb.estado)}`}>
+              {estadoLabel(lb.estado)}
+            </span>
+            {lb.score_bucket && (
+              <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${scoreBadge(lb.score_bucket)}`}>
+                {lb.score_bucket}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 px-4 sm:px-6 pb-6 space-y-3">
+
+        {/* SECCION 1: CLIENTE */}
+        <Section title="Cliente">
+          <Row label="Cédula" value={<span className="font-mono text-xs">{lb.cliente?.cedula || '—'}</span>} />
+          <Row label="Teléfono" value={
+            tel ? (
+              <a href={`tel:+${telClean}`} className="text-primary underline-offset-2 hover:underline font-mono text-xs">
+                {tel}
+              </a>
+            ) : '—'
+          } />
+          {telAlt && (
+            <Row label="Alternativo" value={
+              <a href={`tel:+${cleanPhone(telAlt)}`} className="text-primary underline-offset-2 hover:underline font-mono text-xs">
+                {telAlt}
+              </a>
+            } />
+          )}
+          {tel && (
+            <div className="mt-3 flex gap-2">
+              <a href={`https://wa.me/${telClean}`} target="_blank" rel="noopener noreferrer"
+                className="flex-1 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md bg-emerald-500 text-white text-xs font-medium hover:bg-emerald-600 transition-colors">
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/></svg>
+                WhatsApp
+              </a>
+              <a href={`tel:+${telClean}`}
+                className="flex-1 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md bg-primary text-white text-xs font-medium hover:bg-primary/90 transition-colors">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 6.75c0 8.284 6.716 15 15 15h2.25a2.25 2.25 0 002.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106c-.44-.11-.902.055-1.173.417l-.97 1.293c-.282.376-.769.542-1.21.38a12.035 12.035 0 01-7.143-7.143c-.162-.441.004-.928.38-1.21l1.293-.97c.363-.271.527-.734.417-1.173L6.963 3.102a1.125 1.125 0 00-1.091-.852H4.5A2.25 2.25 0 002.25 4.5v2.25z" />
+                </svg>
+                Llamar
+              </a>
+            </div>
+          )}
+        </Section>
+
+        {/* SECCION 2: PRODUCTO */}
+        <Section title="Producto">
+          {esMoto ? (
+            <>
+              <Row label="Modelo" value={lb.moto?.modelo || lb.modelo || '—'} />
+              <Row label="VIN" value={<span className="font-mono text-[11px] break-all">{lb.moto?.vin || lb.vin || '—'}</span>} />
+              <Row label="Motor" value={<span className="font-mono text-[11px] break-all">{lb.moto?.motor || '—'}</span>} />
+            </>
+          ) : (
+            <>
+              <Row label="Tipo" value={(lb.tipo_producto || 'servicio').toUpperCase()} />
+              <Row label="Modelo" value={lb.moto?.modelo || lb.modelo || '—'} />
+              <p className="text-[11px] text-on-surface-variant italic mt-2">Sin VIN — financiación de servicio</p>
+            </>
+          )}
+        </Section>
+
+        {/* SECCION 3: CREDITO */}
+        <Section title="Datos del crédito">
+          <Row label="Plan" value={lb.plan?.codigo || lb.plan_codigo || '—'} />
+          <Row label="Modalidad" value={lb.plan?.modalidad || lb.modalidad || '—'} />
+          <Row label="Valor cuota" value={formatCOP(cuotaMonto)} />
+          <Row label="Cuota inicial pagada" value={formatCOP(lb.plan?.cuota_inicial)} />
+          <Row label="Fecha factura" value={formatDate(lb.fechas?.factura)} />
+          <Row label="Fecha entrega" value={formatDate(lb.fechas?.entrega || lb.fecha_entrega)} />
+          <Row label="Primera cuota" value={formatDate(lb.fechas?.primera_cuota || lb.fecha_primer_pago)} />
+          <div className="border-t border-surface-container-low my-2"></div>
+          <Row label="Valor total crédito" value={formatCOP(valorTotal)} />
+          <div className="flex justify-between items-baseline gap-3 py-2">
+            <span className="text-on-surface-variant text-sm">Saldo pendiente</span>
+            <span className="font-display text-xl font-bold text-on-surface">{formatCOP(saldo)}</span>
+          </div>
+          {lb.alegra_factura_id && (
+            <Row label="Alegra factura" value={<span className="font-mono text-xs">{lb.alegra_factura_id}</span>} />
+          )}
+        </Section>
+
+        {/* SECCION 4: CARTERA */}
+        <Section title="Resumen de cartera">
+          <div className="mb-3">
+            <div className="flex justify-between text-[11px] text-on-surface-variant mb-1">
+              <span>{pagadas} pagadas / {vencidas} vencidas / {totalCuotas - pagadas - vencidas} pendientes</span>
+              <span>{totalCuotas > 0 ? Math.round((pagadas / totalCuotas) * 100) : 0}%</span>
+            </div>
+            <div className="flex h-2 rounded-full overflow-hidden bg-surface-container-low">
+              <div className="bg-emerald-500" style={{ width: `${totalCuotas > 0 ? (pagadas / totalCuotas) * 100 : 0}%` }} />
+              <div className="bg-red-500" style={{ width: `${totalCuotas > 0 ? (vencidas / totalCuotas) * 100 : 0}%` }} />
+            </div>
+          </div>
+          <Row label="DPD" value={
+            <span className={lb.dpd && lb.dpd > 0 ? 'text-red-600 font-bold' : 'text-emerald-600 font-bold'}>
+              {lb.dpd ?? 0} días
+            </span>
+          } />
+          <Row label="Score" value={
+            lb.score_bucket
+              ? <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${scoreBadge(lb.score_bucket)}`}>{lb.score_bucket}</span>
+              : <span className="text-on-surface-variant italic text-xs">Sin score aún</span>
+          } />
+          <Row label="Mora acumulada" value={
+            <span className={moraAcumTotal > 0 ? 'text-red-600 font-bold' : 'text-on-surface-variant'}>
+              {formatCOP(moraAcumTotal)}
+            </span>
+          } />
+          <Row label="Total pagado" value={<span className="text-emerald-600 font-medium">{formatCOP(totalPagado)}</span>} />
+          {lb.proxima_cuota && (
+            <div className="mt-3 p-3 rounded-md bg-primary/5 border border-primary/20">
+              <div className="text-[10px] text-primary font-bold uppercase tracking-wider">Próximo pago</div>
+              <div className="flex justify-between items-baseline mt-1">
+                <span className="text-sm text-on-surface">{formatDate(lb.proxima_cuota.fecha)}</span>
+                <span className="font-display text-lg font-bold text-primary">{formatCOP(lb.proxima_cuota.monto)}</span>
+              </div>
+            </div>
+          )}
+        </Section>
+
+        {/* SECCION 5: CRONOGRAMA */}
+        <Section title="Cronograma de cuotas">
+          <div className="max-h-80 overflow-y-auto -mx-1">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-white">
+                <tr className="text-on-surface-variant border-b border-surface-container-low">
+                  <th className="text-left px-2 py-2 font-medium">#</th>
+                  <th className="text-left px-2 py-2 font-medium">Fecha</th>
+                  <th className="text-right px-2 py-2 font-medium">Valor</th>
+                  <th className="text-center px-2 py-2 font-medium">Estado</th>
+                  <th className="text-right px-2 py-2 font-medium">Mora</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cuotas.map(c => {
+                  const status = c.timeline_status || c.estado
+                  const rowClass =
+                    status === 'pagada' ? 'bg-emerald-50'
+                    : status === 'vencida' ? 'bg-red-50'
+                    : status === 'proxima' ? 'bg-blue-50 border-l-2 border-blue-500'
+                    : 'bg-white'
+                  const emoji =
+                    status === 'pagada' ? '✅'
+                    : status === 'vencida' ? '🔴'
+                    : status === 'proxima' ? '🔵'
+                    : '⏳'
+                  const fc = c.fecha ? new Date(c.fecha + 'T12:00:00') : null
+                  const dias = fc ? Math.floor((today.getTime() - fc.getTime()) / (1000 * 60 * 60 * 24)) : 0
+                  const mora = status === 'vencida' && dias > 0 ? dias * MORA_TASA : 0
+                  return (
+                    <tr key={c.numero} className={`${rowClass} border-b border-surface-container-low/50`}>
+                      <td className="px-2 py-1.5 text-on-surface">{c.numero}</td>
+                      <td className="px-2 py-1.5 text-on-surface-variant">{formatDate(c.fecha)}</td>
+                      <td className="px-2 py-1.5 text-right text-on-surface">{formatCOP(c.monto)}</td>
+                      <td className="px-2 py-1.5 text-center">{emoji}</td>
+                      <td className="px-2 py-1.5 text-right">
+                        {mora > 0 ? <span className="text-red-600 font-medium">{formatCOP(mora)}</span> : '—'}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Section>
+
+        {/* SECCION 6: WATERFALL */}
+        <Section title="Waterfall de distribución (pago típico)">
+          <p className="text-[11px] text-on-surface-variant mb-3">
+            Con un pago de {formatCOP(ejemploPago)} (valor de cuota), así se distribuye:
+          </p>
+          <div className="space-y-2">
+            {[
+              { label: `1. ANZI ${(anziPct * 100).toFixed(1)}%`, value: wfAnzi, color: 'bg-purple-400' },
+              { label: '2. Mora acumulada', value: wfMora, color: 'bg-red-400' },
+              { label: '3. Cuotas vencidas', value: wfVencidas, color: 'bg-orange-400' },
+              { label: '4. Cuota corriente', value: wfCorriente, color: 'bg-emerald-400' },
+              { label: '5. Abono a capital', value: wfCapital, color: 'bg-blue-400' },
+            ].map((w, i) => (
+              <div key={i}>
+                <div className="flex justify-between text-[11px] mb-1">
+                  <span className="text-on-surface-variant">{w.label}</span>
+                  <span className="font-medium text-on-surface">{formatCOP(w.value)}</span>
+                </div>
+                <div className="h-2 bg-surface-container-low rounded-full overflow-hidden">
+                  <div className={`h-full ${w.color}`} style={{ width: `${(w.value / wfTotal) * 100}%` }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </Section>
+
+        {/* SECCION 7: GESTIONES */}
+        <Section title="Timeline de gestiones">
+          <div className="py-6 text-center">
+            <svg className="w-8 h-8 mx-auto mb-2 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <p className="text-sm text-on-surface-variant">Sin gestiones registradas</p>
+            <p className="text-[11px] text-on-surface-variant/60 mt-1">Se activa con RADAR (Phase 8)</p>
+          </div>
+        </Section>
+
+        {/* SECCION 8: HISTORIAL PAGOS */}
+        <Section title="Historial de pagos">
+          {pagadasList.length === 0 ? (
+            <p className="text-xs text-on-surface-variant text-center py-4">Sin pagos registrados aún</p>
+          ) : (
+            <div className="overflow-x-auto -mx-1">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-on-surface-variant border-b border-surface-container-low">
+                    <th className="text-left px-2 py-2 font-medium">Fecha pago</th>
+                    <th className="text-center px-2 py-2 font-medium">Cuota #</th>
+                    <th className="text-right px-2 py-2 font-medium">Valor</th>
+                    <th className="text-left px-2 py-2 font-medium">Método</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pagadasList.map(c => (
+                    <tr key={c.numero} className="border-b border-surface-container-low/50">
+                      <td className="px-2 py-1.5 text-on-surface">{formatDate(c.fecha_pago)}</td>
+                      <td className="px-2 py-1.5 text-center text-on-surface">{c.numero}</td>
+                      <td className="px-2 py-1.5 text-right text-on-surface">{formatCOP(c.monto)}</td>
+                      <td className="px-2 py-1.5 text-on-surface-variant">—</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Section>
+
+      </div>
+    </div>
+  )
+}

@@ -113,16 +113,35 @@ async def listar_loanbooks(
     return {"count": len(result), "loanbooks": result}
 
 
-@router.get("/{vin}")
+@router.get("/{identifier}")
 async def get_loanbook(
-    vin: str,
+    identifier: str,
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    """Get full loanbook detail with cuotas timeline."""
+    """Get full loanbook detail with cuotas timeline.
+
+    Accepts either:
+      - VIN (17-char vehicle id), for tipo_producto='moto'
+      - loanbook_id (e.g. 'LB-2026-0026'), for any tipo_producto including
+        comparendo/licencia which have no VIN.
+    """
     today = date.today()
-    lb = await db.loanbook.find_one({"vin": vin})
+
+    # Try loanbook_id first (disambiguates when id looks like LB-XXXX)
+    lb = None
+    if identifier.upper().startswith("LB-"):
+        lb = await db.loanbook.find_one({"loanbook_id": identifier})
+    if lb is None:
+        # Fall back to VIN lookup
+        lb = await db.loanbook.find_one({"vin": identifier})
+    if lb is None:
+        # Last resort: try loanbook_id without prefix match (legacy ids)
+        lb = await db.loanbook.find_one({"loanbook_id": identifier})
     if not lb:
-        raise HTTPException(status_code=404, detail=f"Loanbook para VIN {vin} no encontrado")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Loanbook no encontrado para identifier '{identifier}'",
+        )
 
     _clean_doc(lb)
     cuotas = lb.get("cuotas", [])

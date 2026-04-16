@@ -504,7 +504,9 @@ async def migrate_loanbooks(db) -> dict:
     anomalias: list[str] = []
 
     for row in LOANBOOKS:
-        # Anti-duplicate check
+        # Anti-duplicate check: include tipo_producto so two credits of same client
+        # (e.g. moto + licencia) at same date don't collide.
+        tipo = row.get("tipo_producto", "moto")
         dup_query: dict = {"$or": []}
         if row.get("vin"):
             dup_query["$or"].append({"vin": row["vin"]})
@@ -512,6 +514,7 @@ async def migrate_loanbooks(db) -> dict:
             "cliente.cedula": row["cedula"],
             "plan_codigo": row["plan"],
             "fecha_entrega": row["entrega"],
+            "tipo_producto": tipo,
         })
         existing = await db.loanbook.find_one(dup_query)
         if existing:
