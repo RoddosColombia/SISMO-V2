@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { apiGet } from '@/lib/api'
+import LoanActionPanel from '@/components/LoanActionPanel'
 
 interface LoanDetailPageProps {
   /** If provided, overrides useParams id. Used when rendered inside a drawer. */
@@ -187,14 +188,23 @@ export default function LoanDetailPage({ idProp, onClose }: LoanDetailPageProps 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
-  useEffect(() => {
+  const loadLoanbook = useCallback(async () => {
     if (!id) return
     setLoading(true)
-    apiGet<Loanbook>(`/loanbook/${id}`)
-      .then(setLb)
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : 'Error cargando crédito'))
-      .finally(() => setLoading(false))
+    try {
+      const data = await apiGet<Loanbook>(`/loanbook/${id}`)
+      setLb(data)
+      setError('')
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error cargando crédito')
+    } finally {
+      setLoading(false)
+    }
   }, [id])
+
+  useEffect(() => {
+    loadLoanbook()
+  }, [loadLoanbook])
 
   if (loading) {
     return (
@@ -303,6 +313,22 @@ export default function LoanDetailPage({ idProp, onClose }: LoanDetailPageProps 
 
       {/* Content */}
       <div className="flex-1 px-4 sm:px-6 pb-6 space-y-3">
+
+        {/* ACCIONES OPERACIONALES (Bloque 2) */}
+        <Section title="Operaciones">
+          <LoanActionPanel
+            loanbookId={lb.loanbook_id}
+            estado={lb.estado}
+            tipoProducto={tipo}
+            cuotaMonto={cuotaMonto}
+            cuotaInicial={lb.plan?.cuota_inicial ?? 0}
+            proximaCuota={lb.proxima_cuota ?? null}
+            numProximaCuota={
+              (lb.cuotas || []).find(c => c.estado !== 'pagada')?.numero ?? null
+            }
+            onSuccess={loadLoanbook}
+          />
+        </Section>
 
         {/* SECCION 1: CLIENTE */}
         <Section title="Cliente">
