@@ -139,7 +139,9 @@ def test_dispatcher_conciliation_not_stub():
 
 def test_main_includes_conciliacion_router():
     import pathlib
-    content = pathlib.Path("main.py").read_text(encoding="utf-8")
+    # Resolve relative to this test file so it works from any CWD
+    backend_dir = pathlib.Path(__file__).resolve().parent.parent
+    content = (backend_dir / "main.py").read_text(encoding="utf-8")
     assert "conciliacion_router" in content
     assert "backlog_router" in content
 

@@ -813,7 +813,66 @@ _CATALOGO: list[dict] = [
 ]
 
 # ---------------------------------------------------------------------------
-# LISTA COMPLETA: 34 herramientas (33 + 1 catálogo)
+# CATEGORÍA 8 — COMPRAS A PROVEEDORES (2 tools, Phase 8)
+# ---------------------------------------------------------------------------
+
+_COMPRAS: list[dict] = [
+    {
+        "name": "registrar_compra_proveedor",
+        "description": (
+            "Registra una factura de compra (bill) en Alegra via POST /bills. "
+            "Ejecuta via request_with_verify() — POST → HTTP 200 → GET verificación. "
+            "Para cada item: busca por referencia en Alegra (GET /items?reference=). "
+            "Si no existe, lo crea como producto inventariable bajo categoría 'Repuestos' (id=5). "
+            "Auteco NIT 860024781 o 901249413 = AUTORETENEDOR — NUNCA aplicar ReteFuente. "
+            "Observations prefijado con [AC] Compra."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["numero_factura", "proveedor_nit", "items"],
+            "properties": {
+                "numero_factura": {"type": "string", "description": "Número de la factura del proveedor (ej: 'FV-12345')"},
+                "proveedor_nombre": {"type": "string", "description": "Nombre del proveedor (ej: 'Auteco S.A.S.')"},
+                "proveedor_nit": {"type": "string", "description": "NIT del proveedor (ej: '860024781')"},
+                "fecha": {"type": "string", "description": "Fecha yyyy-MM-dd"},
+                "items": {
+                    "type": "array",
+                    "description": "Items comprados. Se buscan/crean en Alegra.",
+                    "items": {
+                        "type": "object",
+                        "required": ["nombre", "cantidad", "precio_unit"],
+                        "properties": {
+                            "nombre": {"type": "string", "description": "Nombre del ítem"},
+                            "referencia": {"type": "string", "description": "Código/referencia del proveedor"},
+                            "cantidad": {"type": "number", "description": "Cantidad comprada"},
+                            "precio_unit": {"type": "number", "description": "Precio unitario en COP (sin IVA)"},
+                            "iva_pct": {"type": "number", "description": "% IVA (default 19)"},
+                        },
+                    },
+                },
+            },
+        },
+    },
+    {
+        "name": "consultar_inventario_alegra",
+        "description": (
+            "Consulta stock de ítems (repuestos, motos, etc.) directamente desde Alegra via GET /items. "
+            "Retorna cantidad disponible, precio y costo. Útil para preguntas tipo '¿cuántos filtros de aire tenemos?'. "
+            "Alegra es la fuente canónica — MongoDB es solo cache."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "nombre": {"type": "string", "description": "Filtro por nombre (coincidencia parcial)"},
+                "referencia": {"type": "string", "description": "Filtro por referencia exacta"},
+                "categoria_id": {"type": "string", "description": "Filtro por categoría Alegra (1=Motos nuevas, 2=Motos usadas, 3=GPS, 4=Seguro, 5=Repuestos)"},
+            },
+        },
+    },
+]
+
+# ---------------------------------------------------------------------------
+# LISTA COMPLETA: 36 herramientas (34 + 2 compras Phase 8)
 # ---------------------------------------------------------------------------
 
 CONTADOR_TOOLS: list[dict] = (
@@ -824,6 +883,7 @@ CONTADOR_TOOLS: list[dict] = (
     + _CONSULTAS_ALEGRA
     + _CARTERA
     + _NOMINA_IMPUESTOS
+    + _COMPRAS
     + _CATALOGO
 )
 

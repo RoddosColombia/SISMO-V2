@@ -23,6 +23,7 @@ READ_ONLY_TOOLS = frozenset({
     "consultar_iva_cuatrimestral",
     "consultar_recaudo_semanal",
     "consultar_inventario",
+    "consultar_inventario_alegra",
     "consultar_bills",
     "catalogo_cuentas_roddos",
     "consultar_calendario_tributario",
@@ -181,6 +182,19 @@ class ToolDispatcher:
                 "enviar_movimiento_backlog": handle_enviar_movimiento_backlog,
                 "causar_desde_backlog": handle_causar_desde_backlog,
                 "consultar_movimientos_pendientes": handle_consultar_movimientos_pendientes,
+            })
+        except ImportError:
+            pass
+
+        # Phase 8: compras a proveedores (bills + inventario Alegra)
+        try:
+            from agents.contador.handlers.compras import (
+                handle_registrar_compra_proveedor,
+                handle_consultar_inventario_alegra,
+            )
+            self._handlers.update({
+                "registrar_compra_proveedor": handle_registrar_compra_proveedor,
+                "consultar_inventario_alegra": handle_consultar_inventario_alegra,
             })
         except ImportError:
             pass

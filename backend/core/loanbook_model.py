@@ -27,6 +27,20 @@ MORA_TASA_DIARIA = 2_000  # $2,000 COP/dia
 
 VENTA_CONTADO = "contado"
 
+# Tipos de producto financiable
+TIPO_PRODUCTO_MOTO = "moto"
+TIPO_PRODUCTO_COMPARENDO = "comparendo"
+TIPO_PRODUCTO_LICENCIA = "licencia"
+TIPOS_PRODUCTO_VALIDOS = {
+    TIPO_PRODUCTO_MOTO,
+    TIPO_PRODUCTO_COMPARENDO,
+    TIPO_PRODUCTO_LICENCIA,
+}
+TIPOS_PRODUCTO_SIN_VIN = {
+    TIPO_PRODUCTO_COMPARENDO,
+    TIPO_PRODUCTO_LICENCIA,
+}
+
 # Modalidades de crédito — INDEPENDIENTES del plan
 # multiplicador: factor sobre cuota_base del modelo
 # divisor: divide cuotas_base del plan para obtener num_cuotas
@@ -200,29 +214,42 @@ def calcular_num_cuotas(plan: dict, modalidad: str) -> int:
 
 
 def crear_loanbook(
-    vin: str,
+    vin: str | None,
     cliente: dict,
     plan: dict,
     modelo: str,
     modalidad: str,
     fecha_entrega: date,
     fecha_primer_pago: date | None = None,
+    tipo_producto: str = TIPO_PRODUCTO_MOTO,
 ) -> dict[str, Any]:
     """
     Create a new loanbook document.
 
     Args:
-        vin: Vehicle identification number
+        vin: Vehicle identification number (required for tipo_producto='moto'; optional otherwise)
         cliente: Client info dict (nombre, cedula)
         plan: Plan from catalogo_planes (codigo, cuotas_base, cuotas_modelo, anzi_pct)
-        modelo: Motorcycle model name (must exist in plan's cuotas_modelo)
+        modelo: Model/product name (must exist in plan's cuotas_modelo or 'modelos' list)
         modalidad: Payment modality (semanal, quincenal, mensual) — NOT contado
         fecha_entrega: Delivery date
         fecha_primer_pago: First payment date (required for quincenal/mensual, must be Wednesday)
+        tipo_producto: "moto" | "comparendo" | "licencia" (default "moto")
 
     Raises:
-        ValueError: If contado, invalid modelo, or missing/invalid fecha_primer_pago
+        ValueError: If contado, invalid modelo, tipo_producto, or missing/invalid fecha_primer_pago
     """
+    # Validate tipo_producto
+    if tipo_producto not in TIPOS_PRODUCTO_VALIDOS:
+        raise ValueError(
+            f"tipo_producto '{tipo_producto}' no válido. "
+            f"Use: {list(TIPOS_PRODUCTO_VALIDOS)}."
+        )
+
+    # VIN rules: required for motos, optional for comparendo/licencia
+    if tipo_producto == TIPO_PRODUCTO_MOTO and not vin:
+        raise ValueError("VIN es obligatorio para tipo_producto='moto'.")
+
     # Reject contado — no loanbook for cash sales
     if modalidad == VENTA_CONTADO:
         raise ValueError("Contado no crea loanbook. Venta directa sin crédito.")
@@ -231,13 +258,21 @@ def crear_loanbook(
     if modalidad not in MODALIDADES:
         raise ValueError(f"Modalidad '{modalidad}' no válida. Use: {list(MODALIDADES.keys())}.")
 
-    # Validate modelo exists in plan
+    # Validate modelo: for motos use cuotas_modelo; for comparendo/licencia check plan.modelos
     cuotas_modelo = plan.get("cuotas_modelo", {})
-    if modelo not in cuotas_modelo:
-        raise ValueError(
-            f"modelo '{modelo}' no existe en plan '{plan.get('codigo', '?')}'. "
-            f"Modelos disponibles: {list(cuotas_modelo.keys())}"
-        )
+    if tipo_producto == TIPO_PRODUCTO_MOTO:
+        if modelo not in cuotas_modelo:
+            raise ValueError(
+                f"modelo '{modelo}' no existe en plan '{plan.get('codigo', '?')}'. "
+                f"Modelos disponibles: {list(cuotas_modelo.keys())}"
+            )
+    else:
+        modelos_servicio = plan.get("modelos") or []
+        if modelos_servicio and modelo not in modelos_servicio:
+            raise ValueError(
+                f"modelo '{modelo}' no existe en plan '{plan.get('codigo', '?')}'. "
+                f"Modelos disponibles: {modelos_servicio}"
+            )
 
     # Quincenal/mensual require fecha_primer_pago
     if modalidad in ("quincenal", "mensual") and fecha_primer_pago is None:
@@ -253,8 +288,14 @@ def crear_loanbook(
             f"(dia {fecha_primer_pago.strftime('%A')})."
         )
 
-    cuota_base = cuotas_modelo[modelo]
-    cuota_monto = calcular_cuota(cuota_base, modalidad)
+    # Calculate cuota amount: motos use cuotas_modelo price; services use plan-defined cuota_valor
+    if tipo_producto == TIPO_PRODUCTO_MOTO:
+        cuota_base = cuotas_modelo[modelo]
+        cuota_monto = calcular_cuota(cuota_base, modalidad)
+    else:
+        # For comparendo/licencia, cuota is fixed per plan (plan.cuota_valor) or 0
+        cuota_monto = plan.get("cuota_valor", 0)
+
     num_cuotas = calcular_num_cuotas(plan, modalidad)
 
     cuotas = []
@@ -270,6 +311,7 @@ def crear_loanbook(
 
     return {
         "loanbook_id": str(uuid.uuid4()),
+        "tipo_producto": tipo_producto,
         "vin": vin,
         "cliente": cliente,
         "plan_codigo": plan["codigo"],

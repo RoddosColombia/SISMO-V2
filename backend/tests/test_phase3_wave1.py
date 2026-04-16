@@ -151,13 +151,20 @@ async def test_registrar_movimiento_procesado():
 
 def test_pdfplumber_in_bank_parsers():
     import pathlib
-    path = pathlib.Path("services/bank_parsers.py")
+    # Resolve relative to this test file so it works from any CWD
+    backend_dir = pathlib.Path(__file__).resolve().parent.parent
+    path = backend_dir / "services" / "bank_parsers.py"
     content = path.read_text(encoding="utf-8")
     assert "import pdfplumber" in content
 
 
 def test_pdfplumber_in_pyproject():
     import pathlib
-    path = pathlib.Path("pyproject.toml")
+    # pyproject.toml lives at the repo root (one level above backend/)
+    repo_root = pathlib.Path(__file__).resolve().parent.parent.parent
+    path = repo_root / "pyproject.toml"
+    if not path.exists():
+        # Fallback: pyproject might be in backend/
+        path = pathlib.Path(__file__).resolve().parent.parent / "pyproject.toml"
     content = path.read_text(encoding="utf-8")
     assert "pdfplumber" in content

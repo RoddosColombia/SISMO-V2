@@ -1,10 +1,10 @@
 """
-Tests for Contador tool definitions — 34 tools (33 + 1 catálogo).
+Tests for Contador tool definitions — 40 tools after Phase 8.
 
 Rules verified:
-- CONTADOR_TOOLS has exactly 34 tools
+- CONTADOR_TOOLS has exactly 40 tools (38 previous + 2 compras Phase 8)
 - Each tool has required Anthropic format fields
-- CFO/RADAR/Loanbook return empty tool lists
+- CFO/RADAR return empty tool lists; Loanbook has 11
 - No /journal-entries in any tool description
 - No MongoDB references for contable data (plan de cuentas, journals, etc.)
 - catalogo_cuentas_roddos contains all required IDs
@@ -22,14 +22,20 @@ from agents.contador.tools import (
     _CONSULTAS_ALEGRA,
     _CARTERA,
     _NOMINA_IMPUESTOS,
+    _COMPRAS,
     _CATALOGO,
 )
 
 
 # --- Tool count ---
 
-def test_contador_has_exactly_38_tools():
-    assert len(CONTADOR_TOOLS) == 38
+def test_contador_has_exactly_40_tools():
+    # Phase 8 added 2 compras tools
+    assert len(CONTADOR_TOOLS) == 40
+
+
+def test_compras_has_2_tools():
+    assert len(_COMPRAS) == 2
 
 
 def test_egresos_has_7_tools():
@@ -88,7 +94,7 @@ def test_all_tool_names_are_unique():
 
 def test_get_tools_for_contador():
     tools = get_tools_for_agent('contador')
-    assert len(tools) == 38
+    assert len(tools) == 40
 
 
 def test_get_tools_for_cfo_returns_empty():
