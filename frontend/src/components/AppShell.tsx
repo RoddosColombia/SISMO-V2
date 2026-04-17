@@ -78,7 +78,7 @@ const NAV_AREAS: NavArea[] = [
     iconPath: 'M16.5 6v.75A.75.75 0 0015.75 6H8.25a.75.75 0 00-.75.75V6m9 0V4.5A2.25 2.25 0 0014.25 2.25h-4.5A2.25 2.25 0 007.5 4.5V6m9 0H20.25A1.5 1.5 0 0121.75 7.5v11.25A1.5 1.5 0 0120.25 20.25H3.75A1.5 1.5 0 012.25 18.75V7.5A1.5 1.5 0 013.75 6H7.5',
     items: [
       { to: '/crm', label: 'CRM / Clientes' },
-      { to: '#', label: 'En construcción', disabled: true },
+      { to: '/plan-separe', label: 'Plan Separe' },
     ],
   },
   {

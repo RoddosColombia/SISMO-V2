@@ -11,6 +11,7 @@ import LoanbookPage from '@/pages/LoanbookPage'
 import LoanDetailPage from '@/pages/LoanDetailPage'
 import CrmPage from '@/pages/CrmPage'
 import ClientDetailPage from '@/pages/ClientDetailPage'
+import PlanSeparePage from '@/pages/PlanSeparePage'
 
 function App() {
   return (
@@ -33,6 +34,7 @@ function App() {
             <Route path="/loanbook/:id" element={<LoanDetailPage />} />
             <Route path="/crm" element={<CrmPage />} />
             <Route path="/clientes/:cedula" element={<ClientDetailPage />} />
+            <Route path="/plan-separe" element={<PlanSeparePage />} />
           </Route>
           <Route path="*" element={<Navigate to="/chat" replace />} />
         </Routes>
