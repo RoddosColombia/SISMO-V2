@@ -3,6 +3,8 @@ import { apiGet } from '@/lib/api'
 
 interface PlanSepareStats {
   total_retenido: number
+  total_esperado?: number
+  dinero_pendiente?: number
   matriculas_provision_actual: number
   matriculas_provision_proyectada: number
   por_estado: { activa: number; completada: number; facturada: number; cancelada: number }
@@ -60,15 +62,22 @@ export default function DashboardPage() {
                 Ver detalle →
               </a>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
               <div>
                 <div className="text-[10px] text-gray-400 uppercase tracking-wider">Dinero retenido</div>
-                <div className="text-xl font-semibold text-gray-900 mt-1">{formatCOP(psStats.total_retenido)}</div>
-                <div className="text-[10px] text-gray-500 mt-0.5">Pasivo 2805</div>
+                <div className="text-xl font-semibold text-emerald-700 mt-1">{formatCOP(psStats.total_retenido)}</div>
+                <div className="text-[10px] text-gray-500 mt-0.5">En caja (pasivo 2805)</div>
               </div>
               <div>
-                <div className="text-[10px] text-gray-400 uppercase tracking-wider">Matrículas a provisionar</div>
-                <div className="text-xl font-semibold text-amber-700 mt-1">{formatCOP(psStats.matriculas_provision_proyectada)}</div>
+                <div className="text-[10px] text-gray-400 uppercase tracking-wider">Dinero pendiente</div>
+                <div className="text-xl font-semibold text-amber-700 mt-1">
+                  {formatCOP(psStats.dinero_pendiente ?? 0)}
+                </div>
+                <div className="text-[10px] text-gray-500 mt-0.5">Falta por ingresar</div>
+              </div>
+              <div>
+                <div className="text-[10px] text-gray-400 uppercase tracking-wider">Matrículas</div>
+                <div className="text-xl font-semibold text-gray-700 mt-1">{formatCOP(psStats.matriculas_provision_proyectada)}</div>
                 <div className="text-[10px] text-gray-500 mt-0.5">
                   {psStats.por_estado.activa + psStats.por_estado.completada} × {formatCOP(psStats.matricula_unit)}
                 </div>

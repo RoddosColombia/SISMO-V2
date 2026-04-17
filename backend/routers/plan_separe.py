@@ -246,21 +246,26 @@ async def listar_separaciones(
 async def plan_separe_stats(db: AsyncIOMotorDatabase = Depends(get_db)):
     """Summary stats for CFO widget.
 
-    - total_retenido: suma de total_abonado en estado activa/completada
-    - matriculas_provision_actual: COUNT(completada) * 580_000
+    - total_retenido:        suma de abonos en activa/completada (dinero en caja)
+    - total_esperado:        suma de cuota_inicial_requerida en activa/completada
+    - dinero_pendiente:      total_esperado - total_retenido (falta por ingresar)
+    - matriculas_provision_actual:     COUNT(completada) * 580_000
     - matriculas_provision_proyectada: COUNT(activa+completada) * 580_000
-    - por_estado: breakdown counts
+    - por_estado:            breakdown counts (incluye facturada y cancelada)
     """
     cursor = db.plan_separe_separaciones.find(
         {"estado": {"$in": ["activa", "completada"]}},
         {"abonos": 1, "estado": 1, "moto.cuota_inicial_requerida": 1},
     )
     total_retenido = 0
+    total_esperado = 0
     completadas = 0
     activas = 0
     async for doc in cursor:
         abonos = doc.get("abonos") or []
         total_retenido += sum(float(a.get("monto", 0) or 0) for a in abonos)
+        cuota = float(doc.get("moto", {}).get("cuota_inicial_requerida", 0) or 0)
+        total_esperado += cuota
         if doc.get("estado") == "completada":
             completadas += 1
         else:
@@ -269,8 +274,12 @@ async def plan_separe_stats(db: AsyncIOMotorDatabase = Depends(get_db)):
     facturadas = await db.plan_separe_separaciones.count_documents({"estado": "facturada"})
     canceladas = await db.plan_separe_separaciones.count_documents({"estado": "cancelada"})
 
+    dinero_pendiente = max(total_esperado - total_retenido, 0)
+
     return {
         "total_retenido": round(total_retenido),
+        "total_esperado": round(total_esperado),
+        "dinero_pendiente": round(dinero_pendiente),
         "matriculas_provision_actual": completadas * MATRICULA_PROVISION,
         "matriculas_provision_proyectada": (activas + completadas) * MATRICULA_PROVISION,
         "por_estado": {

@@ -334,13 +334,14 @@ async def test_cancelar_rechaza_en_facturada():
 @pytest.mark.asyncio
 async def test_stats_matriculas_calculation():
     # 2 completadas + 4 activas = 6 total; matriculas 2 × 580k actual, 6 × 580k proyectado
+    cuota = {"moto": {"cuota_inicial_requerida": 1_460_000}}
     cursor_docs = [
-        {"estado": "completada", "abonos": [{"monto": 1_460_000}]},
-        {"estado": "completada", "abonos": [{"monto": 1_460_000}]},
-        {"estado": "activa", "abonos": [{"monto": 500_000}]},
-        {"estado": "activa", "abonos": [{"monto": 500_000}]},
-        {"estado": "activa", "abonos": [{"monto": 600_000}]},
-        {"estado": "activa", "abonos": [{"monto": 600_000}]},
+        {"estado": "completada", "abonos": [{"monto": 1_460_000}], **cuota},
+        {"estado": "completada", "abonos": [{"monto": 1_460_000}], **cuota},
+        {"estado": "activa", "abonos": [{"monto": 500_000}], **cuota},
+        {"estado": "activa", "abonos": [{"monto": 500_000}], **cuota},
+        {"estado": "activa", "abonos": [{"monto": 600_000}], **cuota},
+        {"estado": "activa", "abonos": [{"monto": 600_000}], **cuota},
     ]
 
     # Mock async iteration
@@ -359,10 +360,37 @@ async def test_stats_matriculas_calculation():
     stats = await plan_separe_stats(db=db)
     # 1_460_000 * 2 + 500_000 * 2 + 600_000 * 2 = 5_120_000
     assert stats["total_retenido"] == 5_120_000
+    # 6 × 1_460_000 = 8_760_000 esperado
+    assert stats["total_esperado"] == 8_760_000
+    # Pendiente: 8_760_000 - 5_120_000 = 3_640_000
+    assert stats["dinero_pendiente"] == 3_640_000
     assert stats["matriculas_provision_actual"] == 2 * MATRICULA_PROVISION
     assert stats["matriculas_provision_proyectada"] == 6 * MATRICULA_PROVISION
     assert stats["por_estado"]["activa"] == 4
     assert stats["por_estado"]["completada"] == 2
+
+
+@pytest.mark.asyncio
+async def test_stats_dinero_pendiente_never_negative():
+    """Si todos pagaron 100% o más, dinero_pendiente es 0 (no negativo)."""
+    class AsyncIter:
+        def __init__(self, items): self.items = list(items)
+        def __aiter__(self): return self
+        async def __anext__(self):
+            if not self.items: raise StopAsyncIteration
+            return self.items.pop(0)
+
+    cuota = {"moto": {"cuota_inicial_requerida": 1_000_000}}
+    docs = [{"estado": "completada", "abonos": [{"monto": 1_000_000}], **cuota}]
+    db = MagicMock()
+    db.plan_separe_separaciones = MagicMock()
+    db.plan_separe_separaciones.find = MagicMock(return_value=AsyncIter(docs))
+    db.plan_separe_separaciones.count_documents = AsyncMock(return_value=0)
+
+    stats = await plan_separe_stats(db=db)
+    assert stats["dinero_pendiente"] == 0
+    assert stats["total_retenido"] == 1_000_000
+    assert stats["total_esperado"] == 1_000_000
 
 
 # ═══════════════════════════════════════════
