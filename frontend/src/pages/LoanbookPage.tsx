@@ -165,20 +165,21 @@ function moraAcumulada(cuotas: Cuota[] | undefined): number {
 }
 
 // ═══════════════════════════════════════════
-// Detail view is now /loanbook/:id — see LoanDetailPage.tsx
-// DEPRECATED: Inline modal removed. All navigation uses loanbook_id (works
-// for VIN-less products like comparendo/licencia).
-// Dead function kept below with no-op body to preserve line ordering but
-// prefixed with _ to signal unused. Will be removed in a cleanup pass.
+// Detail view: LoanOverlayModal (see components/LoanOverlayModal.tsx)
+// Route /loanbook/:id also works as standalone page (LoanDetailPage).
 // ═══════════════════════════════════════════
 
+// Dead code below was removed in cleanup pass.
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-function _DetalleModal_DEPRECATED(_props: { vin: string; onClose: () => void }) {
+function _NEVER_CALLED_removed_in_cleanup({ vin, onClose }: { vin: string; onClose: () => void }) {
+  // Stub kept only to preserve file history; actual overlay rendering
+  // lives in LoanOverlayModal.tsx. No-op body below.
+  void vin; void onClose
   return null
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-function _DetalleModal_DEPRECATED_OLD({ vin, onClose }: { vin: string; onClose: () => void }) {
+function _LEGACY_DetalleModal_removed({ vin, onClose }: { vin: string; onClose: () => void }) {
   const [lb, setLb] = useState<Loanbook | null>(null)
   const [loading, setLoading] = useState(true)
 
