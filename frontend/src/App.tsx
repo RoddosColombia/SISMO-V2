@@ -12,6 +12,7 @@ import LoanDetailPage from '@/pages/LoanDetailPage'
 import CrmPage from '@/pages/CrmPage'
 import ClientDetailPage from '@/pages/ClientDetailPage'
 import PlanSeparePage from '@/pages/PlanSeparePage'
+import HomePage from '@/pages/HomePage'
 
 function App() {
   return (
@@ -26,6 +27,7 @@ function App() {
               </ProtectedRoute>
             }
           >
+            <Route path="/" element={<HomePage />} />
             <Route path="/chat" element={<ChatPage />} />
             <Route path="/backlog" element={<BacklogPage />} />
             <Route path="/dashboard" element={<DashboardPage />} />
@@ -36,7 +38,7 @@ function App() {
             <Route path="/clientes/:cedula" element={<ClientDetailPage />} />
             <Route path="/plan-separe" element={<PlanSeparePage />} />
           </Route>
-          <Route path="*" element={<Navigate to="/chat" replace />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>
