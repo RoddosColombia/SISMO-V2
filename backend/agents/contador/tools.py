@@ -374,23 +374,39 @@ _FACTURACION: list[dict] = [
     {
         "name": "crear_factura_venta",
         "description": (
-            "Crea una factura de venta de moto en Alegra via POST /invoices. "
+            "Crea una factura de venta de moto en Alegra via POST /invoices (status=open). "
             "VIN y motor son OBLIGATORIOS — sin ellos NO facturar. "
-            "Formato obligatorio del ítem: '[Modelo] [Color] - VIN: [x] / Motor: [x]'. "
-            "Valida moto en estado 'disponible' antes de facturar. "
             "Ejecuta via request_with_verify() — POST → HTTP 200 → GET verificación → retorna ID Alegra. "
-            "Cascada: inventario → vendida, loanbook → pendiente_entrega, evento factura.venta.creada, WhatsApp T5."
+            "Soporta rubros adicionales SOAT, matrícula, GPS (cada uno con su cuenta de ingreso real en Alegra). "
+            "Modo promoción: cuota_inicial=0 permitido cuando modo_promocion=true (e.g. 'Sport 100 sin cuota inicial'). "
+            "Cascada por eventos (ROG-4): publica factura.venta.creada → listener crea loanbook pendiente_entrega → "
+            "listener CRM upserts cliente. El Contador NUNCA escribe en loanbook o crm_clientes directamente."
         ),
         "input_schema": {
             "type": "object",
             "required": ["cliente_nombre", "cliente_cedula", "moto_vin", "plan"],
             "properties": {
                 "cliente_nombre": {"type": "string", "description": "Nombre completo del cliente"},
-                "cliente_cedula": {"type": "string", "description": "Cédula del cliente"},
-                "moto_vin": {"type": "string", "description": "VIN (chasis) de la moto — OBLIGATORIO"},
-                "plan": {"type": "string", "enum": ["P39S", "P52S", "P78S"], "description": "Plan de crédito"},
-                "cuota_inicial": {"type": "number", "description": "Cuota inicial en COP"},
-                "modo_pago": {"type": "string", "enum": ["semanal", "quincenal", "mensual"]},
+                "cliente_cedula": {"type": "string", "description": "Cédula/identificación del cliente"},
+                "cliente_telefono": {"type": "string", "description": "Teléfono del cliente (opcional)"},
+                "cliente_direccion": {"type": "string", "description": "Dirección del cliente (opcional)"},
+                "moto_vin": {"type": "string", "description": "VIN (chasis) — OBLIGATORIO. Se resuelve el ítem Alegra por reference/VIN"},
+                "plan": {"type": "string", "enum": ["P15S", "P26S", "P39S", "P52S", "P78S"], "description": "Plan de crédito (semanas base)"},
+                "cuota_inicial": {"type": "number", "description": "Cuota inicial en COP (puede ser 0 si modo_promocion=true)"},
+                "cuota_valor": {"type": "number", "description": "Valor de la cuota periódica en COP"},
+                "num_cuotas": {"type": "integer", "description": "Número de cuotas (def: deriva del plan + modalidad)"},
+                "modo_pago": {"type": "string", "enum": ["semanal", "quincenal", "mensual"], "description": "Modalidad de pago"},
+                "modo_promocion": {"type": "boolean", "description": "Si true, permite cuota_inicial=0 (ej: promo Sport 100)"},
+                "precio_moto": {"type": "number", "description": "Precio de venta moto (IVA incluido). Si no se envía, Alegra usa el del ítem"},
+                "rubros_adicionales": {
+                    "type": "object",
+                    "description": "Rubros facturados además de la moto. Cada uno se registra contra su cuenta Alegra real.",
+                    "properties": {
+                        "soat": {"type": "number", "description": "Valor SOAT en COP (exento IVA) — cuenta 5452"},
+                        "matricula": {"type": "number", "description": "Valor matrícula en COP (exento IVA) — cuenta 5453"},
+                        "gps": {"type": "number", "description": "Valor GPS en COP (IVA 19% incluido) — cuenta 5448"},
+                    },
+                },
             },
         },
     },

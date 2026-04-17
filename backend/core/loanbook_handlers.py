@@ -2,6 +2,8 @@
 Sprint 3 — 3 Momentos del Crédito: DataKeeper handlers.
 
 Momento 1: apartado.completo → create loanbook + mark moto apartada
+Momento 1-bis: factura.venta.creada → create loanbook pendiente_entrega
+               (venta directa sin separación)
 Momento 2: entrega.realizada → activate loanbook (pendiente_entrega → activo)
 Momento 3: pago.cuota.recibido → apply waterfall, update cuotas, recalc estado
 
@@ -14,6 +16,7 @@ from datetime import date, datetime, timezone
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from core.event_handlers import on_event
+from core.events import publish_event
 from core.loanbook_model import (
     crear_loanbook,
     is_valid_transition,
@@ -26,6 +29,157 @@ from core.loanbook_model import (
 )
 
 logger = logging.getLogger("datakeeper.loanbook")
+
+
+# ═══════════════════════════════════════════
+# Momento 1-bis: Factura venta directa
+# ═══════════════════════════════════════════
+
+
+async def _next_loanbook_id(db: AsyncIOMotorDatabase) -> str:
+    """Generate LB-YYYY-NNN next sequential id."""
+    year = date.today().year
+    prefix = f"LB-{year}-"
+    last = await db.loanbook.find(
+        {"loanbook_id": {"$regex": f"^{prefix}"}}
+    ).sort("loanbook_id", -1).limit(1).to_list(length=1)
+    next_num = 1
+    if last:
+        try:
+            tail = last[0]["loanbook_id"].split("-")[-1]
+            next_num = int(tail) + 1
+        except (ValueError, IndexError, KeyError):
+            next_num = 1
+    return f"{prefix}{next_num:04d}"
+
+
+@on_event("factura.venta.creada", critical=True)
+async def handle_factura_venta_creada(event: dict, db: AsyncIOMotorDatabase):
+    """
+    Create a loanbook in pendiente_entrega when the Contador creates an invoice
+    directly (flujo sin separación previa, e.g. promo "sin cuota inicial").
+
+    Preconditions:
+      - The Contador already posted the invoice to Alegra (alegra_id in event)
+      - We must NOT double-process: idempotent by VIN
+
+    Output:
+      - Loanbook created in pendiente_entrega, cuotas=[] (populated on entrega)
+      - Publishes loanbook.creado so the CRM listener upserts the client
+    """
+    datos = event["datos"]
+    vin = (datos.get("vin") or "").strip()
+    if not vin:
+        logger.warning("factura.venta.creada sin VIN — skip loanbook creation")
+        return
+
+    # Idempotency — a loanbook per VIN
+    existing = await db.loanbook.find_one({"vin": vin})
+    if existing:
+        logger.info(
+            f"factura.venta.creada: loanbook ya existe para VIN {vin} "
+            f"({existing.get('loanbook_id')}) — no-op"
+        )
+        return
+
+    loanbook_id = await _next_loanbook_id(db)
+    now = datetime.now(timezone.utc).isoformat()
+    cliente_nombre = datos.get("cliente_nombre", "")
+    cliente_cedula = datos.get("cliente_cedula", "")
+    cliente_tel = datos.get("cliente_telefono", "")
+    cliente_dir = datos.get("cliente_direccion", "")
+    modelo = datos.get("modelo", "")
+    motor = datos.get("motor", "")
+    plan_codigo = datos.get("plan", "P52S")
+    modalidad = datos.get("modalidad", "semanal")
+    cuota_monto = int(datos.get("cuota_monto") or 0)
+    num_cuotas = int(datos.get("num_cuotas") or 0)
+    cuota_inicial = int(datos.get("cuota_inicial") or 0)
+    modo_promocion = bool(datos.get("modo_promocion", False))
+    alegra_factura_id = datos.get("alegra_id") or event.get("alegra_id")
+    alegra_factura_number = datos.get("alegra_invoice_number")
+    fecha_factura = datos.get("fecha") or date.today().isoformat()
+    rubros = datos.get("rubros") or {}
+    valor_factura = int(datos.get("valor_factura") or 0)
+
+    doc = {
+        "loanbook_id": loanbook_id,
+        "tipo_producto": "moto",
+        "cliente": {
+            "nombre": cliente_nombre,
+            "cedula": cliente_cedula,
+            "telefono": cliente_tel,
+            "direccion": cliente_dir,
+            "telefono_alternativo": None,
+        },
+        "moto": {"modelo": modelo, "vin": vin, "motor": motor},
+        "plan": {
+            "codigo": plan_codigo,
+            "modalidad": modalidad,
+            "cuota_valor": cuota_monto,
+            "cuota_inicial": cuota_inicial,
+            "total_cuotas": num_cuotas,
+        },
+        "fechas": {
+            "factura": fecha_factura,
+            "entrega": None,
+            "primera_cuota": None,
+        },
+        "cuotas": [],
+        "estado": "pendiente_entrega",
+        "valor_total": num_cuotas * cuota_monto if num_cuotas and cuota_monto else valor_factura,
+        "saldo_pendiente": num_cuotas * cuota_monto if num_cuotas and cuota_monto else valor_factura,
+        "cuotas_pagadas": 0,
+        "cuotas_vencidas": 0,
+        "cuotas_total": num_cuotas,
+        "alegra_factura_id": alegra_factura_number or str(alegra_factura_id or ""),
+        "alegra_invoice_alegra_id": str(alegra_factura_id or ""),
+        "rubros_adicionales": rubros,
+        "modo_promocion": modo_promocion,
+        # Compat fields
+        "vin": vin,
+        "modelo": modelo,
+        "modalidad": modalidad,
+        "plan_codigo": plan_codigo,
+        "cuota_monto": cuota_monto,
+        "num_cuotas": num_cuotas,
+        "saldo_capital": num_cuotas * cuota_monto if num_cuotas and cuota_monto else valor_factura,
+        "total_pagado": 0,
+        "total_mora_pagada": 0,
+        "total_anzi_pagado": 0,
+        "anzi_pct": 0.02,
+        "fecha_entrega": None,
+        "fecha_primer_pago": None,
+        "created_at": now,
+        "origen": "factura_venta_directa",
+        "correlation_id": event.get("correlation_id"),
+    }
+
+    await db.loanbook.insert_one(doc)
+    logger.info(
+        f"Loanbook creado via factura.venta.creada: {loanbook_id} VIN {vin} "
+        f"plan {plan_codigo} promo={modo_promocion}"
+    )
+
+    # Publish loanbook.creado so CRM listener upserts client
+    await publish_event(
+        db=db,
+        event_type="loanbook.creado",
+        source="datakeeper.loanbook",
+        datos={
+            "loanbook_id": loanbook_id,
+            "vin": vin,
+            "cliente": {
+                "nombre": cliente_nombre,
+                "cedula": cliente_cedula,
+                "telefono": cliente_tel,
+                "direccion": cliente_dir,
+            },
+        },
+        alegra_id=None,
+        accion_ejecutada=f"Loanbook {loanbook_id} creado via factura.venta.creada",
+        correlation_id=event.get("correlation_id"),
+    )
 
 
 # ═══════════════════════════════════════════
