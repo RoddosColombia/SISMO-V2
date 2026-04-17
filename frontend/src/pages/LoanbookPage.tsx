@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { apiGet } from '@/lib/api'
-import LoanDetailPage from '@/pages/LoanDetailPage'
+import LoanOverlayModal from '@/components/LoanOverlayModal'
 
 // ═══════════════════════════════════════════
 // Types
@@ -612,23 +612,12 @@ export default function LoanbookPage() {
         )}
       </div>
 
-      {/* Drawer lateral con detalle del credito */}
+      {/* Overlay modal centrado — premium refined design */}
       {openLoanId && (
-        <>
-          {/* Backdrop */}
-          <div
-            className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm animate-in fade-in duration-150"
-            onClick={() => setOpenLoanId(null)}
-          />
-          {/* Slide-in panel */}
-          <div
-            className="fixed top-0 right-0 z-50 h-screen w-full sm:w-[80%] md:w-[75%] lg:w-[70%] xl:w-[65%] bg-surface shadow-2xl overflow-hidden animate-in slide-in-from-right duration-200"
-            role="dialog"
-            aria-modal="true"
-          >
-            <LoanDetailPage idProp={openLoanId} onClose={() => setOpenLoanId(null)} />
-          </div>
-        </>
+        <LoanOverlayModal
+          loanId={openLoanId}
+          onClose={() => setOpenLoanId(null)}
+        />
       )}
     </div>
   )
