@@ -10,6 +10,7 @@ import InventarioPage from '@/pages/InventarioPage'
 import LoanbookPage from '@/pages/LoanbookPage'
 import LoanDetailPage from '@/pages/LoanDetailPage'
 import CrmPage from '@/pages/CrmPage'
+import ClientDetailPage from '@/pages/ClientDetailPage'
 
 function App() {
   return (
@@ -31,6 +32,7 @@ function App() {
             <Route path="/loanbook" element={<LoanbookPage />} />
             <Route path="/loanbook/:id" element={<LoanDetailPage />} />
             <Route path="/crm" element={<CrmPage />} />
+            <Route path="/clientes/:cedula" element={<ClientDetailPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/chat" replace />} />
         </Routes>
