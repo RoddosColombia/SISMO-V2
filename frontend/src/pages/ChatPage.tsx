@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { chatSSE, apiPost } from '@/lib/api'
+import { chatSSE, apiPost, popPendingMessage } from '@/lib/api'
 
 interface Message {
   role: 'user' | 'assistant' | 'system'
@@ -15,6 +15,7 @@ interface Message {
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
+  const [recoveredToast, setRecoveredToast] = useState(false)
   const [streaming, setStreaming] = useState(false)
   const [approving, setApproving] = useState(false)
   const [sessionId] = useState(() => crypto.randomUUID())
@@ -27,6 +28,17 @@ export default function ChatPage() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  // Recover a draft message that was saved on a previous 401/expiry (B7-UX)
+  useEffect(() => {
+    const pending = popPendingMessage()
+    if (pending) {
+      setInput(pending)
+      setRecoveredToast(true)
+      const id = window.setTimeout(() => setRecoveredToast(false), 4000)
+      return () => window.clearTimeout(id)
+    }
+  }, [])
 
   function handleImageSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -107,11 +119,22 @@ export default function ChatPage() {
                 : JSON.stringify(result, null, 2),
             },
           ])
+        } else if (event.type === 'clarification') {
+          // Router pide aclaración cuando confidence < THRESHOLD — renderizar
+          // como mensaje normal del agente para que el usuario responda.
+          const question = (event.question as string) || (event.content as string) || ''
+          setMessages((prev) => [
+            ...prev,
+            { role: 'assistant', content: question },
+          ])
         } else if (event.type === 'error') {
           setMessages((prev) => [
             ...prev,
             { role: 'system', content: `Error: ${event.message}` },
           ])
+        } else {
+          // Unknown SSE event type — log warning, do NOT block UI (P7 additive)
+          console.warn('[chat] unhandled SSE event type:', event.type, event)
         }
       },
       () => setStreaming(false),
@@ -229,6 +252,11 @@ export default function ChatPage() {
               className="text-xs text-on-surface-variant hover:text-error">
               Quitar
             </button>
+          </div>
+        )}
+        {recoveredToast && (
+          <div className="mb-2 p-2 text-xs bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-md">
+            Recuperamos tu último mensaje
           </div>
         )}
         <div className="flex gap-3 bg-surface-container-lowest shadow-ambient-1 rounded-lg p-2">

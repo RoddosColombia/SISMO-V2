@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from core.database import lifespan
+from core.sliding_session import SlidingSessionMiddleware
 from routers.auth import router as auth_router
 from routers.chat import router as chat_router
 from routers.conciliacion import router as conciliacion_router
@@ -24,7 +25,9 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-New-Token"],
 )
+app.add_middleware(SlidingSessionMiddleware)
 
 # API routers — MUST be before the SPA mount
 app.include_router(auth_router)

@@ -11,10 +11,20 @@ CONFIDENCE_THRESHOLD = 0.70
 
 KEYWORDS: dict[str, list[str]] = {
     'contador': [
-        "gasto", "factura", "pagar", "registra", "causar", "nómina", "nomina",
+        "gasto", "factura", "facturar", "pagar", "registra", "registrar venta",
+        "causar", "nómina", "nomina",
         "arriendo", "arrendamiento", "extracto", "conciliación", "conciliacion",
         "journal", "asiento", "proveedor", "retención", "retencion", "iva",
         "cobro", "egreso", "ingreso no operacional", "cxc socio",
+        # Venta de moto — facturación de crédito directo (contador crea la
+        # factura; loanbook se crea reactivo al evento factura.venta.creada).
+        # NOTA: "venta" sin contexto está excluido porque coincide con
+        # "inven-ta-rio" (substring collision). Usar formas con "moto"
+        # o con verbo ("vender", "vende").
+        "vende", "vender", "vender moto", "venta moto", "venta de moto",
+        "registrar venta moto", "factura venta",
+        "sport", "raider", "apache", "9fl", "cuota inicial",
+        "p26s", "p39s", "p52s", "p78s",
     ],
     'cfo': [
         "p&l", "pl", "estado de resultados", "semáforo", "semaforo", "flujo de caja",

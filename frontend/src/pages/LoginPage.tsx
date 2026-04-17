@@ -1,16 +1,18 @@
 import { useState, type FormEvent } from 'react'
-import { Navigate, useNavigate } from 'react-router-dom'
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '@/lib/auth'
 
 export default function LoginPage() {
   const { user, login } = useAuth()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const sessionExpired = searchParams.get('reason') === 'expired'
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
-  if (user) return <Navigate to="/chat" replace />
+  if (user) return <Navigate to="/" replace />
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -18,7 +20,7 @@ export default function LoginPage() {
     setLoading(true)
     try {
       await login(email, password)
-      navigate('/chat', { replace: true })
+      navigate('/', { replace: true })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error de inicio de sesion')
     } finally {
@@ -88,6 +90,12 @@ export default function LoginPage() {
 
             <h2 className="font-display text-xl font-bold text-on-surface mb-1">Welcome back</h2>
             <p className="text-sm text-on-surface-variant mb-8">Sign in to your account</p>
+
+            {sessionExpired && (
+              <div className="mb-4 p-3 text-sm bg-amber-50 border border-amber-200 text-amber-900 rounded-md">
+                Tu sesión expiró. Vuelve a entrar — recuperaremos lo que estabas escribiendo.
+              </div>
+            )}
 
             {error && (
               <div className="mb-6 p-3 text-sm bg-error-light text-error rounded-md">
