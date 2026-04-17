@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { apiGet, apiPost } from '@/lib/api'
+import { apiGet, apiPost, apiPatch } from '@/lib/api'
 
 // ═══════════════════════════════════════════
 // Plan Separe — Commercial module for advances
@@ -330,13 +330,20 @@ function NotificarContadorModal({ separacion, onClose, onDone }: { separacion: S
 // Panel detalle (drawer)
 // ═══════════════════════════════════════════
 
-function DetallePanel({ sep, onClose, onUpdated }: { sep: Separacion; onClose: () => void; onUpdated: () => void }) {
+function DetallePanel({ sep, onClose, onUpdated, toast }: {
+  sep: Separacion
+  onClose: () => void
+  onUpdated: () => void
+  toast: (kind: 'success' | 'error' | 'warning', msg: string) => void
+}) {
   const [showAbono, setShowAbono] = useState(false)
   const [showNotificar, setShowNotificar] = useState(false)
+  const [showEditar, setShowEditar] = useState(false)
   const tel = sep.cliente.telefono?.replace(/[^\d]/g, '') || ''
   const pct = sep.porcentaje_pagado
   const completa = sep.estado === 'completada'
   const puedeAbonar = sep.estado === 'activa' || sep.estado === 'completada'
+  const esFacturada = sep.estado === 'facturada'
 
   return (
     <>
@@ -407,6 +414,17 @@ function DetallePanel({ sep, onClose, onUpdated }: { sep: Separacion; onClose: (
                 Notificar Contador para facturar
               </button>
             )}
+            <button
+              onClick={() => !esFacturada && setShowEditar(true)}
+              disabled={esFacturada}
+              title={esFacturada ? 'Separación facturada, no editable' : 'Editar datos de la separación'}
+              className={`w-full px-3 py-2 rounded-md text-sm font-medium border transition-colors ${
+                esFacturada
+                  ? 'bg-gray-50 text-gray-400 border-gray-200 cursor-not-allowed'
+                  : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
+              }`}>
+              Editar
+            </button>
           </div>
 
           {/* Historial de abonos */}
@@ -457,7 +475,222 @@ function DetallePanel({ sep, onClose, onUpdated }: { sep: Separacion; onClose: (
           onDone={onUpdated}
         />
       )}
+      {showEditar && (
+        <EditarSeparacionModal
+          sep={sep}
+          toast={toast}
+          onClose={() => setShowEditar(false)}
+          onSuccess={() => { setShowEditar(false); onUpdated() }}
+        />
+      )}
     </>
+  )
+}
+
+// ═══════════════════════════════════════════
+// Editar separacion modal — con diff visual + motivo
+// ═══════════════════════════════════════════
+
+interface EditarForm {
+  cliente_nombre: string
+  cliente_documento_tipo: string
+  cliente_documento_numero: string
+  cliente_telefono: string
+  moto_modelo: string
+  cuota_inicial_esperada: number
+  notas: string
+}
+
+const TIPOS_DOC = ['CC', 'PPT', 'CE', 'TI']
+
+function EditarSeparacionModal({
+  sep, toast, onClose, onSuccess,
+}: {
+  sep: Separacion
+  toast: (kind: 'success' | 'error' | 'warning', msg: string) => void
+  onClose: () => void
+  onSuccess: () => void
+}) {
+  const original: EditarForm = {
+    cliente_nombre: sep.cliente.nombre || '',
+    cliente_documento_tipo: (sep.cliente.tipo_documento || 'CC').toUpperCase(),
+    cliente_documento_numero: sep.cliente.cc || '',
+    cliente_telefono: sep.cliente.telefono || '',
+    moto_modelo: sep.moto.modelo || '',
+    cuota_inicial_esperada: sep.moto.cuota_inicial_requerida || 0,
+    notas: sep.notas || '',
+  }
+  const [form, setForm] = useState<EditarForm>(original)
+  const [motivo, setMotivo] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [showDiff, setShowDiff] = useState(false)
+
+  const diffs = Object.entries(form)
+    .filter(([k, v]) => (original as unknown as Record<string, unknown>)[k] !== v)
+    .map(([k, v]) => ({
+      campo: k,
+      anterior: (original as unknown as Record<string, unknown>)[k],
+      nuevo: v,
+    }))
+
+  const puedeGuardar =
+    diffs.length > 0 &&
+    motivo.trim().length >= 10 &&
+    form.cuota_inicial_esperada > 0
+
+  async function submit() {
+    if (diffs.length === 0) { setError('No hay cambios que guardar'); return }
+    setLoading(true); setError('')
+    try {
+      const payload: Record<string, unknown> = { motivo: motivo.trim() }
+      for (const d of diffs) payload[d.campo] = d.nuevo
+      await apiPatch(`/plan-separe/${sep.separacion_id}`, payload)
+      toast('success', 'Separación actualizada')
+      onSuccess()
+    } catch (e: unknown) {
+      const err = e as Error & { status?: number }
+      if (err.status === 423) {
+        toast('error', 'No se puede editar separación facturada')
+      } else if (err.status === 422) {
+        toast('warning', err.message || 'Datos inválidos')
+      } else {
+        toast('error', err.message || 'Error')
+      }
+      setError(err.message || 'Error')
+    } finally { setLoading(false) }
+  }
+
+  const inputCls =
+    'w-full rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-emerald-100 focus:border-emerald-300'
+  const labelCls = 'text-[10px] text-gray-400 uppercase tracking-wider'
+
+  return (
+    <div className="fixed inset-0 z-[60] bg-neutral-950/50 backdrop-blur-[2px] flex items-center justify-center p-4"
+      onClick={() => !loading && onClose()}>
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-5 max-h-[90vh] overflow-y-auto"
+        onClick={e => e.stopPropagation()}>
+        <div className="flex items-start justify-between mb-4">
+          <div>
+            <h3 className="font-display font-semibold text-gray-900 text-base">Editar separación</h3>
+            <p className="text-[11px] text-gray-500 mt-0.5 font-mono">{sep.separacion_id}</p>
+          </div>
+          <button onClick={onClose} disabled={loading}
+            className="w-7 h-7 flex items-center justify-center rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100">
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        {!showDiff ? (
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="sm:col-span-2">
+                <label className={labelCls}>Nombre cliente</label>
+                <input type="text" className={inputCls}
+                  value={form.cliente_nombre}
+                  onChange={e => setForm({ ...form, cliente_nombre: e.target.value })} />
+              </div>
+              <div>
+                <label className={labelCls}>Tipo documento</label>
+                <select className={inputCls}
+                  value={form.cliente_documento_tipo}
+                  onChange={e => setForm({ ...form, cliente_documento_tipo: e.target.value })}>
+                  {TIPOS_DOC.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className={labelCls}>Número</label>
+                <input type="text" className={inputCls}
+                  value={form.cliente_documento_numero}
+                  onChange={e => setForm({ ...form, cliente_documento_numero: e.target.value })} />
+              </div>
+              <div>
+                <label className={labelCls}>Teléfono</label>
+                <input type="text" className={inputCls}
+                  value={form.cliente_telefono}
+                  onChange={e => setForm({ ...form, cliente_telefono: e.target.value })} />
+              </div>
+              <div>
+                <label className={labelCls}>Moto</label>
+                <input type="text" className={inputCls}
+                  value={form.moto_modelo}
+                  onChange={e => setForm({ ...form, moto_modelo: e.target.value })} />
+              </div>
+              <div className="sm:col-span-2">
+                <label className={labelCls}>Cuota inicial esperada (COP)</label>
+                <input type="number" className={inputCls}
+                  value={form.cuota_inicial_esperada}
+                  onChange={e => setForm({ ...form, cuota_inicial_esperada: Number(e.target.value) })} />
+              </div>
+              <div className="sm:col-span-2">
+                <label className={labelCls}>Notas</label>
+                <textarea className={`${inputCls} min-h-[60px]`}
+                  value={form.notas}
+                  onChange={e => setForm({ ...form, notas: e.target.value })} />
+              </div>
+              <div className="sm:col-span-2">
+                <label className={labelCls}>Motivo del cambio <span className="text-red-500">*</span></label>
+                <textarea className={`${inputCls} min-h-[60px]`}
+                  placeholder="Mínimo 10 caracteres — quedará en el audit trail"
+                  value={motivo}
+                  onChange={e => setMotivo(e.target.value)} />
+                <p className="text-[10px] text-gray-400 mt-1">{motivo.trim().length}/10 mínimo</p>
+              </div>
+            </div>
+
+            {error && <p className="text-xs text-red-600 mt-3">{error}</p>}
+
+            <div className="flex gap-2 mt-5">
+              <button onClick={onClose} disabled={loading}
+                className="flex-1 px-3 py-2 rounded-md bg-gray-100 text-gray-700 text-sm hover:bg-gray-200">
+                Cancelar
+              </button>
+              <button onClick={() => setShowDiff(true)}
+                disabled={!puedeGuardar || loading}
+                className="flex-1 px-3 py-2 rounded-md bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                Revisar cambios ({diffs.length})
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="text-xs text-gray-500 mb-3">Revisa los cambios antes de guardar:</p>
+            <div className="space-y-2 max-h-80 overflow-y-auto">
+              {diffs.map(d => (
+                <div key={d.campo} className="rounded-md border border-gray-100 p-3 bg-gray-50/40">
+                  <div className="text-[10px] text-gray-400 uppercase tracking-wider mb-1">{d.campo}</div>
+                  <div className="text-xs text-red-600 line-through break-words">
+                    {String(d.anterior ?? '—')}
+                  </div>
+                  <div className="text-xs text-emerald-700 font-medium mt-1 break-words">
+                    {String(d.nuevo ?? '—')}
+                  </div>
+                </div>
+              ))}
+              <div className="rounded-md border border-gray-100 p-3 bg-gray-50/40">
+                <div className="text-[10px] text-gray-400 uppercase tracking-wider mb-1">Motivo</div>
+                <div className="text-xs text-gray-700 italic">"{motivo}"</div>
+              </div>
+            </div>
+
+            {error && <p className="text-xs text-red-600 mt-3">{error}</p>}
+
+            <div className="flex gap-2 mt-5">
+              <button onClick={() => setShowDiff(false)} disabled={loading}
+                className="flex-1 px-3 py-2 rounded-md bg-gray-100 text-gray-700 text-sm hover:bg-gray-200">
+                Volver
+              </button>
+              <button onClick={submit} disabled={loading}
+                className="flex-1 px-3 py-2 rounded-md bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:opacity-50">
+                {loading ? 'Guardando...' : 'Guardar cambios'}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -473,6 +706,9 @@ const ESTADO_FILTERS = [
   { value: 'cancelada', label: 'Canceladas' },
 ]
 
+type ToastKind = 'success' | 'error' | 'warning'
+interface ToastState { kind: ToastKind; msg: string }
+
 export default function PlanSeparePage() {
   const [items, setItems] = useState<Separacion[]>([])
   const [loading, setLoading] = useState(true)
@@ -480,6 +716,12 @@ export default function PlanSeparePage() {
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<string | null>(null)
   const [showNueva, setShowNueva] = useState(false)
+  const [toast, setToast] = useState<ToastState | null>(null)
+
+  const showToast = useCallback((kind: ToastKind, msg: string) => {
+    setToast({ kind, msg })
+    window.setTimeout(() => setToast(null), 4000)
+  }, [])
 
   const load = useCallback(async () => {
     try {
@@ -608,7 +850,28 @@ export default function PlanSeparePage() {
 
       {showNueva && <NuevaSeparacionModal onClose={() => setShowNueva(false)} onCreated={load} />}
       {selectedDoc && (
-        <DetallePanel sep={selectedDoc} onClose={() => setSelected(null)} onUpdated={() => { load(); setSelected(selectedDoc.separacion_id) }} />
+        <DetallePanel
+          sep={selectedDoc}
+          toast={showToast}
+          onClose={() => setSelected(null)}
+          onUpdated={() => { load(); setSelected(selectedDoc.separacion_id) }}
+        />
+      )}
+
+      {/* Toast */}
+      {toast && (
+        <div
+          role="status"
+          className={`fixed bottom-4 right-4 z-[70] max-w-sm rounded-lg shadow-lg px-4 py-3 text-sm border ${
+            toast.kind === 'success'
+              ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+              : toast.kind === 'warning'
+              ? 'bg-amber-50 text-amber-900 border-amber-200'
+              : 'bg-red-50 text-red-700 border-red-200'
+          }`}
+        >
+          {toast.msg}
+        </div>
       )}
     </div>
   )

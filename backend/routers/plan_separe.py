@@ -24,11 +24,13 @@ import logging
 import uuid
 from datetime import date, datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, Field
 
+from core.auth import get_current_user
 from core.database import get_db
+from core.events import publish_event
 from services.alegra.client import AlegraClient, AlegraError
 
 logger = logging.getLogger("routers.plan_separe")
@@ -85,6 +87,23 @@ class CrearSeparacionBody(BaseModel):
     cuota_inicial: float = Field(..., gt=0)
     moto_precio_venta: float | None = None
     notas: str | None = None
+
+
+class EditarSeparacionBody(BaseModel):
+    """Fields that are EDITABLE via PATCH. Anything else in the body → 422.
+
+    Read-only (rejected with 422):
+      separacion_id, estado, pagado, porcentaje_pagado, total_abonado,
+      created_at, abonos, alegra_invoice_id, audit.
+    """
+    cliente_nombre: str | None = None
+    cliente_documento_tipo: str | None = None  # CC | PPT | CE | TI
+    cliente_documento_numero: str | None = None
+    cliente_telefono: str | None = None
+    moto_modelo: str | None = None
+    cuota_inicial_esperada: float | None = None
+    notas: str | None = None
+    motivo: str | None = None  # Motivo del cambio (audit trail)
 
 
 class RegistrarAbonoBody(BaseModel):
@@ -595,3 +614,205 @@ async def marcar_facturada(
         }},
     )
     return {"separacion_id": separacion_id, "estado": "facturada", "alegra_invoice_id": body.alegra_invoice_id}
+
+
+# ═══════════════════════════════════════════
+# PATCH /{id} — edición de separación con audit trail
+# ═══════════════════════════════════════════
+
+TIPO_DOC_VALIDOS = {"CC", "PPT", "CE", "TI"}
+
+# Fields the operator CAN edit via PATCH. Everything else in the request body
+# is rejected with HTTP 422.
+_EDITABLE_FIELDS = {
+    "cliente_nombre",
+    "cliente_documento_tipo",
+    "cliente_documento_numero",
+    "cliente_telefono",
+    "moto_modelo",
+    "cuota_inicial_esperada",
+    "notas",
+    "motivo",  # audit-only, not persisted as a field
+}
+
+_READONLY_FIELDS = {
+    "separacion_id", "estado", "pagado", "porcentaje_pagado",
+    "total_abonado", "saldo_pendiente", "created_at", "abonos",
+    "alegra_invoice_id", "audit",
+}
+
+
+def _diff_field(campo: str, anterior, nuevo) -> dict | None:
+    """Return a diff entry when values actually change."""
+    if anterior == nuevo:
+        return None
+    return {"campo": campo, "valor_anterior": anterior, "valor_nuevo": nuevo}
+
+
+@router.patch("/{separacion_id}")
+async def editar_separacion(
+    separacion_id: str,
+    raw: dict = Body(...),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Edit a separation (with audit trail + event).
+
+    - Rejects read-only fields (422)
+    - Rejects edits on status=facturada (423 Locked)
+    - Validates cuota_inicial_esperada > 0 (422)
+    - Validates new cedula uniqueness among active separaciones (422)
+    - Appends entry to audit[] with user_email, campos_modificados, motivo
+    - Publishes plan_separe.editada to roddos_events
+    """
+    # Reject read-only fields present in the body
+    read_only_present = [k for k in raw.keys() if k in _READONLY_FIELDS]
+    if read_only_present:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Campos read-only no editables: {read_only_present}",
+        )
+
+    # Reject unknown fields (anything that's not editable or readonly)
+    unknown = [k for k in raw.keys() if k not in _EDITABLE_FIELDS and k not in _READONLY_FIELDS]
+    if unknown:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Campos no reconocidos: {unknown}",
+        )
+
+    doc = await db.plan_separe_separaciones.find_one({"separacion_id": separacion_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Separación no encontrada")
+
+    # Lock edits on facturada (423 Locked)
+    if doc.get("estado") == "facturada":
+        raise HTTPException(
+            status_code=423,
+            detail="Separación ya facturada — no editable",
+        )
+
+    # Build diffs ────────────────────────────────────────────────
+    cli = doc.get("cliente") or {}
+    mot = doc.get("moto") or {}
+    diffs: list[dict] = []
+    set_updates: dict = {}
+
+    if "cliente_nombre" in raw and raw["cliente_nombre"] is not None:
+        new_v = raw["cliente_nombre"]
+        d = _diff_field("cliente.nombre", cli.get("nombre"), new_v)
+        if d:
+            diffs.append(d); set_updates["cliente.nombre"] = new_v
+
+    if "cliente_documento_tipo" in raw and raw["cliente_documento_tipo"] is not None:
+        tipo = str(raw["cliente_documento_tipo"]).upper().strip()
+        if tipo not in TIPO_DOC_VALIDOS:
+            raise HTTPException(
+                status_code=422,
+                detail=f"cliente_documento_tipo inválido. Use: {sorted(TIPO_DOC_VALIDOS)}",
+            )
+        d = _diff_field("cliente.tipo_documento", cli.get("tipo_documento"), tipo)
+        if d:
+            diffs.append(d); set_updates["cliente.tipo_documento"] = tipo
+
+    if "cliente_documento_numero" in raw and raw["cliente_documento_numero"] is not None:
+        new_cc = str(raw["cliente_documento_numero"]).strip()
+        if not new_cc:
+            raise HTTPException(status_code=422, detail="cliente_documento_numero no puede ser vacío")
+        if new_cc != cli.get("cc"):
+            dup = await db.plan_separe_separaciones.find_one({
+                "cliente.cc": new_cc,
+                "estado": {"$in": ["activa", "completada"]},
+                "separacion_id": {"$ne": separacion_id},
+            })
+            if dup:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Cédula {new_cc} ya tiene separación activa: {dup.get('separacion_id')}",
+                )
+        d = _diff_field("cliente.cc", cli.get("cc"), new_cc)
+        if d:
+            diffs.append(d); set_updates["cliente.cc"] = new_cc
+
+    if "cliente_telefono" in raw and raw["cliente_telefono"] is not None:
+        new_v = raw["cliente_telefono"]
+        d = _diff_field("cliente.telefono", cli.get("telefono"), new_v)
+        if d:
+            diffs.append(d); set_updates["cliente.telefono"] = new_v
+
+    if "moto_modelo" in raw and raw["moto_modelo"] is not None:
+        new_v = raw["moto_modelo"]
+        d = _diff_field("moto.modelo", mot.get("modelo"), new_v)
+        if d:
+            diffs.append(d); set_updates["moto.modelo"] = new_v
+
+    if "cuota_inicial_esperada" in raw and raw["cuota_inicial_esperada"] is not None:
+        new_v = float(raw["cuota_inicial_esperada"])
+        if new_v <= 0:
+            raise HTTPException(
+                status_code=422,
+                detail="cuota_inicial_esperada debe ser > 0",
+            )
+        d = _diff_field(
+            "moto.cuota_inicial_requerida",
+            mot.get("cuota_inicial_requerida"),
+            new_v,
+        )
+        if d:
+            diffs.append(d); set_updates["moto.cuota_inicial_requerida"] = new_v
+
+    if "notas" in raw and raw["notas"] is not None:
+        new_v = raw["notas"]
+        d = _diff_field("notas", doc.get("notas"), new_v)
+        if d:
+            diffs.append(d); set_updates["notas"] = new_v
+
+    motivo_raw = raw.get("motivo")
+
+    if not diffs:
+        return {
+            "separacion_id": separacion_id,
+            "modificado": False,
+            "mensaje": "No hay cambios que aplicar",
+        }
+
+    # Audit entry ────────────────────────────────────────────────
+    now_iso = datetime.now(timezone.utc).isoformat()
+    audit_entry = {
+        "timestamp": now_iso,
+        "user_email": current_user.get("email", "unknown"),
+        "campos_modificados": diffs,
+        "motivo": motivo_raw,
+        "source": "router.plan_separe.PATCH",
+    }
+    set_updates["updated_at"] = now_iso
+
+    await db.plan_separe_separaciones.update_one(
+        {"separacion_id": separacion_id},
+        {"$set": set_updates, "$push": {"audit": audit_entry}},
+    )
+
+    # Publish event ──────────────────────────────────────────────
+    await publish_event(
+        db=db,
+        event_type="plan_separe.editada",
+        source="router.plan_separe",
+        datos={
+            "separacion_id": separacion_id,
+            "campos_modificados": diffs,
+            "user_email": current_user.get("email", "unknown"),
+            "motivo": motivo_raw,
+        },
+        alegra_id=None,
+        accion_ejecutada=f"Separación {separacion_id} editada ({len(diffs)} cambio(s))",
+    )
+
+    fresh = await db.plan_separe_separaciones.find_one({"separacion_id": separacion_id})
+    _clean(fresh)
+    _compute_fields(fresh)
+    return {
+        "separacion_id": separacion_id,
+        "modificado": True,
+        "cambios": diffs,
+        "separacion": fresh,
+    }
