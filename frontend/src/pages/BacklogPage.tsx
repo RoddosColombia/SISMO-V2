@@ -40,6 +40,7 @@ export default function BacklogPage() {
   const [movimientos, setMovimientos] = useState<BacklogMovimiento[]>([])
   const [loading, setLoading] = useState(true)
   const [banco, setBanco] = useState('')
+  const [estado, setEstado] = useState('pendiente')
   const [causarTarget, setCausarTarget] = useState<BacklogMovimiento | null>(null)
   const [cuentaId, setCuentaId] = useState('5494')
   const [retefuente, setRetefuente] = useState(0)
@@ -58,15 +59,18 @@ export default function BacklogPage() {
   const fetchBacklog = useCallback(async () => {
     setLoading(true)
     try {
-      const params = banco ? `?banco=${banco}` : ''
-      const data = await apiGet<{ success: boolean; data: BacklogMovimiento[] }>(`/backlog${params}`)
+      const params = new URLSearchParams()
+      if (banco) params.set('banco', banco)
+      if (estado) params.set('estado', estado)
+      const qs = params.toString() ? `?${params.toString()}` : ''
+      const data = await apiGet<{ success: boolean; data: BacklogMovimiento[] }>(`/backlog${qs}`)
       if (data.success) setMovimientos(data.data)
     } catch {
       // silent
     } finally {
       setLoading(false)
     }
-  }, [banco])
+  }, [banco, estado])
 
   useEffect(() => { fetchBacklog() }, [fetchBacklog])
 
@@ -198,22 +202,41 @@ export default function BacklogPage() {
         )}
       </div>
 
-      {/* Filter tabs */}
-      <div className="px-6 pb-4 flex gap-2">
+      {/* Estado filter */}
+      <div className="px-6 pb-2 flex gap-2">
+        {[
+          { value: 'pendiente', label: 'Pendientes' },
+          { value: 'causado', label: 'Causados' },
+          { value: 'error', label: 'Con error' },
+        ].map(({ value, label }) => (
+          <button
+            key={value}
+            onClick={() => setEstado(value)}
+            className={`px-4 py-1.5 text-xs rounded-md transition-colors ${
+              estado === value ? 'bg-primary text-white' : 'bg-surface-container-low text-on-surface-variant hover:bg-surface-container-lowest'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* Banco filter tabs */}
+      <div className="px-6 pb-4 flex gap-2 flex-wrap">
         <button
           onClick={() => setBanco('')}
           className={`px-4 py-2 text-xs rounded-md transition-colors ${
-            banco === '' ? 'bg-primary text-white' : 'bg-surface-container-low text-on-surface-variant hover:bg-surface-container-lowest'
+            banco === '' ? 'bg-primary/20 text-primary font-medium' : 'bg-surface-container-low text-on-surface-variant hover:bg-surface-container-lowest'
           }`}
         >
-          Todos
+          Todos los bancos
         </button>
         {BANCOS.map((b) => (
           <button
             key={b}
             onClick={() => setBanco(b)}
             className={`px-4 py-2 text-xs rounded-md transition-colors ${
-              banco === b ? 'bg-primary text-white' : 'bg-surface-container-low text-on-surface-variant hover:bg-surface-container-lowest'
+              banco === b ? 'bg-primary/20 text-primary font-medium' : 'bg-surface-container-low text-on-surface-variant hover:bg-surface-container-lowest'
             }`}
           >
             {b}
