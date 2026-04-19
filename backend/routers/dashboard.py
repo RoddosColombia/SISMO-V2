@@ -128,7 +128,7 @@ async def debug_alegra(
     db: AsyncIOMotorDatabase = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """Debug: llama Alegra directamente y retorna la respuesta cruda para diagnóstico."""
+    """Debug: prueba 3 variantes de parámetros contra Alegra para identificar cuál funciona."""
     from services.alegra.client import AlegraClient
     import os
 
@@ -142,9 +142,9 @@ async def debug_alegra(
         "alegra_email_set": bool(os.environ.get("ALEGRA_EMAIL")),
         "alegra_token_set": bool(os.environ.get("ALEGRA_TOKEN")),
         "cache": None,
-        "raw_response": None,
-        "raw_type": None,
-        "error": None,
+        "probe_no_date": None,
+        "probe_start_date": None,
+        "probe_date_range": None,
     }
 
     # Estado del cache
@@ -153,26 +153,34 @@ async def debug_alegra(
         cache.pop("_id", None)
     result["cache"] = cache
 
-    # Llamada directa a Alegra
-    try:
-        alegra = AlegraClient(db=db)
-        resp = await alegra.get(
-            "invoices",
-            params={
-                "start-date": start_date,
-                "end-date": end_date,
-                "type": "sale",
-                "limit": 5,
-                "start": 0,
-            },
-        )
-        result["raw_type"] = type(resp).__name__
-        if isinstance(resp, list):
-            result["raw_response"] = resp[:3]  # primeros 3 para no saturar
-            result["raw_count"] = len(resp)
-        else:
-            result["raw_response"] = resp
-    except Exception as exc:
-        result["error"] = str(exc)
+    alegra = AlegraClient(db=db)
+
+    async def probe(params: dict) -> dict:
+        try:
+            resp = await alegra.get("invoices", params=params)
+            if isinstance(resp, list):
+                return {"ok": True, "count": len(resp), "sample": resp[:2]}
+            return {"ok": True, "type": type(resp).__name__, "data": resp}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    # Prueba 1: sin filtro de fechas — confirma que auth funciona
+    result["probe_no_date"] = await probe({"limit": 3, "start": 0})
+
+    # Prueba 2: parámetros start-date / end-date (formato clásico Alegra)
+    result["probe_start_date"] = await probe({
+        "start-date": start_date,
+        "end-date": end_date,
+        "limit": 3,
+        "start": 0,
+    })
+
+    # Prueba 3: parámetros date_range_start / date_range_end
+    result["probe_date_range"] = await probe({
+        "date_range_start": start_date,
+        "date_range_end": end_date,
+        "limit": 3,
+        "start": 0,
+    })
 
     return result

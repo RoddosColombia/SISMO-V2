@@ -60,10 +60,9 @@ async def sync_alegra_invoice_stats(db: AsyncIOMotorDatabase) -> dict:
         invoices = await alegra.get(
             "invoices",
             params={
-                "start-date": start_date,
-                "end-date": end_date,
-                "type": "sale",
-                "limit": 100,
+                "date_range_start": start_date,
+                "date_range_end": end_date,
+                "limit": 30,
                 "start": 0,
             },
         )
