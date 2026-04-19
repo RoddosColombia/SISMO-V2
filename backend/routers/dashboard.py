@@ -2,12 +2,17 @@
 GET /api/dashboard/stats — Métricas ejecutivas del mes actual.
 
 Cards:
-  1. dinero_facturado_mes   — Suma de facturas Alegra (status≠draft) del mes corriente
-  2. motos_facturadas_mes   — Cantidad de facturas de venta del mes corriente
-  3. cuotas_recibidas_mes   — Suma de cuotas pagadas en el mes corriente (MongoDB loanbook)
+  1. dinero_facturado_mes   — Facturas Alegra del mes (desde cache MongoDB)
+  2. motos_facturadas_mes   — Cantidad de facturas de venta del mes
+  3. cuotas_recibidas_mes   — Cuotas pagadas en el mes (aggregation MongoDB loanbook)
 
-Todas las cifras son del mes calendario actual en hora Colombia (UTC-5).
-Si Alegra falla, los campos de Alegra retornan null sin tirar 500.
+Arquitectura de datos:
+  - Cards 1+2: DataKeeper sincroniza desde Alegra cada hora y al recibir
+    factura.venta.creada → guarda en `alegra_stats_cache`.
+    El endpoint lee del cache. Si el cache está vacío, intenta sync on-demand.
+  - Card 3: aggregation directa sobre MongoDB (siempre disponible).
+
+Todas las cifras en hora Colombia (UTC-5).
 """
 from __future__ import annotations
 
@@ -17,19 +22,19 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from core.database import get_db
 from core.auth import get_current_user
-from services.alegra.client import AlegraClient
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
-# Colombia = UTC-5
 COLOMBIA_OFFSET = timedelta(hours=-5)
 
 
-def _mes_actual_rango() -> tuple[str, str]:
-    """Retorna (start_date, end_date) del mes actual en hora Colombia (yyyy-MM-dd)."""
+def _mes_prefix() -> str:
+    return (datetime.now(timezone.utc) + COLOMBIA_OFFSET).strftime("%Y-%m")
+
+
+def _mes_rango() -> tuple[str, str]:
     ahora_col = datetime.now(timezone.utc) + COLOMBIA_OFFSET
     start = ahora_col.replace(day=1)
-    # Último día del mes: ir al primer día del mes siguiente y restar 1
     if start.month == 12:
         end = start.replace(year=start.year + 1, month=1, day=1) - timedelta(days=1)
     else:
@@ -37,21 +42,39 @@ def _mes_actual_rango() -> tuple[str, str]:
     return start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
 
 
-def _mes_actual_prefix() -> str:
-    """Retorna prefijo 'YYYY-MM' del mes actual en hora Colombia."""
-    ahora_col = datetime.now(timezone.utc) + COLOMBIA_OFFSET
-    return ahora_col.strftime("%Y-%m")
-
-
 @router.get("/stats")
 async def dashboard_stats(
     db: AsyncIOMotorDatabase = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    start_date, end_date = _mes_actual_rango()
-    mes_prefix = _mes_actual_prefix()
+    mes = _mes_prefix()
+    start_date, end_date = _mes_rango()
 
-    # ── Card 3: cuotas recibidas este mes (MongoDB) ──────────────────────
+    # ── Cards 1+2: Alegra — leer desde cache DataKeeper ─────────────────
+    dinero_facturado: float | None = None
+    motos_facturadas: int | None = None
+    cache_updated_at: str | None = None
+
+    try:
+        cache = await db.alegra_stats_cache.find_one(
+            {"tipo": "invoices_mes", "mes": mes}
+        )
+        if cache:
+            dinero_facturado = cache.get("dinero_facturado")
+            motos_facturadas = cache.get("motos_facturadas")
+            cache_updated_at = cache.get("updated_at")
+        else:
+            # Cache vacío (primer arranque o cache expirado) — sync on-demand
+            from core.alegra_sync import sync_alegra_invoice_stats
+            result = await sync_alegra_invoice_stats(db)
+            if result:
+                dinero_facturado = result.get("dinero_facturado")
+                motos_facturadas = result.get("motos_facturadas")
+                cache_updated_at = result.get("updated_at")
+    except Exception:
+        pass  # Degrada sin 500
+
+    # ── Card 3: cuotas recibidas — aggregation MongoDB ───────────────────
     cuotas_mes = 0.0
     cuotas_count = 0
     try:
@@ -61,7 +84,7 @@ async def dashboard_stats(
             {
                 "$match": {
                     "cuotas.estado": "pagada",
-                    "cuotas.fecha_pago": {"$regex": f"^{mes_prefix}"},
+                    "cuotas.fecha_pago": {"$regex": f"^{mes}"},
                 }
             },
             {
@@ -76,41 +99,25 @@ async def dashboard_stats(
             cuotas_mes = doc.get("total", 0.0)
             cuotas_count = doc.get("count", 0)
     except Exception:
-        pass  # MongoDB error — degrade gracefully
-
-    # ── Cards 1 + 2: facturas Alegra del mes ────────────────────────────
-    dinero_facturado = None
-    motos_facturadas = None
-    try:
-        alegra = AlegraClient(db=db)
-        # Alegra paginates at 30 by default; usamos limit=100 para no perdernos facturas
-        invoices = await alegra.get(
-            "invoices",
-            params={
-                "start-date": start_date,
-                "end-date": end_date,
-                "type": "sale",
-                "limit": 100,
-                "start": 0,
-            },
-        )
-        if isinstance(invoices, list):
-            # Solo facturas que no sean borrador
-            activas = [inv for inv in invoices if inv.get("status") != "draft"]
-            dinero_facturado = sum(
-                float(inv.get("total", 0) or 0) for inv in activas
-            )
-            motos_facturadas = len(activas)
-    except Exception:
-        pass  # Alegra offline — campos quedan en null, no es crítico
+        pass
 
     return {
-        "mes": mes_prefix,
+        "mes": mes,
         "rango": {"desde": start_date, "hasta": end_date},
-        # Alegra — null si el servicio no responde
         "dinero_facturado_mes": dinero_facturado,
         "motos_facturadas_mes": motos_facturadas,
-        # MongoDB — siempre disponible
         "cuotas_recibidas_mes": cuotas_mes,
         "cuotas_pagadas_count": cuotas_count,
+        "cache_updated_at": cache_updated_at,
     }
+
+
+@router.post("/sync-alegra")
+async def trigger_alegra_sync(
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Fuerza sync inmediato desde Alegra (útil para pruebas o refrescar manualmente)."""
+    from core.alegra_sync import sync_alegra_invoice_stats
+    result = await sync_alegra_invoice_stats(db)
+    return {"ok": True, "result": result}

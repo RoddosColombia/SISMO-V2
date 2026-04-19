@@ -80,3 +80,23 @@ async def handle_test_ping(event: dict, db: AsyncIOMotorDatabase):
     Critical=True so tests can verify the critical path.
     """
     logger.info(f"DataKeeper ping received: {event.get('event_id', '?')}")
+
+
+# ═══════════════════════════════════════════
+# Dashboard cache — Alegra stats sync
+# ═══════════════════════════════════════════
+
+@on_event("factura.venta.creada", critical=False)
+async def handle_factura_creada_sync_dashboard(event: dict, db: AsyncIOMotorDatabase):
+    """
+    Cuando se crea una factura de venta, actualiza inmediatamente el cache
+    de métricas de Alegra en MongoDB para que el dashboard refleje el dato.
+    Non-critical: si falla no bloquea el flujo principal.
+    """
+    sep_id = event.get("datos", {}).get("separacion_id", "?")
+    logger.info(f"Dashboard cache sync trigger — factura.venta.creada sep={sep_id}")
+    try:
+        from core.alegra_sync import sync_alegra_invoice_stats
+        await sync_alegra_invoice_stats(db)
+    except Exception as exc:
+        logger.warning(f"Dashboard cache sync failed (non-critical): {exc}")

@@ -11,6 +11,7 @@ _client: AsyncIOMotorClient | None = None
 _db: AsyncIOMotorDatabase | None = None
 _processor = None  # EventProcessor instance
 _processor_task: asyncio.Task | None = None
+_alegra_sync_task: asyncio.Task | None = None
 
 
 async def init_db() -> None:
@@ -38,16 +39,22 @@ def get_processor():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _processor, _processor_task
+    global _processor, _processor_task, _alegra_sync_task
 
     await init_db()
+    db = await get_db()
 
-    # Start DataKeeper event processor
+    # ── DataKeeper event processor ─────────────────────────────────────
     try:
         from core.event_processor import EventProcessor, ensure_datakeeper_indexes
         from core.event_handlers import register_all_handlers
 
-        db = await get_db()
+        # Importar todos los módulos de handlers para activar sus @on_event
+        # IMPORTANTE: deben importarse ANTES de register_all_handlers
+        import core.loanbook_handlers      # noqa: F401
+        import core.contabilidad_handlers  # noqa: F401
+        import core.crm_handlers           # noqa: F401
+
         await ensure_datakeeper_indexes(db)
 
         _processor = EventProcessor(db)
@@ -57,16 +64,26 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"DataKeeper failed to start: {e}")
 
+    # ── Alegra stats sync loop ─────────────────────────────────────────
+    try:
+        from core.alegra_sync import run_sync_loop
+        _alegra_sync_task = asyncio.create_task(run_sync_loop(db))
+        logger.info("Alegra stats sync loop started")
+    except Exception as e:
+        logger.error(f"Alegra sync loop failed to start: {e}")
+
     yield
 
-    # Shutdown DataKeeper
+    # ── Shutdown ───────────────────────────────────────────────────────
     if _processor:
         await _processor.stop()
-    if _processor_task:
-        _processor_task.cancel()
-        try:
-            await _processor_task
-        except asyncio.CancelledError:
-            pass
+
+    for task in (_processor_task, _alegra_sync_task):
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
     await close_db()
