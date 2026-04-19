@@ -90,7 +90,8 @@ async def dashboard_stats(
                 {f: inv.get(f) for f in ("date", "datetime", "dateIssued", "dueDate", "createdAt", "status")}
                 for inv in invoices_raw[:3]
             ]
-    except Exception:
+    except Exception as _exc:
+        _alegra_error = str(_exc)
         # Degrada sin 500 — intenta cache como fallback
         try:
             cache = await db.alegra_stats_cache.find_one({"tipo": "invoices_mes", "mes": mes})
@@ -137,6 +138,7 @@ async def dashboard_stats(
         "cuotas_pagadas_count": cuotas_count,
         "cache_updated_at": cache_updated_at,
         "_debug_invoice_dates": locals().get("_debug_dates"),
+        "_debug_alegra_error": locals().get("_alegra_error"),
     }
 
 
