@@ -68,21 +68,22 @@ async def dashboard_stats(
         )
 
         if isinstance(invoices_raw, list):
+            def _get_inv_date(inv: dict) -> str:
+                """Try all known Alegra date field names."""
+                for field in ("date", "datetime", "dateIssued", "dueDate", "createdAt", "updatedAt"):
+                    val = inv.get(field)
+                    if val and str(val).startswith(mes[:4]):  # starts with year at minimum
+                        return str(val)
+                return ""
+
             del_mes = [
                 inv for inv in invoices_raw
-                if str(inv.get("date") or inv.get("dueDate") or "").startswith(mes)
+                if _get_inv_date(inv).startswith(mes)
                 and inv.get("status") not in ("draft", "void")
             ]
             dinero_facturado = round(sum(float(inv.get("total", 0) or 0) for inv in del_mes), 0)
             motos_facturadas = len(del_mes)
             cache_updated_at = datetime.now(timezone.utc).isoformat()
-
-            # Si date filter retornó 0 pero hay facturas, es q date no matchea —
-            # usamos el total sin filtro (último recurso)
-            if motos_facturadas == 0 and len(invoices_raw) > 0:
-                todas = [inv for inv in invoices_raw if inv.get("status") not in ("draft", "void")]
-                dinero_facturado = round(sum(float(inv.get("total", 0) or 0) for inv in todas), 0)
-                motos_facturadas = len(todas)
     except Exception:
         # Degrada sin 500 — intenta cache como fallback
         try:
