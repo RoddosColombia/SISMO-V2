@@ -536,8 +536,15 @@ function EditarSeparacionModal({
 
   const puedeGuardar =
     diffs.length > 0 &&
-    motivo.trim().length >= 10 &&
     form.cuota_inicial_esperada > 0
+
+  // Human-readable hint for why the button is disabled
+  const guardarHint =
+    diffs.length === 0
+      ? 'Modifica al menos un campo para habilitar'
+      : form.cuota_inicial_esperada <= 0
+      ? 'La cuota inicial debe ser mayor a 0'
+      : null
 
   async function submit() {
     if (diffs.length === 0) { setError('No hay cambios que guardar'); return }
@@ -631,18 +638,22 @@ function EditarSeparacionModal({
                   onChange={e => setForm({ ...form, notas: e.target.value })} />
               </div>
               <div className="sm:col-span-2">
-                <label className={labelCls}>Motivo del cambio <span className="text-red-500">*</span></label>
+                <label className={labelCls}>Motivo del cambio <span className="text-gray-400">(opcional)</span></label>
                 <textarea className={`${inputCls} min-h-[60px]`}
-                  placeholder="Mínimo 10 caracteres — quedará en el audit trail"
+                  placeholder="Razón del cambio — quedará en el historial de auditoría"
                   value={motivo}
                   onChange={e => setMotivo(e.target.value)} />
-                <p className="text-[10px] text-gray-400 mt-1">{motivo.trim().length}/10 mínimo</p>
               </div>
             </div>
 
             {error && <p className="text-xs text-red-600 mt-3">{error}</p>}
+            {guardarHint && (
+              <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-md px-3 py-2 mt-3">
+                {guardarHint}
+              </p>
+            )}
 
-            <div className="flex gap-2 mt-5">
+            <div className="flex gap-2 mt-4">
               <button onClick={onClose} disabled={loading}
                 className="flex-1 px-3 py-2 rounded-md bg-gray-100 text-gray-700 text-sm hover:bg-gray-200">
                 Cancelar
@@ -650,7 +661,7 @@ function EditarSeparacionModal({
               <button onClick={() => setShowDiff(true)}
                 disabled={!puedeGuardar || loading}
                 className="flex-1 px-3 py-2 rounded-md bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed">
-                Revisar cambios ({diffs.length})
+                Revisar cambios {diffs.length > 0 ? `(${diffs.length})` : ''}
               </button>
             </div>
           </>
