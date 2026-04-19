@@ -42,6 +42,7 @@ function StatusBadge({ estado }: { estado: string }) {
 export default function ConciliacionPage() {
   const token = localStorage.getItem('token') ?? ''
   const [banco, setBanco] = useState('')
+  const [pdfPassword, setPdfPassword] = useState('')
   const [file, setFile] = useState<File | null>(null)
   const [dragging, setDragging] = useState(false)
   const [uploading, setUploading] = useState(false)
@@ -100,6 +101,7 @@ export default function ConciliacionPage() {
       const form = new FormData()
       form.append('file', file)
       if (banco) form.append('banco', banco)
+      if (pdfPassword) form.append('pdf_password', pdfPassword)
 
       const apiBase = (import.meta.env.VITE_API_URL ?? '') + '/api'
       const res = await fetch(`${apiBase}/conciliacion/cargar-extracto`, {
@@ -163,6 +165,22 @@ export default function ConciliacionPage() {
             {BANCOS.map(b => <option key={b.value} value={b.value}>{b.label}</option>)}
           </select>
         </div>
+
+        {/* Contraseña PDF — solo para Nequi */}
+        {banco === 'nequi' && (
+          <div>
+            <label className="text-[10px] text-gray-400 uppercase tracking-wider block mb-1.5">
+              Contraseña del PDF <span className="text-gray-500 normal-case">(cédula del titular de la cuenta Nequi)</span>
+            </label>
+            <input
+              type="password"
+              placeholder="Ej: 80075452"
+              value={pdfPassword}
+              onChange={e => setPdfPassword(e.target.value)}
+              className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-100 focus:border-emerald-300"
+            />
+          </div>
+        )}
 
         {/* Drop zone */}
         <div

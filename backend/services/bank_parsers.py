@@ -237,11 +237,20 @@ def parse_davivienda(file_path: str) -> list[dict]:
     return movements
 
 
-def parse_nequi(file_path: str) -> list[dict]:
-    """Nequi: PDF via pdfplumber. Negative valor=egreso, positive=ingreso."""
+def parse_nequi(file_path: str, password: str | None = None) -> list[dict]:
+    """Nequi: PDF via pdfplumber. Negative valor=egreso, positive=ingreso.
+
+    Args:
+        file_path: Ruta al PDF del extracto Nequi
+        password: Contraseña del PDF — Nequi usa la cédula del titular como contraseña
+    """
     movements = []
 
-    with pdfplumber.open(file_path) as pdf:
+    open_kwargs: dict = {}
+    if password:
+        open_kwargs["password"] = password
+
+    with pdfplumber.open(file_path, **open_kwargs) as pdf:
         for page in pdf.pages:
             tables = page.extract_tables()
             for table in tables:

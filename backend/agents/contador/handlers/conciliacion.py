@@ -123,9 +123,17 @@ async def handle_conciliar_extracto_bancario(
         return {"success": False, "error": f"Parser no disponible para banco: {banco}"}
 
     try:
-        movements = parser(file_path)
+        # Nequi PDFs are password-protected (password = cédula del titular)
+        pdf_password = tool_input.get("pdf_password")
+        if banco.lower() == "nequi" and pdf_password:
+            movements = parser(file_path, password=pdf_password)
+        else:
+            movements = parser(file_path)
     except Exception as e:
-        return {"success": False, "error": f"Error parseando extracto {banco}: {str(e)}"}
+        err_msg = str(e)
+        if "password" in err_msg.lower() or "encrypt" in err_msg.lower():
+            return {"success": False, "error": "El PDF de Nequi está protegido con contraseña. Ingresa la cédula del titular en el campo 'Contraseña PDF'."}
+        return {"success": False, "error": f"Error parseando extracto {banco}: {err_msg}"}
 
     if not movements:
         return {"success": False, "error": "El extracto no contiene movimientos."}
