@@ -720,6 +720,16 @@ const ESTADO_FILTERS = [
 type ToastKind = 'success' | 'error' | 'warning'
 interface ToastState { kind: ToastKind; msg: string }
 
+interface PlanSepareStats {
+  total_retenido: number
+  dinero_pendiente: number
+  matriculas_provision_proyectada: number
+  por_estado: { activa: number; completada: number; facturada: number; cancelada: number }
+  matricula_unit: number
+}
+
+const MATRICULA = 580_000
+
 export default function PlanSeparePage() {
   const [items, setItems] = useState<Separacion[]>([])
   const [loading, setLoading] = useState(true)
@@ -728,10 +738,16 @@ export default function PlanSeparePage() {
   const [selected, setSelected] = useState<string | null>(null)
   const [showNueva, setShowNueva] = useState(false)
   const [toast, setToast] = useState<ToastState | null>(null)
+  const [stats, setStats] = useState<PlanSepareStats | null>(null)
 
   const showToast = useCallback((kind: ToastKind, msg: string) => {
     setToast({ kind, msg })
     window.setTimeout(() => setToast(null), 4000)
+  }, [])
+
+  // Stats — siempre sobre el total, independiente del filtro
+  useEffect(() => {
+    apiGet<PlanSepareStats>('/plan-separe/stats').then(setStats).catch(() => {})
   }, [])
 
   const load = useCallback(async () => {
@@ -772,6 +788,54 @@ export default function PlanSeparePage() {
           </svg>
           Nueva separación
         </button>
+      </div>
+
+      {/* Stats cards */}
+      <div className="bg-white border-b border-gray-100 px-6 py-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {/* Total recibido */}
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[10px] text-gray-400 uppercase tracking-wider">Total recibido</span>
+            {stats ? (
+              <>
+                <span className="text-2xl font-semibold text-emerald-700">{formatCOP(stats.total_retenido)}</span>
+                <span className="text-[11px] text-gray-400">
+                  {stats.por_estado.activa + stats.por_estado.completada} separaciones activas/completadas
+                </span>
+              </>
+            ) : (
+              <div className="h-7 w-32 bg-gray-100 rounded animate-pulse mt-0.5" />
+            )}
+          </div>
+          {/* Pendiente por recibir */}
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[10px] text-gray-400 uppercase tracking-wider">Pendiente por recibir</span>
+            {stats ? (
+              <>
+                <span className="text-2xl font-semibold text-amber-600">{formatCOP(stats.dinero_pendiente)}</span>
+                <span className="text-[11px] text-gray-400">
+                  {stats.por_estado.activa} separaciones abiertas
+                </span>
+              </>
+            ) : (
+              <div className="h-7 w-32 bg-gray-100 rounded animate-pulse mt-0.5" />
+            )}
+          </div>
+          {/* Caja para matrícula */}
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[10px] text-gray-400 uppercase tracking-wider">Caja para matrícula</span>
+            {stats ? (
+              <>
+                <span className="text-2xl font-semibold text-blue-700">{formatCOP(stats.matriculas_provision_proyectada)}</span>
+                <span className="text-[11px] text-gray-400">
+                  {formatCOP(MATRICULA)} × {stats.por_estado.activa + stats.por_estado.completada} motos
+                </span>
+              </>
+            ) : (
+              <div className="h-7 w-32 bg-gray-100 rounded animate-pulse mt-0.5" />
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Content */}
@@ -822,7 +886,9 @@ export default function PlanSeparePage() {
                   <th className="px-4 py-2.5 text-left font-medium">Cliente</th>
                   <th className="px-4 py-2.5 text-left font-medium hidden md:table-cell">Documento</th>
                   <th className="px-4 py-2.5 text-left font-medium hidden lg:table-cell">Moto</th>
-                  <th className="px-4 py-2.5 text-right font-medium">Cuota inicial</th>
+                  <th className="px-4 py-2.5 text-right font-medium hidden xl:table-cell">Cuota</th>
+                  <th className="px-4 py-2.5 text-right font-medium hidden xl:table-cell">Matrícula</th>
+                  <th className="px-4 py-2.5 text-right font-medium">Total</th>
                   <th className="px-4 py-2.5 text-right font-medium">Pagado</th>
                   <th className="px-4 py-2.5 text-center font-medium">%</th>
                   <th className="px-4 py-2.5 text-center font-medium">Estado</th>
@@ -839,7 +905,9 @@ export default function PlanSeparePage() {
                       {sep.cliente.tipo_documento || 'CC'} {sep.cliente.cc}
                     </td>
                     <td className="px-4 py-2.5 text-gray-600 hidden lg:table-cell">{sep.moto.modelo}</td>
-                    <td className="px-4 py-2.5 text-right text-gray-900">{formatCOP(sep.moto.cuota_inicial_requerida)}</td>
+                    <td className="px-4 py-2.5 text-right text-gray-600 hidden xl:table-cell">{formatCOP(sep.moto.cuota_inicial_requerida - MATRICULA)}</td>
+                    <td className="px-4 py-2.5 text-right text-gray-600 hidden xl:table-cell">{formatCOP(MATRICULA)}</td>
+                    <td className="px-4 py-2.5 text-right text-gray-900 font-medium">{formatCOP(sep.moto.cuota_inicial_requerida)}</td>
                     <td className="px-4 py-2.5 text-right font-semibold text-gray-900">{formatCOP(sep.total_abonado)}</td>
                     <td className="px-4 py-2.5 text-center">
                       <span className={`font-semibold ${sep.porcentaje_pagado >= 100 ? 'text-emerald-700' : 'text-gray-900'}`}>
