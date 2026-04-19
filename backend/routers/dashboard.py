@@ -166,23 +166,22 @@ async def debug_alegra(
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
-    # Prueba 1: sin filtro de fechas — confirma que auth funciona
+    # Prueba 1: sin filtro — muestra campos reales del primer invoice
     result["probe_no_date"] = await probe({"limit": 3, "start": 0})
 
-    # Prueba 2: parámetros start-date / end-date (formato clásico Alegra)
-    result["probe_start_date"] = await probe({
-        "start-date": start_date,
-        "end-date": end_date,
-        "limit": 3,
-        "start": 0,
-    })
-
-    # Prueba 3: parámetros date_range_start / date_range_end
-    result["probe_date_range"] = await probe({
-        "date_range_start": start_date,
-        "date_range_end": end_date,
-        "limit": 3,
-        "start": 0,
-    })
+    # Campos del primer invoice (para saber cómo se llama el campo de fecha)
+    try:
+        raw = await alegra.get("invoices", params={"limit": 1, "start": 0})
+        if isinstance(raw, list) and raw:
+            first = raw[0]
+            result["invoice_keys"] = list(first.keys())
+            result["invoice_date_fields"] = {
+                k: v for k, v in first.items()
+                if "date" in k.lower() or "fecha" in k.lower() or k in ("date", "dueDate", "createdAt", "updatedAt")
+            }
+            result["invoice_sample_id"] = first.get("id")
+            result["invoice_sample_total"] = first.get("total")
+    except Exception as exc:
+        result["invoice_keys_error"] = str(exc)
 
     return result
