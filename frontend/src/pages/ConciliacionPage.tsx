@@ -165,8 +165,8 @@ export default function ConciliacionPage() {
           </select>
         </div>
 
-        {/* Contraseña PDF — solo para Nequi */}
-        {banco === 'nequi' && (
+        {/* Contraseña PDF — solo para Nequi PDF (no xlsx) */}
+        {banco === 'nequi' && file?.name.toLowerCase().endsWith('.pdf') && (
           <div>
             <label className="text-[10px] text-gray-400 uppercase tracking-wider block mb-1.5">
               Contraseña del PDF <span className="text-gray-500 normal-case">(cédula del titular de la cuenta Nequi)</span>

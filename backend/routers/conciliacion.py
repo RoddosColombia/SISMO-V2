@@ -13,6 +13,13 @@ from core.database import get_db
 router = APIRouter(prefix="/api/conciliacion", tags=["conciliacion"])
 
 
+@router.post("/test-upload")
+async def test_upload(file: UploadFile = File(...)):
+    """No auth, no DB — bare multipart test to diagnose 'Failed to fetch'."""
+    content = await file.read()
+    return {"ok": True, "filename": file.filename, "size_bytes": len(content)}
+
+
 async def _run_conciliacion(
     tmp_path: str,
     banco: str | None,

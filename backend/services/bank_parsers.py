@@ -48,6 +48,18 @@ def detect_bank(file_path: str) -> str:
 
     ws = wb.active
 
+    # Nequi xlsx: scan first 10 rows for Fecha+Descripcion+Valor headers
+    for row_num in range(1, 11):
+        try:
+            row_cells = [str(c.value or "").strip().lower() for c in ws[row_num]]
+            has_fecha = any("fecha" in c for c in row_cells)
+            has_valor = any(c in ("valor", "monto", "transacción", "transaccion") for c in row_cells)
+            if has_fecha and has_valor:
+                wb.close()
+                return "nequi"
+        except Exception:
+            continue
+
     # BBVA: headers at row 14 with "FECHA DE OPERACIÓN"
     row14 = [str(c.value or "") for c in ws[14]]
     if any("FECHA DE OPERACI" in cell.upper() for cell in row14):
@@ -62,7 +74,7 @@ def detect_bank(file_path: str) -> str:
             return "davivienda"
 
     wb.close()
-    raise ValueError("No se pudo identificar el banco del extracto. Formatos soportados: Bancolombia, BBVA, Davivienda, Global66 (.xlsx/.xls) y Nequi (.pdf).")
+    raise ValueError("No se pudo identificar el banco del extracto. Formatos soportados: Bancolombia, BBVA, Davivienda, Global66 (.xlsx/.xls) y Nequi (.xlsx o .pdf).")
 
 
 def _open_workbook(file_path: str):
@@ -238,14 +250,92 @@ def parse_davivienda(file_path: str) -> list[dict]:
 
 
 def parse_nequi(file_path: str, password: str | None = None) -> list[dict]:
-    """Nequi: PDF via pdfplumber. Negative valor=egreso, positive=ingreso.
+    """Nequi: xlsx (preferred) or PDF via pdfplumber.
+
+    xlsx columns: Fecha | Descripcion (or similar) | Valor | Saldo
+    Negative valor = egreso (debito), positive = ingreso (credito).
 
     Args:
-        file_path: Ruta al PDF del extracto Nequi
-        password: Contraseña del PDF — Nequi usa la cédula del titular como contraseña
+        file_path: Path to .xlsx or .pdf extract
+        password: PDF password only (Nequi uses cédula del titular)
     """
-    movements = []
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext in (".xlsx", ".xls"):
+        return _parse_nequi_xlsx(file_path)
+    return _parse_nequi_pdf(file_path, password)
 
+
+def _parse_nequi_xlsx(file_path: str) -> list[dict]:
+    """Parse Nequi xlsx extract. Finds header row automatically."""
+    movements = []
+    wb = _open_workbook(file_path)
+    ws = wb.active
+
+    # Find header row (contains "fecha")
+    header_row = None
+    col_fecha = col_desc = col_valor = -1
+    for row_num in range(1, 15):
+        try:
+            cells = [str(c.value or "").strip().lower() for c in ws[row_num]]
+        except Exception:
+            continue
+        if any("fecha" in c for c in cells):
+            header_row = row_num
+            for i, c in enumerate(cells):
+                if "fecha" in c:
+                    col_fecha = i
+                elif c in ("descripcion", "descripción", "concepto", "detalle", "tipo", "transaccion", "transacción"):
+                    col_desc = i
+                elif c in ("valor", "monto", "importe"):
+                    col_valor = i
+            # fallback: if valor not matched, take col after desc or col 2
+            if col_valor == -1:
+                col_valor = 2 if len(cells) > 2 else 1
+            if col_desc == -1:
+                col_desc = 1
+            break
+
+    if header_row is None:
+        wb.close()
+        return movements
+
+    for row in ws.iter_rows(min_row=header_row + 1, values_only=True):
+        if not row or len(row) <= max(col_fecha, col_desc, col_valor):
+            continue
+        fecha_raw = row[col_fecha]
+        desc = str(row[col_desc] or "").strip()
+        valor_raw = row[col_valor]
+
+        if not fecha_raw or valor_raw is None:
+            continue
+
+        # Parse date — openpyxl may return datetime objects directly
+        if isinstance(fecha_raw, datetime):
+            fecha = fecha_raw.strftime("%Y-%m-%d")
+        else:
+            fecha = _parse_date(str(fecha_raw), "%d/%m/%Y")
+            if len(fecha) < 8:  # fallback for other formats
+                fecha = _parse_date(str(fecha_raw), "%Y-%m-%d")
+
+        monto, tipo = _parse_monto(valor_raw)
+        if monto == 0:
+            continue
+
+        movements.append({
+            "fecha": fecha,
+            "descripcion": desc or "Movimiento Nequi",
+            "monto": monto,
+            "tipo": tipo,
+            "banco": "Nequi",
+        })
+
+    wb.close()
+    return movements
+
+
+def _parse_nequi_pdf(file_path: str, password: str | None = None) -> list[dict]:
+    """Parse Nequi PDF extract (legacy path)."""
+    movements = []
     open_kwargs: dict = {}
     if password:
         open_kwargs["password"] = password
@@ -257,7 +347,6 @@ def parse_nequi(file_path: str, password: str | None = None) -> list[dict]:
                 for row in table:
                     if not row or len(row) < 3:
                         continue
-                    # Skip header rows
                     if row[0] and "fecha" in str(row[0]).lower():
                         continue
 
@@ -268,10 +357,7 @@ def parse_nequi(file_path: str, password: str | None = None) -> list[dict]:
                     if not fecha_raw or not valor_raw:
                         continue
 
-                    # Parse date DD/MM/YYYY
                     fecha = _parse_date(fecha_raw, "%d/%m/%Y")
-
-                    # Parse valor: negative=egreso, positive=ingreso
                     monto, tipo = _parse_monto(valor_raw)
                     if monto == 0:
                         continue
