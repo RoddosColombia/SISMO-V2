@@ -142,24 +142,28 @@ async def handle_conciliar_extracto_bancario(
     await registrar_extracto_procesado(db, file_hash, banco, len(movements))
 
     # Process movements
-    job_id = str(uuid.uuid4())[:8]
+    job_id = tool_input.get("job_id_override") or str(uuid.uuid4())[:8]
     causados = 0
     backlog_count = 0
     duplicados = 0
     errores = 0
 
-    # Store job state (MongoDB operational — allowed)
-    await db.conciliacion_jobs.insert_one({
-        "job_id": job_id,
-        "banco": banco,
-        "total": len(movements),
-        "estado": "procesando",
-        "causados": 0,
-        "backlog": 0,
-        "duplicados": 0,
-        "errores": 0,
-        "fecha_inicio": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-    })
+    # Store job state — upsert so we don't duplicate if job pre-created by router
+    await db.conciliacion_jobs.update_one(
+        {"job_id": job_id},
+        {"$set": {
+            "job_id": job_id,
+            "banco": banco,
+            "total": len(movements),
+            "estado": "procesando",
+            "causados": 0,
+            "backlog": 0,
+            "duplicados": 0,
+            "errores": 0,
+            "fecha_inicio": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        }},
+        upsert=True,
+    )
 
     for mov in movements:
         # Anti-dup Capa 2
