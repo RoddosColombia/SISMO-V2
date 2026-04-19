@@ -121,3 +121,58 @@ async def trigger_alegra_sync(
     from core.alegra_sync import sync_alegra_invoice_stats
     result = await sync_alegra_invoice_stats(db)
     return {"ok": True, "result": result}
+
+
+@router.get("/debug-alegra")
+async def debug_alegra(
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Debug: llama Alegra directamente y retorna la respuesta cruda para diagnóstico."""
+    from services.alegra.client import AlegraClient
+    import os
+
+    mes_prefix = _mes_prefix()
+    start_date, end_date = _mes_rango()
+
+    result: dict = {
+        "mes": mes_prefix,
+        "start_date": start_date,
+        "end_date": end_date,
+        "alegra_email_set": bool(os.environ.get("ALEGRA_EMAIL")),
+        "alegra_token_set": bool(os.environ.get("ALEGRA_TOKEN")),
+        "cache": None,
+        "raw_response": None,
+        "raw_type": None,
+        "error": None,
+    }
+
+    # Estado del cache
+    cache = await db.alegra_stats_cache.find_one({"tipo": "invoices_mes", "mes": mes_prefix})
+    if cache:
+        cache.pop("_id", None)
+    result["cache"] = cache
+
+    # Llamada directa a Alegra
+    try:
+        alegra = AlegraClient(db=db)
+        resp = await alegra.get(
+            "invoices",
+            params={
+                "start-date": start_date,
+                "end-date": end_date,
+                "type": "sale",
+                "limit": 5,
+                "start": 0,
+            },
+        )
+        result["raw_type"] = type(resp).__name__
+        if isinstance(resp, list):
+            result["raw_response"] = resp[:3]  # primeros 3 para no saturar
+            result["raw_count"] = len(resp)
+        else:
+            result["raw_response"] = resp
+    except Exception as exc:
+        result["error"] = str(exc)
+
+    return result
