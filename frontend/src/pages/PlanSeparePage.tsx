@@ -890,7 +890,7 @@ export default function PlanSeparePage() {
                   <th className="px-4 py-2.5 text-right font-medium hidden xl:table-cell">Matrícula</th>
                   <th className="px-4 py-2.5 text-right font-medium">Total</th>
                   <th className="px-4 py-2.5 text-right font-medium">Pagado</th>
-                  <th className="px-4 py-2.5 text-center font-medium">%</th>
+                  <th className="px-4 py-2.5 text-right font-medium">Falta</th>
                   <th className="px-4 py-2.5 text-center font-medium">Estado</th>
                 </tr>
               </thead>
@@ -909,9 +909,9 @@ export default function PlanSeparePage() {
                     <td className="px-4 py-2.5 text-right text-gray-600 hidden xl:table-cell">{formatCOP(MATRICULA)}</td>
                     <td className="px-4 py-2.5 text-right text-gray-900 font-medium">{formatCOP(sep.moto.cuota_inicial_requerida)}</td>
                     <td className="px-4 py-2.5 text-right font-semibold text-gray-900">{formatCOP(sep.total_abonado)}</td>
-                    <td className="px-4 py-2.5 text-center">
-                      <span className={`font-semibold ${sep.porcentaje_pagado >= 100 ? 'text-emerald-700' : 'text-gray-900'}`}>
-                        {sep.porcentaje_pagado}%
+                    <td className="px-4 py-2.5 text-right">
+                      <span className={`font-semibold ${sep.saldo_pendiente <= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                        {sep.saldo_pendiente <= 0 ? '✓' : formatCOP(sep.saldo_pendiente)}
                       </span>
                     </td>
                     <td className="px-4 py-2.5 text-center">
