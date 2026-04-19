@@ -117,8 +117,10 @@ async def trigger_alegra_sync(
     db: AsyncIOMotorDatabase = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """Fuerza sync inmediato desde Alegra (útil para pruebas o refrescar manualmente)."""
+    """Fuerza sync inmediato desde Alegra. Borra el cache antes para garantizar dato fresco."""
     from core.alegra_sync import sync_alegra_invoice_stats
+    mes = _mes_prefix()
+    await db.alegra_stats_cache.delete_one({"tipo": "invoices_mes", "mes": mes})
     result = await sync_alegra_invoice_stats(db)
     return {"ok": True, "result": result}
 

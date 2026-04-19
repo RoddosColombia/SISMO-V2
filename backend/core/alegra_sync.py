@@ -57,22 +57,23 @@ async def sync_alegra_invoice_stats(db: AsyncIOMotorDatabase) -> dict:
     try:
         alegra = AlegraClient(db=db)
 
+        # Alegra ignora silenciosamente los params de fecha — filtramos en Python.
+        # Traemos las últimas 100 facturas y filtramos por mes en el campo "date".
         invoices = await alegra.get(
             "invoices",
-            params={
-                "start-date": start_date,
-                "end-date": end_date,
-                "limit": 100,
-                "start": 0,
-            },
+            params={"limit": 100, "start": 0, "order_direction": "DESC"},
         )
 
         if not isinstance(invoices, list):
             invoices = []
 
-        activas = [inv for inv in invoices if inv.get("status") != "draft"]
-        dinero = sum(float(inv.get("total", 0) or 0) for inv in activas)
-        count = len(activas)
+        del_mes = [
+            inv for inv in invoices
+            if inv.get("date", "").startswith(mes_prefix)
+            and inv.get("status") != "draft"
+        ]
+        dinero = sum(float(inv.get("total", 0) or 0) for inv in del_mes)
+        count = len(del_mes)
 
         doc = {
             **CACHE_KEY,
