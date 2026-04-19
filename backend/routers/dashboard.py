@@ -50,29 +50,49 @@ async def dashboard_stats(
     mes = _mes_prefix()
     start_date, end_date = _mes_rango()
 
-    # ── Cards 1+2: Alegra — leer desde cache DataKeeper ─────────────────
+    # ── Cards 1+2: Alegra — llamada directa, filtro en Python por mes ────
+    # No usamos cache para evitar datos stale. La API de Alegra responde ~500ms.
     dinero_facturado: float | None = None
     motos_facturadas: int | None = None
     cache_updated_at: str | None = None
 
     try:
-        cache = await db.alegra_stats_cache.find_one(
-            {"tipo": "invoices_mes", "mes": mes}
+        from services.alegra.client import AlegraClient
+        alegra = AlegraClient(db=db)
+
+        # Traemos las últimas 100 facturas y filtramos en Python por mes.
+        # Alegra ignora silenciosamente start-date/end-date en algunos planes.
+        invoices_raw = await alegra.get(
+            "invoices",
+            params={"start-date": start_date, "end-date": end_date, "limit": 100, "start": 0},
         )
-        if cache:
-            dinero_facturado = cache.get("dinero_facturado")
-            motos_facturadas = cache.get("motos_facturadas")
-            cache_updated_at = cache.get("updated_at")
-        else:
-            # Cache vacío (primer arranque o cache expirado) — sync on-demand
-            from core.alegra_sync import sync_alegra_invoice_stats
-            result = await sync_alegra_invoice_stats(db)
-            if result:
-                dinero_facturado = result.get("dinero_facturado")
-                motos_facturadas = result.get("motos_facturadas")
-                cache_updated_at = result.get("updated_at")
+
+        if isinstance(invoices_raw, list):
+            del_mes = [
+                inv for inv in invoices_raw
+                if str(inv.get("date") or inv.get("dueDate") or "").startswith(mes)
+                and inv.get("status") not in ("draft", "void")
+            ]
+            dinero_facturado = round(sum(float(inv.get("total", 0) or 0) for inv in del_mes), 0)
+            motos_facturadas = len(del_mes)
+            cache_updated_at = datetime.now(timezone.utc).isoformat()
+
+            # Si date filter retornó 0 pero hay facturas, es q date no matchea —
+            # usamos el total sin filtro (último recurso)
+            if motos_facturadas == 0 and len(invoices_raw) > 0:
+                todas = [inv for inv in invoices_raw if inv.get("status") not in ("draft", "void")]
+                dinero_facturado = round(sum(float(inv.get("total", 0) or 0) for inv in todas), 0)
+                motos_facturadas = len(todas)
     except Exception:
-        pass  # Degrada sin 500
+        # Degrada sin 500 — intenta cache como fallback
+        try:
+            cache = await db.alegra_stats_cache.find_one({"tipo": "invoices_mes", "mes": mes})
+            if cache:
+                dinero_facturado = cache.get("dinero_facturado")
+                motos_facturadas = cache.get("motos_facturadas")
+                cache_updated_at = cache.get("updated_at")
+        except Exception:
+            pass
 
     # ── Card 3: cuotas recibidas — aggregation MongoDB ───────────────────
     cuotas_mes = 0.0

@@ -1,9 +1,10 @@
 """Conciliacion bancaria REST endpoints."""
+import asyncio
 import os
 import tempfile
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from core.auth import get_current_user
@@ -20,7 +21,7 @@ async def _run_conciliacion(
     db: AsyncIOMotorDatabase,
     user_id: str,
 ) -> None:
-    """Background task: parse + classify + cause/backlog. Deletes temp file when done."""
+    """Independent async task: parse + classify + cause/backlog."""
     try:
         from agents.contador.handlers.conciliacion import handle_conciliar_extracto_bancario
         from services.alegra.client import AlegraClient
@@ -53,35 +54,34 @@ async def _run_conciliacion(
 
 @router.post("/cargar-extracto")
 async def cargar_extracto(
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     banco: str | None = Form(default=None),
     pdf_password: str | None = Form(default=None),
     db: AsyncIOMotorDatabase = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """Sube extracto bancario y lanza conciliación en background.
+    """Sube extracto bancario y lanza conciliación como tarea independiente.
 
-    Retorna job_id inmediatamente — usa GET /estado/{job_id} para seguir el progreso.
+    Retorna job_id de inmediato — usa GET /estado/{job_id} para seguir el progreso.
 
     Args:
         file: Extracto bancario (.xlsx, .xls, .pdf)
-        banco: Banco opcional — se detecta automáticamente si no se envía
+        banco: Banco opcional — se detecta automáticamente
         pdf_password: Contraseña del PDF (Nequi usa la cédula del titular)
     """
-    # Validate file type quickly before spawning background task
     suffix = os.path.splitext(file.filename or "")[1].lower() or ".xlsx"
     if suffix not in (".xlsx", ".xls", ".pdf"):
         return {"success": False, "error": f"Formato no soportado: {suffix}. Solo .xlsx, .xls, .pdf."}
 
-    # Save to temp file
+    # Save file to temp (must be done before returning)
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         content = await file.read()
         tmp.write(content)
         tmp_path = tmp.name
 
-    # Create job record immediately so frontend can poll
     job_id = str(uuid.uuid4())[:8]
+
+    # Register job immediately so frontend can start polling
     await db.conciliacion_jobs.insert_one({
         "job_id": job_id,
         "banco": banco or "auto",
@@ -91,21 +91,21 @@ async def cargar_extracto(
         "user_id": current_user.get("username", "api"),
     })
 
-    # Run processing in background — response returns immediately
-    background_tasks.add_task(
-        _run_conciliacion,
+    # Fire-and-forget — completely independent from request lifecycle
+    # avoids BackgroundTasks + BaseHTTPMiddleware incompatibility
+    asyncio.create_task(_run_conciliacion(
         tmp_path=tmp_path,
         banco=banco,
         pdf_password=pdf_password,
         job_id=job_id,
         db=db,
         user_id=current_user.get("username", "api"),
-    )
+    ))
 
     return {
         "success": True,
         "job_id": job_id,
-        "message": f"Extracto recibido. Procesando en background — consulta el estado con job_id: {job_id}",
+        "message": f"Extracto recibido. Procesando — sigue el estado con job_id: {job_id}",
     }
 
 
