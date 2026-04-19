@@ -43,23 +43,32 @@ PARSERS = {
 }
 
 # Classification patterns with confidence
+# cuenta_id: NUNCA usar 5493 (Gastos Generales — no posteable). Fallback = 5494.
 CLASSIFICATION_RULES: list[tuple[str, str, int, float]] = [
     # (keyword, tipo, cuenta_id, confianza)
-    ("gravamen", "impuesto_4x1000", 5505, 1.0),
-    ("arriend", "arriendo", 5480, 0.90),
-    ("servicio", "servicios", 5484, 0.85),
-    ("telefon", "servicios", 5487, 0.85),
-    ("internet", "servicios", 5487, 0.85),
-    ("honorar", "honorarios_pn", 5470, 0.80),
-    ("seguro", "servicios", 5510, 0.80),
-    ("mantenim", "servicios", 5490, 0.80),
-    ("transport", "servicios", 5491, 0.75),
-    ("publicid", "servicios", 5500, 0.75),
-    ("comision", "servicios", 5508, 0.80),
-    ("interes", "servicios", 5533, 0.75),
-    ("papeler", "servicios", 5497, 0.75),
-    ("nomina", "servicios", 5462, 0.85),
-    ("sueldo", "servicios", 5462, 0.85),
+    ("gravamen", "impuesto_4x1000", 5509, 1.0),   # 531520 Gravamen 4x1000
+    ("4x1000",   "impuesto_4x1000", 5509, 1.0),
+    ("arriend",  "arriendo",        5480, 0.90),   # 512010
+    ("nomina",   "nomina",          5462, 0.90),   # 510506 Sueldos
+    ("sueldo",   "nomina",          5462, 0.90),
+    ("salario",  "nomina",          5462, 0.90),
+    ("honorar",  "honorarios_pn",   5470, 0.80),   # 511015
+    ("telefon",  "servicios",       5487, 0.85),   # 513535
+    ("internet", "servicios",       5487, 0.85),
+    ("celular",  "servicios",       5487, 0.85),
+    ("seguro",   "servicios",       5510, 0.80),   # 530510
+    ("mantenim", "servicios",       5490, 0.80),   # 512040
+    ("transport","servicios",       5491, 0.75),   # 513530
+    ("uber",     "servicios",       5491, 0.72),   # viajes
+    ("taxi",     "servicios",       5491, 0.72),
+    ("publicid", "servicios",       5500, 0.75),   # 524005
+    ("comision", "servicios",       5508, 0.80),   # 530515
+    ("bancari",  "servicios",       5507, 0.80),   # 530505 Gastos bancarios
+    ("interes",  "servicios",       5533, 0.75),   # intereses
+    ("papeler",  "servicios",       5497, 0.75),
+    ("servicio", "servicios",       5494, 0.72),   # genérico — 51991001
+    ("compra",   "servicios",       5494, 0.70),   # genérico
+    ("pago pse", "servicios",       5494, 0.70),   # PSE genérico
 ]
 
 SOCIOS_CC = {"80075452": "Andrés Sanjuan", "80086601": "Iván Echeverri"}
@@ -76,18 +85,18 @@ def _classify_movement(descripcion: str, monto: float) -> dict:
     """Classify a bank movement with confidence 0-1."""
     desc_lower = descripcion.lower()
 
-    # Socio detection — always CXC, confianza 1.0
+    # Socio detection — always CXC socios (5329), confianza 1.0
     for cc, nombre in SOCIOS_CC.items():
         if cc in desc_lower or nombre.lower().split()[0] in desc_lower:
-            return {"tipo": "cxc_socio", "cuenta_id": 1305, "confianza": 1.0, "socio_cc": cc}
+            return {"tipo": "cxc_socio", "cuenta_id": 5329, "confianza": 1.0, "socio_cc": cc}
 
     # Rule-based classification
     for keyword, tipo, cuenta_id, conf in CLASSIFICATION_RULES:
         if keyword in desc_lower:
             return {"tipo": tipo, "cuenta_id": cuenta_id, "confianza": conf}
 
-    # Fallback — low confidence
-    return {"tipo": "sin_clasificar", "cuenta_id": 5493, "confianza": 0.30}
+    # Fallback — low confidence. 5494 = Gastos Varios (posteable). NUNCA 5493.
+    return {"tipo": "sin_clasificar", "cuenta_id": 5494, "confianza": 0.30}
 
 
 async def handle_conciliar_extracto_bancario(
