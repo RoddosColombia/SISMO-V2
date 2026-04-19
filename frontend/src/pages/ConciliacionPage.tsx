@@ -40,7 +40,6 @@ function StatusBadge({ estado }: { estado: string }) {
 }
 
 export default function ConciliacionPage() {
-  const token = localStorage.getItem('token') ?? ''
   const [banco, setBanco] = useState('')
   const [pdfPassword, setPdfPassword] = useState('')
   const [file, setFile] = useState<File | null>(null)
@@ -103,8 +102,8 @@ export default function ConciliacionPage() {
       if (banco) form.append('banco', banco)
       if (pdfPassword) form.append('pdf_password', pdfPassword)
 
-      const apiBase = (import.meta.env.VITE_API_URL ?? '') + '/api'
-      const res = await fetch(`${apiBase}/conciliacion/cargar-extracto`, {
+      const token = localStorage.getItem('token') ?? ''
+      const res = await fetch('/api/conciliacion/cargar-extracto', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: form,

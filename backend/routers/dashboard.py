@@ -84,6 +84,12 @@ async def dashboard_stats(
             dinero_facturado = round(sum(float(inv.get("total", 0) or 0) for inv in del_mes), 0)
             motos_facturadas = len(del_mes)
             cache_updated_at = datetime.now(timezone.utc).isoformat()
+
+            # Debug: expose raw date fields from first 3 invoices so we can see the actual format
+            _debug_dates = [
+                {f: inv.get(f) for f in ("date", "datetime", "dateIssued", "dueDate", "createdAt", "status")}
+                for inv in invoices_raw[:3]
+            ]
     except Exception:
         # Degrada sin 500 — intenta cache como fallback
         try:
@@ -130,6 +136,7 @@ async def dashboard_stats(
         "cuotas_recibidas_mes": cuotas_mes,
         "cuotas_pagadas_count": cuotas_count,
         "cache_updated_at": cache_updated_at,
+        "_debug_invoice_dates": locals().get("_debug_dates"),
     }
 
 
