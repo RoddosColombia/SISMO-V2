@@ -21,7 +21,9 @@ import tempfile
 from datetime import datetime
 
 import openpyxl
+import pandas as pd
 import pdfplumber
+from io import BytesIO
 
 
 def detect_bank(file_path: str) -> str:
@@ -266,70 +268,88 @@ def parse_nequi(file_path: str, password: str | None = None) -> list[dict]:
 
 
 def _parse_nequi_xlsx(file_path: str) -> list[dict]:
-    """Parse Nequi xlsx extract. Finds header row automatically."""
-    movements = []
-    wb = _open_workbook(file_path)
-    ws = wb.active
+    """Parse Nequi xlsx — pandas with multi-sheet and multi-column fallback (ported from V1)."""
+    # Sheet name candidates
+    SHEETS = ["Extracto Nequi", "Extracto", "Movimientos", "Hoja1", "Sheet1", 0]
+    COLS_FECHA = ["Fecha", "FECHA", "Date", "Fecha de operación", "Fecha Operación"]
+    COLS_DESC  = ["Descripción", "DESCRIPCIÓN", "Descripcion", "DESCRIPCION",
+                  "Concepto", "CONCEPTO", "Detalle", "Tipo de transacción"]
+    COLS_VALOR = ["Monto", "MONTO", "Valor", "VALOR", "Importe", "Amount"]
+    COLS_TIPO  = ["Tipo", "TIPO", "Naturaleza", "Tipo de transacción",
+                  "Tipo Transacción", "Dirección"]
 
-    # Find header row (contains "fecha")
-    header_row = None
-    col_fecha = col_desc = col_valor = -1
-    for row_num in range(1, 15):
+    def _find_col(df_cols, options):
+        upper_map = {c.upper(): c for c in df_cols}
+        for opt in options:
+            if opt in df_cols:
+                return opt
+            if opt.upper() in upper_map:
+                return upper_map[opt.upper()]
+        return None
+
+    with open(file_path, "rb") as f:
+        file_bytes = f.read()
+
+    df = None
+    for sheet in SHEETS:
         try:
-            cells = [str(c.value or "").strip().lower() for c in ws[row_num]]
+            candidate = pd.read_excel(BytesIO(file_bytes), sheet_name=sheet)
+            if not candidate.empty:
+                df = candidate
+                break
         except Exception:
             continue
-        if any("fecha" in c for c in cells):
-            header_row = row_num
-            for i, c in enumerate(cells):
-                if "fecha" in c:
-                    col_fecha = i
-                elif c in ("descripcion", "descripción", "concepto", "detalle", "tipo", "transaccion", "transacción"):
-                    col_desc = i
-                elif c in ("valor", "monto", "importe"):
-                    col_valor = i
-            # fallback: if valor not matched, take col after desc or col 2
-            if col_valor == -1:
-                col_valor = 2 if len(cells) > 2 else 1
-            if col_desc == -1:
-                col_desc = 1
-            break
 
-    if header_row is None:
-        wb.close()
-        return movements
+    if df is None or df.empty:
+        raise ValueError("Nequi xlsx: no se pudo leer el extracto. Verifica que el archivo tiene datos.")
 
-    for row in ws.iter_rows(min_row=header_row + 1, values_only=True):
-        if not row or len(row) <= max(col_fecha, col_desc, col_valor):
+    col_fecha = _find_col(df.columns, COLS_FECHA)
+    col_desc  = _find_col(df.columns, COLS_DESC)
+    col_valor = _find_col(df.columns, COLS_VALOR)
+    col_tipo  = _find_col(df.columns, COLS_TIPO)
+
+    if not col_fecha or not col_valor:
+        raise ValueError(f"Nequi xlsx: columnas requeridas no encontradas. Disponibles: {list(df.columns)}")
+
+    movements = []
+    for _, row in df.iterrows():
+        try:
+            fecha_raw = row[col_fecha]
+            if pd.isna(fecha_raw):
+                continue
+            fecha = pd.to_datetime(fecha_raw).strftime("%Y-%m-%d")
+
+            desc = (
+                str(row[col_desc]).strip()
+                if col_desc and not pd.isna(row.get(col_desc, float("nan")))
+                else "Movimiento Nequi"
+            )
+
+            monto_raw = float(row[col_valor])
+            if pd.isna(monto_raw):
+                continue
+
+            # Use Tipo column if available, else infer from sign
+            if col_tipo and not pd.isna(row.get(col_tipo, float("nan"))):
+                tipo_str = str(row[col_tipo]).strip().lower()
+                tipo = "credito" if any(kw in tipo_str for kw in ["ingreso", "entrada", "abono", "recibo"]) else "debito"
+            else:
+                tipo = "credito" if monto_raw > 0 else "debito"
+
+            monto = abs(monto_raw)
+            if monto == 0:
+                continue
+
+            movements.append({
+                "fecha": fecha,
+                "descripcion": desc,
+                "monto": monto,
+                "tipo": tipo,
+                "banco": "Nequi",
+            })
+        except Exception:
             continue
-        fecha_raw = row[col_fecha]
-        desc = str(row[col_desc] or "").strip()
-        valor_raw = row[col_valor]
 
-        if not fecha_raw or valor_raw is None:
-            continue
-
-        # Parse date — openpyxl may return datetime objects directly
-        if isinstance(fecha_raw, datetime):
-            fecha = fecha_raw.strftime("%Y-%m-%d")
-        else:
-            fecha = _parse_date(str(fecha_raw), "%d/%m/%Y")
-            if len(fecha) < 8:  # fallback for other formats
-                fecha = _parse_date(str(fecha_raw), "%Y-%m-%d")
-
-        monto, tipo = _parse_monto(valor_raw)
-        if monto == 0:
-            continue
-
-        movements.append({
-            "fecha": fecha,
-            "descripcion": desc or "Movimiento Nequi",
-            "monto": monto,
-            "tipo": tipo,
-            "banco": "Nequi",
-        })
-
-    wb.close()
     return movements
 
 

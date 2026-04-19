@@ -19,10 +19,14 @@ interface JobStatus {
   job_id: string
   estado?: string
   progress?: number
+  banco?: string
+  total?: number
+  causados?: number
+  backlog?: number
+  duplicados?: number
+  errores?: number
   resultado?: Record<string, unknown>
   error?: string
-  created_at?: string
-  updated_at?: string
 }
 
 function StatusBadge({ estado }: { estado: string }) {
@@ -260,25 +264,27 @@ export default function ConciliacionPage() {
               <p className="text-[10px] font-mono text-gray-400">Job ID: {jobId}</p>
             )}
 
-            {jobStatus.progress != null && (
-              <div>
-                <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-emerald-500 transition-all"
-                    style={{ width: `${Math.min(jobStatus.progress, 100)}%` }}
-                  />
-                </div>
-                <p className="text-[11px] text-gray-400 mt-1">{jobStatus.progress}%</p>
+            {/* Resumen de resultados */}
+            {jobStatus.total != null && (
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {[
+                  { label: 'Total', value: jobStatus.total, color: 'text-gray-700' },
+                  { label: 'Causados', value: jobStatus.causados ?? 0, color: 'text-emerald-700' },
+                  { label: 'Backlog', value: jobStatus.backlog ?? 0, color: 'text-amber-700' },
+                  { label: 'Duplicados', value: jobStatus.duplicados ?? 0, color: 'text-gray-500' },
+                ].map(({ label, value, color }) => (
+                  <div key={label} className="bg-gray-50 rounded-md px-3 py-2 text-center">
+                    <p className="text-[10px] text-gray-400 uppercase tracking-wider">{label}</p>
+                    <p className={`text-lg font-bold ${color}`}>{value}</p>
+                  </div>
+                ))}
               </div>
             )}
 
-            {jobStatus.resultado && (
-              <div className="bg-gray-50 rounded-md p-3">
-                <p className="text-[10px] text-gray-400 uppercase tracking-wider mb-2">Resultado</p>
-                <pre className="text-xs text-gray-700 whitespace-pre-wrap break-all">
-                  {JSON.stringify(jobStatus.resultado, null, 2)}
-                </pre>
-              </div>
+            {jobStatus.errores != null && jobStatus.errores > 0 && (
+              <p className="text-xs text-red-600 bg-red-50 rounded-md px-3 py-2">
+                {jobStatus.errores} movimiento(s) con error al causar → enviados al backlog
+              </p>
             )}
 
             {jobStatus.error && (
