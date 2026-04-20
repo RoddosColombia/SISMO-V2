@@ -1273,6 +1273,238 @@ async def get_job_status(
     return {"success": True, **job}
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# HOTFIX — reclasificar-errores
+# Reclasifica los 44 movimientos en estado="error" por cuenta deshabilitada.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Cuentas que Alegra tiene deshabilitadas para movimientos
+_CUENTAS_DESHABILITADAS = {"5535", "5499", "5310"}
+
+# Fallback seguro para gastos (Gastos Varios — ID verificado)
+_CUENTA_FALLBACK_GASTO = "5494"
+
+
+def _reclasificar_cuentas(mov: dict) -> dict | None:
+    """
+    Devuelve {"cuenta_debito": str, "cuenta_credito": str} con cuentas corregidas,
+    o None si el movimiento debe ir a manual_pendiente (asiento mal formado).
+    """
+    cs = mov.get("clasificacion_sugerida") or {}
+    cuenta_d = str(cs.get("cuenta_debito", "")).strip()
+    cuenta_c = str(cs.get("cuenta_credito", "")).strip()
+
+    # GRUPO A: débito == crédito → asiento mal formado, no intentar
+    if cuenta_d and cuenta_c and cuenta_d == cuenta_c:
+        return None
+
+    banco = mov.get("banco", "bancolombia")
+    banco_id = _banco_id(banco)
+    tipo = mov.get("tipo", "debito")  # "debito" = money out, "credito" = money in
+
+    # GRUPO B/C: reclasificar con fallback
+    # Si el débito es una cuenta deshabilitada o inusual, usar 5494 (Gastos Varios)
+    if tipo == "credito":
+        # Money IN: DB=banco (cobro real), CR=fallback (ingreso misceláneo)
+        return {"cuenta_debito": banco_id, "cuenta_credito": _CUENTA_FALLBACK_GASTO}
+    else:
+        # Money OUT: DB=fallback (gasto varios), CR=banco (salida de caja)
+        return {"cuenta_debito": _CUENTA_FALLBACK_GASTO, "cuenta_credito": banco_id}
+
+
+async def _reclasificar_uno(mov: dict, alegra_client, db) -> dict:
+    """
+    Intenta reclasificar y causar un movimiento con error.
+    Retorna {"resultado": "causado"|"manual_pendiente"|"error", "detalle": str}.
+    """
+    from core.events import publish_event
+
+    now = datetime.now(timezone.utc)
+    monto = abs(float(mov.get("monto", 0)))
+    fecha = mov.get("fecha", now.strftime("%Y-%m-%d"))
+
+    nuevas_cuentas = _reclasificar_cuentas(mov)
+
+    # GRUPO A — asiento mal formado
+    if nuevas_cuentas is None:
+        await db.backlog_movimientos.update_one(
+            {"_id": mov["_id"]},
+            {"$set": {
+                "estado":          "manual_pendiente",
+                "razon_pendiente": "Asiento mal formado: débito igual a crédito — requiere revisión manual",
+                "updated_at":      now,
+            }},
+        )
+        return {"resultado": "manual_pendiente", "detalle": "débito == crédito"}
+
+    # GRUPO B/C — intentar causar con cuentas reclasificadas
+    concepto = f"[RECLASIFICADO] {mov.get('descripcion', '')[:60]}"
+    payload = {
+        "date":         fecha,
+        "observations": concepto,
+        "entries": [
+            {"id": nuevas_cuentas["cuenta_debito"],  "debit": monto, "credit": 0},
+            {"id": nuevas_cuentas["cuenta_credito"], "debit": 0,     "credit": monto},
+        ],
+    }
+
+    try:
+        result = await alegra_client.request_with_verify("journals", "POST", payload=payload)
+        journal_id = result["_alegra_id"]
+
+        await db.backlog_movimientos.update_one(
+            {"_id": mov["_id"]},
+            {"$set": {
+                "estado":            "causado",
+                "alegra_journal_id": journal_id,
+                "fecha_causacion":   now,
+                "razon_pendiente":   "",
+                "updated_at":        now,
+            }},
+        )
+        await publish_event(
+            db=db,
+            event_type="gasto.causado",
+            source="reclasificar_errores",
+            datos={
+                "alegra_id":          journal_id,
+                "backlog_id":         str(mov["_id"]),
+                "monto":              monto,
+                "cuenta_debito":      nuevas_cuentas["cuenta_debito"],
+                "cuenta_credito":     nuevas_cuentas["cuenta_credito"],
+            },
+            alegra_id=journal_id,
+            accion_ejecutada=f"reclasificar_errores — Journal #{journal_id}: {concepto}",
+        )
+        return {"resultado": "causado", "detalle": f"journal_id={journal_id}"}
+
+    except Exception as exc:
+        err_msg = str(exc)[:300]
+        await db.backlog_movimientos.update_one(
+            {"_id": mov["_id"]},
+            {"$set": {
+                "razon_pendiente": f"Reclasificado pero falló: {err_msg}",
+                "updated_at":      now,
+            },
+             "$inc": {"intentos": 1}},
+        )
+        return {"resultado": "error", "detalle": err_msg}
+
+
+async def _run_reclasificar_background(job_id: str, db) -> None:
+    """Background task: reclasifica todos los movimientos con estado='error'."""
+    from services.alegra.client import AlegraClient
+    from core.events import publish_event
+
+    alegra = AlegraClient(db=db)
+    movimientos = await db.backlog_movimientos.find(
+        {"estado": "error"}
+    ).to_list(length=5000)
+
+    total = len(movimientos)
+    n_causados = 0
+    n_manual   = 0
+    n_error    = 0
+
+    for i, mov in enumerate(movimientos):
+        res = await _reclasificar_uno(mov, alegra, db)
+        if res["resultado"] == "causado":
+            n_causados += 1
+        elif res["resultado"] == "manual_pendiente":
+            n_manual += 1
+        else:
+            n_error += 1
+
+        # Update job every 5 docs
+        if i % 5 == 0 or i == total - 1:
+            await db.conciliacion_jobs.update_one(
+                {"job_id": job_id},
+                {"$set": {
+                    "procesados":       i + 1,
+                    "exitosos":         n_causados,
+                    "manual_pendiente": n_manual,
+                    "errores":          n_error,
+                }},
+            )
+
+    await db.conciliacion_jobs.update_one(
+        {"job_id": job_id},
+        {"$set": {
+            "estado":           "completado",
+            "procesados":       total,
+            "exitosos":         n_causados,
+            "manual_pendiente": n_manual,
+            "errores":          n_error,
+        }},
+    )
+
+    # Evento al bus
+    await publish_event(
+        db=db,
+        event_type="backlog.errores.reclasificados",
+        source="backlog_service",
+        datos={
+            "total":            total,
+            "causados":         n_causados,
+            "manual_pendiente": n_manual,
+            "siguen_error":     n_error,
+        },
+        alegra_id=None,
+        accion_ejecutada=f"reclasificar_errores — {n_causados} causados, {n_manual} manual, {n_error} siguen error",
+    )
+
+
+@router.post("/reclasificar-errores", status_code=202)
+async def reclasificar_errores(
+    background_tasks: BackgroundTasks,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    POST /api/backlog/reclasificar-errores
+
+    Reclasifica los movimientos con estado='error' (cuenta contable deshabilitada).
+
+    Grupos:
+      A: débito == crédito → manual_pendiente (asiento mal formado)
+      B: cuenta_debito in [5535, 5499] → reclasificar con 5494 e intentar Alegra
+      C: otros errores → mismo tratamiento que B con fallback 5494
+
+    Retorna job_id inmediatamente (HTTP 202). Procesa en background.
+    Progreso disponible en GET /api/backlog/job/{job_id}.
+    """
+    total = await db.backlog_movimientos.count_documents({"estado": "error"})
+
+    if total == 0:
+        return {
+            "success": True,
+            "message": "No hay movimientos en estado='error'",
+            "total": 0,
+        }
+
+    job_id = str(uuid.uuid4())[:8]
+    await db.conciliacion_jobs.insert_one({
+        "job_id":           job_id,
+        "tipo":             "reclasificar_errores",
+        "total":            total,
+        "procesados":       0,
+        "exitosos":         0,
+        "manual_pendiente": 0,
+        "errores":          0,
+        "estado":           "procesando",
+        "creado_en":        datetime.now(timezone.utc),
+    })
+
+    background_tasks.add_task(_run_reclasificar_background, job_id, db)
+
+    return {
+        "success":   True,
+        "job_id":    job_id,
+        "total":     total,
+        "message":   f"Reclasificando {total} movimientos en background. Consulte GET /api/backlog/job/{job_id}",
+    }
+
+
 # --- Transfer between accounts (must be BEFORE /{backlog_id}/causar) ---
 
 

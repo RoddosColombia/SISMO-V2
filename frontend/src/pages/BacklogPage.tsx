@@ -174,8 +174,8 @@ export default function BacklogPage() {
         </div>
       </div>
 
-      {/* Batch causar button */}
-      <div className="px-6 pb-4">
+      {/* Batch causar button — only visible on Pendientes tab */}
+      {estado === 'pendiente' && <div className="px-6 pb-4">
         {batchJobId && batchStatus ? (
           <div className="bg-surface-container-lowest shadow-ambient-1 rounded-lg p-4">
             <div className="flex justify-between text-sm mb-2">
@@ -200,7 +200,7 @@ export default function BacklogPage() {
             Causar Automaticos ({elegibles} elegibles)
           </button>
         )}
-      </div>
+      </div>}
 
       {/* Estado filter */}
       <div className="px-6 pb-2 flex gap-2">
