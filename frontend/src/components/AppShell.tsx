@@ -103,7 +103,7 @@ const NAV_AREAS: NavArea[] = [
   },
 ]
 
-const INITIAL_EXPANDED = new Set(['contabilidad'])
+const INITIAL_EXPANDED = new Set(['contabilidad', 'cartera'])
 
 // ═══════════════════════════════════════════
 // Component
