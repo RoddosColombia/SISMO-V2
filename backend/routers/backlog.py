@@ -326,6 +326,262 @@ async def causar_por_regla(
     }
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# BUILD 2 — auto-match-contrapartida
+# ═══════════════════════════════════════════════════════════════════════════
+
+from datetime import timedelta
+
+
+def _fecha_range(fecha_str: str, ventana: int) -> tuple[str, str]:
+    """Return (fecha_min, fecha_max) as 'YYYY-MM-DD' strings."""
+    d = datetime.strptime(fecha_str, "%Y-%m-%d").date()
+    return (
+        (d - timedelta(days=ventana)).strftime("%Y-%m-%d"),
+        (d + timedelta(days=ventana)).strftime("%Y-%m-%d"),
+    )
+
+
+async def _causar_transferencia_interna(
+    mov_debit: dict,
+    mov_credit: dict,
+    cuenta_db: str,
+    cuenta_cr: str,
+    observacion: str,
+    alegra_client,
+    db,
+) -> dict:
+    """
+    Create one Alegra journal for an internal transfer and mark BOTH movements causado.
+    Returns {"ok": bool, "journal_id": str|None, "error": str|None}.
+    """
+    from core.events import publish_event
+
+    monto = abs(float(mov_debit.get("monto", mov_credit.get("monto", 0))))
+    now = datetime.now(timezone.utc)
+
+    payload = {
+        "date":         mov_debit.get("fecha") or mov_credit.get("fecha"),
+        "observations": observacion,
+        "entries": [
+            {"id": cuenta_db, "debit": monto, "credit": 0},
+            {"id": cuenta_cr, "debit": 0,     "credit": monto},
+        ],
+    }
+
+    try:
+        result = await alegra_client.request_with_verify("journals", "POST", payload=payload)
+        journal_id = result["_alegra_id"]
+
+        # Mark both sides causado with the same journal id
+        for mov in (mov_debit, mov_credit):
+            await db.backlog_movimientos.update_one(
+                {"_id": mov["_id"]},
+                {"$set": {
+                    "estado":            "causado",
+                    "alegra_journal_id": journal_id,
+                    "fecha_causacion":   now,
+                    "updated_at":        now,
+                }},
+            )
+
+        await publish_event(
+            db=db,
+            event_type="transferencia_interna.causada",
+            source="auto_match_contrapartida",
+            datos={
+                "journal_id":   journal_id,
+                "mov_debito":   str(mov_debit["_id"]),
+                "mov_credito":  str(mov_credit["_id"]),
+                "cuenta_db":    cuenta_db,
+                "cuenta_cr":    cuenta_cr,
+                "monto":        monto,
+            },
+            alegra_id=journal_id,
+            accion_ejecutada=f"Transferencia interna #{journal_id}: {observacion}",
+        )
+        return {"ok": True, "journal_id": journal_id, "error": None}
+
+    except Exception as exc:
+        return {"ok": False, "journal_id": None, "error": str(exc)[:300]}
+
+
+class AutoMatchRequest(BaseModel):
+    grupo: str
+    ventana_dias: int = 3
+
+
+@router.post("/auto-match-contrapartida")
+async def auto_match_contrapartida(
+    request: AutoMatchRequest,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    POST /api/backlog/auto-match-contrapartida
+
+    Matches internal bank transfers (both sides in backlog) and creates
+    a single Alegra journal for each matched pair.
+
+    Grupos:
+    - recarga_bancolombia_nequi: Nequi RECARGA BANCOLOMBIA creditos ↔ Bancolombia debitos
+    - roddos_autotransf: Nequi RODDOS SAS debitos ↔ Bancolombia/BBVA/Davivienda/Global66 creditos
+    """
+    from services.alegra.client import AlegraClient
+
+    grupo = request.grupo
+    ventana = request.ventana_dias
+    alegra = AlegraClient(db=db)
+
+    GRUPOS_VALIDOS = ("recarga_bancolombia_nequi", "roddos_autotransf")
+    if grupo not in GRUPOS_VALIDOS:
+        raise HTTPException(400, f"Grupo desconocido: '{grupo}'. Opciones: {list(GRUPOS_VALIDOS)}")
+
+    causados = 0
+    ambiguos = 0
+    sin_match_list: list[dict] = []
+
+    # ── GRUPO 1: Bancolombia → Nequi recargas ────────────────────────────
+    if grupo == "recarga_bancolombia_nequi":
+        recargas = await db.backlog_movimientos.find({
+            "banco":        {"$regex": "nequi", "$options": "i"},
+            "descripcion":  {"$regex": "RECARGA.*BANCOLOMBIA|BANCOLOMBIA.*RECARGA|Recarga desde Bancolombia",
+                             "$options": "i"},
+            "estado":       "pendiente",
+        }).to_list(length=500)
+
+        total_analizado = len(recargas)
+
+        for rec in recargas:
+            monto = round(abs(float(rec.get("monto", 0))), 2)
+            fecha_min, fecha_max = _fecha_range(rec["fecha"], ventana)
+
+            counterparts = await db.backlog_movimientos.find({
+                "banco":   {"$regex": "bancolombia", "$options": "i"},
+                "tipo":    "debito",
+                "estado":  "pendiente",
+                "fecha":   {"$gte": fecha_min, "$lte": fecha_max},
+                "monto":   monto,
+            }).to_list(length=10)
+
+            if len(counterparts) == 1:
+                cp = counterparts[0]
+                obs = f"Transferencia interna Bancolombia->Nequi {rec['fecha']}"
+                res = await _causar_transferencia_interna(
+                    mov_debit=cp,   # Bancolombia debito
+                    mov_credit=rec, # Nequi credito
+                    cuenta_db="5315",  # Bancolombia (source, where money leaves)
+                    cuenta_cr="5314",  # Nequi (destination, where money arrives)
+                    observacion=obs,
+                    alegra_client=alegra,
+                    db=db,
+                )
+                if res["ok"]:
+                    causados += 1
+                else:
+                    sin_match_list.append({
+                        "mov_id": str(rec["_id"]),
+                        "fecha":  rec["fecha"],
+                        "monto":  monto,
+                        "motivo": f"Journal error: {res['error'][:100]}",
+                    })
+            elif len(counterparts) == 0:
+                sin_match_list.append({
+                    "mov_id": str(rec["_id"]),
+                    "fecha":  rec["fecha"],
+                    "monto":  monto,
+                    "motivo": "Sin contrapartida en Bancolombia con mismo monto y fecha",
+                })
+            else:
+                ambiguos += 1
+                sin_match_list.append({
+                    "mov_id": str(rec["_id"]),
+                    "fecha":  rec["fecha"],
+                    "monto":  monto,
+                    "motivo": f"Ambiguo: {len(counterparts)} contrapartidas posibles",
+                })
+
+    # ── GRUPO 2: Nequi → otro banco (RODDOS autotransf) ─────────────────
+    elif grupo == "roddos_autotransf":
+        debitos = await db.backlog_movimientos.find({
+            "banco":       {"$regex": "nequi", "$options": "i"},
+            "descripcion": {"$regex": "RODDOS SAS", "$options": "i"},
+            "tipo":        "debito",
+            "estado":      "pendiente",
+        }).to_list(length=500)
+
+        total_analizado = len(debitos)
+
+        BANCOS_DESTINO = {
+            "bancolombia": "5315",
+            "bbva":        "5318",
+            "davivienda":  "5322",
+            "global66":    "5536",
+        }
+
+        for deb in debitos:
+            monto = round(abs(float(deb.get("monto", 0))), 2)
+            fecha_min, fecha_max = _fecha_range(deb["fecha"], ventana)
+
+            counterparts = await db.backlog_movimientos.find({
+                "banco":  {"$regex": "bancolombia|bbva|davivienda|global66", "$options": "i"},
+                "tipo":   "credito",
+                "estado": "pendiente",
+                "fecha":  {"$gte": fecha_min, "$lte": fecha_max},
+                "monto":  monto,
+            }).to_list(length=10)
+
+            if len(counterparts) == 1:
+                cp = counterparts[0]
+                banco_dest = cp.get("banco", "").lower()
+                cuenta_dest = BANCOS_DESTINO.get(banco_dest, "5315")
+                obs = f"Transferencia interna Nequi->{cp.get('banco','?')} {deb['fecha']}"
+                res = await _causar_transferencia_interna(
+                    mov_debit=deb,   # Nequi debito
+                    mov_credit=cp,   # destino credito
+                    cuenta_db=cuenta_dest,  # banco destino (where money arrives)
+                    cuenta_cr="5314",       # Nequi (source, where money leaves)
+                    observacion=obs,
+                    alegra_client=alegra,
+                    db=db,
+                )
+                if res["ok"]:
+                    causados += 1
+                else:
+                    sin_match_list.append({
+                        "mov_id": str(deb["_id"]),
+                        "fecha":  deb["fecha"],
+                        "monto":  monto,
+                        "motivo": f"Journal error: {res['error'][:100]}",
+                    })
+            elif len(counterparts) == 0:
+                sin_match_list.append({
+                    "mov_id": str(deb["_id"]),
+                    "fecha":  deb["fecha"],
+                    "monto":  monto,
+                    "motivo": "Sin contrapartida en otros bancos con mismo monto y fecha",
+                })
+            else:
+                ambiguos += 1
+                sin_match_list.append({
+                    "mov_id": str(deb["_id"]),
+                    "fecha":  deb["fecha"],
+                    "monto":  monto,
+                    "motivo": f"Ambiguo: {len(counterparts)} contrapartidas posibles",
+                })
+
+    return {
+        "success":         True,
+        "grupo":           grupo,
+        "ventana_dias":    ventana,
+        "total_analizado": total_analizado,
+        "causados":        causados,
+        "ambiguos":        ambiguos,
+        "sin_match":       len(sin_match_list) - ambiguos,
+        "detalle_sin_match": sin_match_list,
+    }
+
+
 @router.get("")
 async def list_backlog(
     banco: str | None = None,
