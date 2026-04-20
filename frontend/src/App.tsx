@@ -14,6 +14,7 @@ import ClientDetailPage from '@/pages/ClientDetailPage'
 import PlanSeparePage from '@/pages/PlanSeparePage'
 import ConciliacionPage from '@/pages/ConciliacionPage'
 import HomePage from '@/pages/HomePage'
+import CarteraLegacyPage from '@/pages/CarteraLegacyPage'
 
 function App() {
   return (
@@ -39,6 +40,7 @@ function App() {
             <Route path="/clientes/:cedula" element={<ClientDetailPage />} />
             <Route path="/plan-separe" element={<PlanSeparePage />} />
             <Route path="/conciliacion" element={<ConciliacionPage />} />
+            <Route path="/cartera-legacy" element={<CarteraLegacyPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

@@ -17,6 +17,7 @@ from routers.crm import router as crm_router
 from routers.loanbook import router as loanbook_router
 from routers.plan_separe import router as plan_separe_router
 from routers.dashboard import router as dashboard_router
+from routers.cartera_legacy import router as cartera_legacy_router
 
 app = FastAPI(title="SISMO V2", version="0.1.0", lifespan=lifespan)
 
@@ -43,6 +44,7 @@ app.include_router(crm_router)
 app.include_router(loanbook_router)
 app.include_router(plan_separe_router)
 app.include_router(dashboard_router)
+app.include_router(cartera_legacy_router)
 
 
 @app.get("/health")
