@@ -15,7 +15,8 @@ import PlanSeparePage from '@/pages/PlanSeparePage'
 import ConciliacionPage from '@/pages/ConciliacionPage'
 import HomePage from '@/pages/HomePage'
 import CarteraLegacyPage from '@/pages/CarteraLegacyPage'
-import CierreQ1Page from '@/pages/CierreQ1Page'
+import CierresPage from '@/pages/CierresPage'
+import CierreDetallePage from '@/pages/CierreDetallePage'
 
 function App() {
   return (
@@ -42,7 +43,9 @@ function App() {
             <Route path="/plan-separe" element={<PlanSeparePage />} />
             <Route path="/conciliacion" element={<ConciliacionPage />} />
             <Route path="/cartera-legacy" element={<CarteraLegacyPage />} />
-            <Route path="/cierre-q1" element={<CierreQ1Page />} />
+            <Route path="/cierres" element={<CierresPage />} />
+            <Route path="/cierres/:periodo_id" element={<CierreDetallePage />} />
+            <Route path="/cierre-q1" element={<Navigate to="/cierres/2026-Q1" replace />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

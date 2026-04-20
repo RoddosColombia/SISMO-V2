@@ -54,6 +54,7 @@ const NAV_AREAS: NavArea[] = [
       { to: '/chat', label: 'Agente Contador' },
       { to: '/conciliacion', label: 'Subir extracto' },
       { to: '/backlog', label: 'Backlog movimientos' },
+      { to: '/cierres', label: 'Cierres Contables' },
       { to: '/inventario', label: 'Inventario' },
     ],
   },
