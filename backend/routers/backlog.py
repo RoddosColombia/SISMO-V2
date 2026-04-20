@@ -582,6 +582,512 @@ async def auto_match_contrapartida(
     }
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# BUILD 3 — matchear-cartera (fuzzy V2 + legacy)
+# ═══════════════════════════════════════════════════════════════════════════
+
+import os
+
+CUENTA_CXC_CARTERA_V2 = "5327"  # Creditos Directos Roddos (CXC)
+
+# Regex patterns to extract remittent name from backlog description
+_NAME_PATTERNS = [
+    re.compile(r"TRANSFIYA DE\s+(.+?)(?:\s+CC\s|\s*$)", re.IGNORECASE),
+    re.compile(r"RECIBI POR BRE-B DE:?\s*(.+?)(?:\s+\d|\s*$)", re.IGNORECASE),
+    re.compile(r"^DE\s+(.+?)(?:\s+CC\s|\s*$)", re.IGNORECASE),
+    re.compile(r"CONSIG\s+(.+?)(?:\s+\d|\s*$)", re.IGNORECASE),
+]
+
+
+def _extract_nombre(descripcion: str) -> str | None:
+    """Extract the remittent name from a backlog description. Returns None if no pattern matches."""
+    for pat in _NAME_PATTERNS:
+        m = pat.search(descripcion)
+        if m:
+            return m.group(1).strip().upper()
+    return None
+
+
+def _fuzzy_match(nombre: str, candidatos: list[tuple[str, str]], umbral: int) -> tuple[str | None, str]:
+    """
+    Fuzzy-match nombre against list of (id, nombre_normalizado) pairs.
+
+    Returns (matched_id, status) where status in:
+      'unico'    — single candidate ≥ umbral and gap > 5 vs runner-up
+      'ambiguo'  — top 2 within 5 points of each other
+      'sin_match' — best score < umbral
+    """
+    from rapidfuzz import fuzz, process
+
+    if not candidatos:
+        return None, "sin_match"
+
+    nombres_map = {norm: id_ for id_, norm in candidatos}
+    results = process.extract(
+        nombre,
+        list(nombres_map.keys()),
+        scorer=fuzz.token_set_ratio,
+        limit=3,
+    )
+
+    if not results or results[0][1] < umbral:
+        return None, "sin_match"
+
+    best_score = results[0][1]
+    best_id = nombres_map[results[0][0]]
+
+    # Check for ambiguity: runner-up within 5 points
+    if len(results) > 1 and results[1][1] >= (best_score - 5):
+        return None, "ambiguo"
+
+    return best_id, "unico"
+
+
+async def _causar_match_v2(
+    mov: dict,
+    lb: dict,
+    monto: float,
+    alegra_client,
+    db,
+    fecha_pago_str: str,
+) -> dict:
+    """Create Alegra journal for V2 cartera match and apply waterfall to cuotas."""
+    from core.events import publish_event
+    from core.loanbook_model import aplicar_waterfall, calcular_mora, calcular_dpd, estado_from_dpd, MORA_TASA_DIARIA
+
+    # Look up Alegra contact for this client
+    cedula = lb.get("cliente", {}).get("cedula", "")
+    contact_id = await _lookup_alegra_contact(alegra_client, cedula) if cedula else None
+
+    banco_id = _banco_id(mov.get("banco", "bancolombia"))
+    loanbook_id = lb.get("loanbook_id", "")
+    nombre = lb.get("cliente", {}).get("nombre", "")
+    now = datetime.now(timezone.utc)
+    fecha_pago = datetime.strptime(fecha_pago_str, "%Y-%m-%d").date()
+
+    # ── Waterfall (same logic as registrar_pago_manual) ───────────────────
+    cuotas = lb.get("cuotas", [])
+    anzi_pct = lb.get("anzi_pct", 0.0) or 0.0
+
+    mora_pendiente = 0
+    for c in cuotas:
+        if c.get("estado") == "pagada" or not c.get("fecha"):
+            continue
+        from datetime import date as _date
+        fc = _date.fromisoformat(c["fecha"])
+        mora = calcular_mora(fc, fecha_pago, MORA_TASA_DIARIA)
+        c["mora_acumulada"] = mora
+        mora_pendiente += mora
+
+    vencidas_total = sum(
+        c["monto"] for c in cuotas
+        if c.get("estado") != "pagada" and c.get("fecha")
+        and _date.fromisoformat(c["fecha"]) < fecha_pago
+    )
+    corriente_monto = 0
+    for c in cuotas:
+        if c.get("estado") == "pagada":
+            continue
+        if c.get("fecha") and _date.fromisoformat(c["fecha"]) >= fecha_pago:
+            corriente_monto = c["monto"]
+            break
+        if not c.get("fecha"):
+            corriente_monto = c["monto"]
+            break
+
+    saldo_capital = lb.get("saldo_capital", 0) or lb.get("saldo_pendiente", 0) or 0
+
+    alloc = aplicar_waterfall(
+        monto_pago=monto,
+        anzi_pct=anzi_pct,
+        mora_pendiente=mora_pendiente,
+        cuotas_vencidas_total=vencidas_total,
+        cuota_corriente=corriente_monto,
+        saldo_capital=saldo_capital,
+    )
+
+    # Mark cuotas paid
+    rem_venc = alloc["vencidas"]
+    rem_corr = alloc["corriente"]
+    cuota_num = None
+    for c in cuotas:
+        if c.get("estado") == "pagada":
+            continue
+        if c.get("fecha"):
+            fc = _date.fromisoformat(c["fecha"])
+            if fc < fecha_pago and rem_venc >= c["monto"]:
+                c["estado"] = "pagada"
+                c["fecha_pago"] = fecha_pago_str
+                c["mora_acumulada"] = 0
+                rem_venc -= c["monto"]
+                cuota_num = cuota_num or c.get("numero")
+                continue
+            if fc >= fecha_pago and rem_corr >= c["monto"]:
+                c["estado"] = "pagada"
+                c["fecha_pago"] = fecha_pago_str
+                c["mora_acumulada"] = 0
+                rem_corr -= c["monto"]
+                cuota_num = cuota_num or c.get("numero")
+                break
+        else:
+            if rem_corr >= c["monto"]:
+                c["estado"] = "pagada"
+                c["fecha_pago"] = fecha_pago_str
+                rem_corr -= c["monto"]
+                cuota_num = cuota_num or c.get("numero")
+                break
+
+    new_saldo = max(saldo_capital - alloc["corriente"] - alloc["vencidas"] - alloc["capital"], 0)
+    total_pagado = (lb.get("total_pagado", 0) or 0) + monto
+    cuotas_pagadas = sum(1 for c in cuotas if c.get("estado") == "pagada")
+    dpd = calcular_dpd(cuotas, fecha_pago)
+    nuevo_estado = "saldado" if new_saldo == 0 and cuotas_pagadas == len(cuotas) else estado_from_dpd(dpd)
+
+    # ── Alegra journal ────────────────────────────────────────────────────
+    cxc_entry: dict = {"id": CUENTA_CXC_CARTERA_V2, "debit": 0, "credit": monto}
+    if contact_id:
+        cxc_entry["thirdParty"] = {"id": contact_id}
+
+    obs = f"Pago cuota {cuota_num or 'N/A'} - {nombre} - {loanbook_id}"
+    payload = {
+        "date":         mov.get("fecha", fecha_pago_str),
+        "observations": obs,
+        "entries": [
+            {"id": banco_id, "debit": monto, "credit": 0},
+            cxc_entry,
+        ],
+    }
+
+    try:
+        result = await alegra_client.request_with_verify("journals", "POST", payload=payload)
+        journal_id = result["_alegra_id"]
+
+        # Update loanbook
+        await db.loanbook.update_one(
+            {"loanbook_id": loanbook_id},
+            {"$set": {
+                "cuotas":        cuotas,
+                "saldo_capital": new_saldo,
+                "saldo_pendiente": new_saldo,
+                "total_pagado":  total_pagado,
+                "cuotas_pagadas": cuotas_pagadas,
+                "estado":        nuevo_estado,
+                "updated_at":    now.isoformat(),
+            }},
+        )
+
+        # Mark backlog causado
+        await db.backlog_movimientos.update_one(
+            {"_id": mov["_id"]},
+            {"$set": {
+                "estado":            "causado",
+                "alegra_journal_id": journal_id,
+                "fecha_causacion":   now,
+                "updated_at":        now,
+            }},
+        )
+
+        await publish_event(
+            db=db,
+            event_type="pago.cuota.registrado",
+            source="matchear_cartera",
+            datos={"loanbook_id": loanbook_id, "monto": monto, "desglose": alloc, "journal_id": journal_id},
+            alegra_id=journal_id,
+            accion_ejecutada=f"matchear_cartera V2 — {obs}",
+        )
+        return {"ok": True, "journal_id": journal_id, "monto": monto}
+
+    except Exception as exc:
+        await db.backlog_movimientos.update_one(
+            {"_id": mov["_id"]},
+            {"$set": {"razon_pendiente": str(exc)[:300]}, "$inc": {"intentos": 1}},
+        )
+        return {"ok": False, "journal_id": None, "error": str(exc)[:300]}
+
+
+async def _causar_match_legacy(
+    mov: dict,
+    credito: dict,
+    monto: float,
+    alegra_client,
+    db,
+    cartera_acct_id: str,
+) -> dict:
+    """Create Alegra journal for legacy cartera match and update saldo."""
+    from core.events import publish_event
+
+    banco_id = _banco_id(mov.get("banco", "bancolombia"))
+    codigo_sismo = credito.get("codigo_sismo", "")
+    nombre = credito.get("nombre_completo", "")
+    contact_id = credito.get("alegra_contact_id")
+    now = datetime.now(timezone.utc)
+
+    cxc_entry: dict = {"id": cartera_acct_id, "debit": 0, "credit": monto}
+    if contact_id:
+        cxc_entry["thirdParty"] = {"id": str(contact_id)}
+
+    obs = f"Pago cartera legacy - {nombre[:40]} - {codigo_sismo}"
+    payload = {
+        "date":         mov.get("fecha", ""),
+        "observations": obs,
+        "entries": [
+            {"id": banco_id, "debit": monto, "credit": 0},
+            cxc_entry,
+        ],
+    }
+
+    try:
+        result = await alegra_client.request_with_verify("journals", "POST", payload=payload)
+        journal_id = result["_alegra_id"]
+
+        # Update legacy saldo
+        saldo_actual = credito.get("saldo_actual", 0) or 0
+        nuevo_saldo = max(float(saldo_actual) - monto, 0)
+        nuevo_estado = "saldado" if nuevo_saldo <= 0 else credito.get("estado", "activo")
+
+        pago_entry = {
+            "fecha":              mov.get("fecha", ""),
+            "monto":              monto,
+            "alegra_journal_id":  journal_id,
+            "backlog_movimiento_id": str(mov["_id"]),
+        }
+
+        await db.loanbook_legacy.update_one(
+            {"codigo_sismo": codigo_sismo},
+            {
+                "$set": {
+                    "saldo_actual": nuevo_saldo,
+                    "estado":       nuevo_estado,
+                    "updated_at":   now,
+                },
+                "$push": {"pagos_recibidos": pago_entry},
+            },
+        )
+
+        # Mark backlog causado
+        await db.backlog_movimientos.update_one(
+            {"_id": mov["_id"]},
+            {"$set": {
+                "estado":            "causado",
+                "alegra_journal_id": journal_id,
+                "fecha_causacion":   now,
+                "updated_at":        now,
+            }},
+        )
+
+        await publish_event(
+            db=db,
+            event_type="pago.cuota.registrado",
+            source="matchear_cartera_legacy",
+            datos={"codigo_sismo": codigo_sismo, "monto": monto, "journal_id": journal_id, "nuevo_saldo": nuevo_saldo},
+            alegra_id=journal_id,
+            accion_ejecutada=f"matchear_cartera legacy — {obs}",
+        )
+        return {"ok": True, "journal_id": journal_id, "monto": monto}
+
+    except Exception as exc:
+        await db.backlog_movimientos.update_one(
+            {"_id": mov["_id"]},
+            {"$set": {"razon_pendiente": str(exc)[:300]}, "$inc": {"intentos": 1}},
+        )
+        return {"ok": False, "journal_id": None, "error": str(exc)[:300]}
+
+
+class MatchearCarteraRequest(BaseModel):
+    ids: list[str] | None = None
+    umbral_fuzzy: int = 85
+
+
+@router.post("/matchear-cartera")
+async def matchear_cartera(
+    request: MatchearCarteraRequest,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    POST /api/backlog/matchear-cartera
+
+    Fuzzy-matches incoming payments in backlog against:
+    1. Loanbook V2 (primary)
+    2. Loanbook legacy (secondary)
+
+    Creates Alegra journals and applies waterfall for V2, reduces saldo for legacy.
+    """
+    # ── 0. Prerequisite: env var ──────────────────────────────────────────
+    cartera_legacy_acct = os.environ.get("CARTERA_LEGACY_ACCOUNT_ID")
+    if not cartera_legacy_acct:
+        raise HTTPException(
+            status_code=428,
+            detail="Variable CARTERA_LEGACY_ACCOUNT_ID no configurada en el servidor. "
+                   "Agréguala en Render env vars antes de continuar.",
+        )
+
+    from services.alegra.client import AlegraClient
+    alegra = AlegraClient(db=db)
+    umbral = request.umbral_fuzzy
+
+    # ── 1. Candidatos ─────────────────────────────────────────────────────
+    candidato_filter: dict = {
+        "tipo":   "credito",
+        "estado": "pendiente",
+        "$or": [
+            {"descripcion": {"$regex": "TRANSFIYA DE",       "$options": "i"}},
+            {"descripcion": {"$regex": "RECIBI POR BRE-B DE","$options": "i"}},
+            {"descripcion": {"$regex": r"^DE ",              "$options": "i"}},
+            {"descripcion": {"$regex": r"^CONSIG",           "$options": "i"}},
+        ],
+    }
+    if request.ids:
+        from bson import ObjectId
+        candidato_filter["_id"] = {"$in": [ObjectId(i) for i in request.ids]}
+
+    movs = await db.backlog_movimientos.find(candidato_filter).to_list(length=2000)
+
+    # ── 2. Load name pools ────────────────────────────────────────────────
+    lb_v2_docs = await db.loanbook.find(
+        {"estado": {"$in": ["activo", "mora", "en_riesgo", "al_dia"]}},
+        {"loanbook_id": 1, "cliente": 1, "cuotas": 1, "saldo_capital": 1,
+         "saldo_pendiente": 1, "anzi_pct": 1, "total_pagado": 1, "cuotas_pagadas": 1},
+    ).to_list(length=1000)
+
+    # (loanbook_id, normalised_name) pairs
+    v2_pool: list[tuple[str, str]] = [
+        (lb["loanbook_id"], lb.get("cliente", {}).get("nombre", "").upper())
+        for lb in lb_v2_docs
+        if lb.get("cliente", {}).get("nombre")
+    ]
+    v2_map = {lb["loanbook_id"]: lb for lb in lb_v2_docs}
+
+    legacy_docs = await db.loanbook_legacy.find(
+        {"estado": "activo"},
+        {"codigo_sismo": 1, "nombre_completo": 1, "alegra_contact_id": 1,
+         "saldo_actual": 1, "estado": 1},
+    ).to_list(length=1000)
+
+    legacy_pool: list[tuple[str, str]] = [
+        (leg["codigo_sismo"], leg.get("nombre_completo", "").upper())
+        for leg in legacy_docs
+        if leg.get("nombre_completo")
+    ]
+    legacy_map = {leg["codigo_sismo"]: leg for leg in legacy_docs}
+
+    # ── 3. Process each candidato ─────────────────────────────────────────
+    match_unico_v2 = 0
+    match_unico_legacy = 0
+    ambiguos = 0
+    sin_match = 0
+    monto_v2 = 0.0
+    monto_legacy = 0.0
+    detalle_ambiguos: list[dict] = []
+    detalle_sin_match: list[dict] = []
+    sample_journals: list[str] = []  # for test-gate
+
+    for mov in movs:
+        desc = mov.get("descripcion", "")
+        monto = abs(float(mov.get("monto", 0)))
+        fecha_str = mov.get("fecha", datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+
+        nombre_extraido = _extract_nombre(desc)
+        if not nombre_extraido or len(nombre_extraido) < 3:
+            sin_match += 1
+            detalle_sin_match.append({
+                "mov_id": str(mov["_id"]),
+                "fecha":  fecha_str,
+                "monto":  monto,
+                "desc":   desc[:60],
+                "motivo": "No se pudo extraer nombre del remitente",
+            })
+            continue
+
+        # Primary: V2
+        matched_id_v2, status_v2 = _fuzzy_match(nombre_extraido, v2_pool, umbral)
+
+        if status_v2 == "unico" and matched_id_v2:
+            lb = v2_map[matched_id_v2]
+            res = await _causar_match_v2(mov, lb, monto, alegra, db, fecha_str)
+            if res["ok"]:
+                match_unico_v2 += 1
+                monto_v2 += monto
+                if len(sample_journals) < 3:
+                    sample_journals.append(res["journal_id"])
+            else:
+                sin_match += 1
+                detalle_sin_match.append({
+                    "mov_id": str(mov["_id"]), "fecha": fecha_str, "monto": monto,
+                    "desc": desc[:60], "motivo": f"V2 journal error: {res.get('error','')[:80]}",
+                })
+            continue
+
+        if status_v2 == "ambiguo":
+            ambiguos += 1
+            detalle_ambiguos.append({
+                "mov_id": str(mov["_id"]), "fecha": fecha_str, "monto": monto,
+                "desc": desc[:60], "nombre_extraido": nombre_extraido, "fuente": "V2",
+            })
+            continue
+
+        # Secondary: legacy
+        matched_id_leg, status_leg = _fuzzy_match(nombre_extraido, legacy_pool, umbral)
+
+        if status_leg == "unico" and matched_id_leg:
+            credito = legacy_map[matched_id_leg]
+            res = await _causar_match_legacy(mov, credito, monto, alegra, db, cartera_legacy_acct)
+            if res["ok"]:
+                match_unico_legacy += 1
+                monto_legacy += monto
+                if len(sample_journals) < 3:
+                    sample_journals.append(res["journal_id"])
+            else:
+                sin_match += 1
+                detalle_sin_match.append({
+                    "mov_id": str(mov["_id"]), "fecha": fecha_str, "monto": monto,
+                    "desc": desc[:60], "motivo": f"Legacy journal error: {res.get('error','')[:80]}",
+                })
+            continue
+
+        if status_leg == "ambiguo":
+            ambiguos += 1
+            detalle_ambiguos.append({
+                "mov_id": str(mov["_id"]), "fecha": fecha_str, "monto": monto,
+                "desc": desc[:60], "nombre_extraido": nombre_extraido, "fuente": "legacy",
+            })
+            continue
+
+        # No match at all
+        sin_match += 1
+        detalle_sin_match.append({
+            "mov_id": str(mov["_id"]), "fecha": fecha_str, "monto": monto,
+            "desc": desc[:60], "nombre_extraido": nombre_extraido,
+            "motivo": "Score < umbral en V2 y legacy",
+        })
+
+    # ── 4. Save to cierre_q1_reporte ─────────────────────────────────────
+    await db.cierre_q1_reporte.insert_one({
+        "fecha_ejecucion":    datetime.utcnow(),
+        "recaudo_q1_legacy":  monto_legacy,
+        "recaudo_q1_v2":      monto_v2,
+        "total_matcheados":   match_unico_v2 + match_unico_legacy,
+        "total_analizados":   len(movs),
+        "umbral_fuzzy":       umbral,
+        "detalle_ambiguos":   detalle_ambiguos,
+        "detalle_sin_match":  detalle_sin_match,
+    })
+
+    return {
+        "success":              True,
+        "total_analizados":     len(movs),
+        "match_unico_v2":       match_unico_v2,
+        "match_unico_legacy":   match_unico_legacy,
+        "ambiguos":             ambiguos,
+        "sin_match":            sin_match,
+        "monto_aplicado_v2":    round(monto_v2, 2),
+        "monto_aplicado_legacy": round(monto_legacy, 2),
+        "sample_journal_ids":   sample_journals,
+        "detalle_ambiguos":     detalle_ambiguos,
+        "detalle_sin_match":    detalle_sin_match,
+    }
+
+
 @router.get("")
 async def list_backlog(
     banco: str | None = None,
