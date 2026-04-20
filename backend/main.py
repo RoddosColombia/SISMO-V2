@@ -1,9 +1,10 @@
 import os
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from core.database import lifespan
+from motor.motor_asyncio import AsyncIOMotorDatabase
+from core.database import lifespan, get_db
 from core.sliding_session import SlidingSessionMiddleware
 from routers.auth import router as auth_router
 from routers.chat import router as chat_router
@@ -50,8 +51,14 @@ app.include_router(cierres_router)
 
 
 @app.get("/health")
-async def health():
-    return {"status": "ok", "version": "0.1.0"}
+async def health(db: AsyncIOMotorDatabase = Depends(get_db)):
+    from services.alegra.client import get_circuit_breaker_estado
+    cb_estado = await get_circuit_breaker_estado(db)
+    return {
+        "status": "ok",
+        "version": "0.1.0",
+        "alegra_circuit_breaker": cb_estado,
+    }
 
 
 # SPA static files — serves React build in production

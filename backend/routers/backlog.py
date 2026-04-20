@@ -1167,6 +1167,7 @@ async def _run_batch_causar(job_id: str, confianza_minima: float, db):
     from services.alegra.client import AlegraClient
     from agents.contador.handlers.conciliacion import _classify_movement, BANCO_CATEGORY_IDS
     from services.retenciones import calcular_retenciones
+    from services.loanbook_matcher import match_from_description
     from core.events import publish_event
 
     alegra = AlegraClient(db=db)
@@ -1182,6 +1183,9 @@ async def _run_batch_causar(job_id: str, confianza_minima: float, db):
     errores = 0
     detalle_errores = []
 
+    # Cuenta Alegra para ingresos de cartera legacy (ROG-1 / contabilidad_handlers.py)
+    _CUENTA_INGRESO_CARTERA = "5456"
+
     async for mov in cursor:
         procesados += 1
         mov_id = mov["_id"]
@@ -1192,14 +1196,80 @@ async def _run_batch_causar(job_id: str, confianza_minima: float, db):
             if not current:
                 continue
 
-            # Classify movement
-            classification = _classify_movement(mov["descripcion"], mov["monto"])
-            cuenta_id = str(classification["cuenta_id"])
-            tipo = classification["tipo"]
-
-            # Get bank ID
             banco = mov.get("banco", "Bancolombia")
             banco_id = BANCO_CATEGORY_IDS.get(banco, "5314")
+            mov_tipo = mov.get("tipo", "debito")
+            descripcion = mov.get("descripcion", "")
+            monto = abs(float(mov.get("monto", 0)))
+            fecha = mov.get("fecha", "")
+            now = datetime.now(timezone.utc)
+
+            # ── Motor ingreso cartera legacy ──────────────────────────────
+            # Para movimientos de tipo "credito" (dinero que entra), verificar
+            # si el pagador es un cliente de loanbook_legacy.
+            # Los loanbooks V2 activos tienen su propio flujo via evento cuota.pagada.
+            if mov_tipo == "credito":
+                try:
+                    match = await match_from_description(descripcion, db)
+                except Exception:
+                    match = None
+
+                if match:
+                    # INGRESO_CARTERA: DB=banco, CR=5456 (Ingresos Financiacion Motos)
+                    contact_id = match.get("alegra_contact_id")
+                    ingreso_entry: dict = {
+                        "id": _CUENTA_INGRESO_CARTERA,
+                        "debit": 0,
+                        "credit": monto,
+                    }
+                    if contact_id:
+                        ingreso_entry["thirdParty"] = {"id": str(contact_id)}
+
+                    payload = {
+                        "date":         fecha,
+                        "observations": f"[CARTERA] {match['nombre_cliente'][:50]} — {descripcion[:50]}",
+                        "entries": [
+                            {"id": banco_id, "debit": monto, "credit": 0},
+                            ingreso_entry,
+                        ],
+                    }
+                    result = await alegra.request_with_verify("journals", "POST", payload=payload)
+
+                    await db.backlog_movimientos.update_one(
+                        {"_id": mov_id},
+                        {"$set": {
+                            "estado":            "causado",
+                            "alegra_journal_id": result["_alegra_id"],
+                            "fecha_causacion":   now,
+                            "clasificacion":     "INGRESO_CARTERA",
+                            "updated_at":        now,
+                        }},
+                    )
+                    await publish_event(
+                        db=db,
+                        event_type="ingreso.cartera.causado",
+                        source="backlog_motor",
+                        datos={
+                            "loanbook_id":      match["loanbook_id"],
+                            "nombre_cliente":   match["nombre_cliente"],
+                            "monto":            monto,
+                            "banco":            banco,
+                            "alegra_journal_id": result["_alegra_id"],
+                        },
+                        alegra_id=result["_alegra_id"],
+                        accion_ejecutada=f"Ingreso cartera ${monto:,.0f} → Alegra {result['_alegra_id']}",
+                    )
+                    exitosos += 1
+                    await db.conciliacion_jobs.update_one(
+                        {"job_id": job_id},
+                        {"$set": {"procesados": procesados, "exitosos": exitosos, "errores": errores, "detalle_errores": detalle_errores}},
+                    )
+                    continue  # siguiente movimiento
+
+            # ── Clasificación genérica (gasto / ingreso sin match cartera) ─
+            classification = _classify_movement(descripcion, mov["monto"])
+            cuenta_id = str(classification["cuenta_id"])
+            tipo = classification["tipo"]
 
             # Calculate retenciones
             ret = calcular_retenciones(tipo, mov["monto"])
@@ -1216,8 +1286,8 @@ async def _run_batch_causar(job_id: str, confianza_minima: float, db):
 
             # POST to Alegra
             payload = {
-                "date": mov.get("fecha", ""),
-                "observations": f"[AC] Batch: {mov.get('descripcion', '')[:80]}",
+                "date": fecha,
+                "observations": f"[AC] Batch: {descripcion[:80]}",
                 "entries": entries,
             }
             result = await alegra.request_with_verify("journals", "POST", payload=payload)

@@ -54,7 +54,6 @@ const NAV_AREAS: NavArea[] = [
       { to: '/chat', label: 'Agente Contador' },
       { to: '/conciliacion', label: 'Subir extracto' },
       { to: '/backlog', label: 'Backlog movimientos' },
-      { to: '/cierres', label: 'Cierres Contables' },
       { to: '/inventario', label: 'Inventario' },
     ],
   },
@@ -65,7 +64,6 @@ const NAV_AREAS: NavArea[] = [
       'M2.25 18L9 11.25l4.306 4.307a11.95 11.95 0 015.814-5.519l2.74-1.22m0 0l-5.94-2.28m5.94 2.28l-2.28 5.941',
     items: [
       { to: '/dashboard', label: 'Dashboard' },
-      { to: '/cierre-q1', label: 'Cierre Q1 2026' },
     ],
   },
   {
@@ -73,7 +71,10 @@ const NAV_AREAS: NavArea[] = [
     label: 'Originación',
     iconPath:
       'M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99',
-    items: [{ to: '/loanbook', label: 'Créditos' }],
+    items: [
+      { to: '/loanbook', label: 'Créditos' },
+      { to: '/cartera-legacy', label: 'Cartera Legacy' },
+    ],
   },
   {
     id: 'cartera',
@@ -81,7 +82,6 @@ const NAV_AREAS: NavArea[] = [
     iconPath:
       'M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25m18 0A2.25 2.25 0 0018.75 3H5.25A2.25 2.25 0 003 5.25m18 0V12a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 12V5.25',
     items: [
-      { to: '/cartera-legacy', label: 'Cartera Legacy' },
       { to: '#', label: 'RADAR (Phase 8)', disabled: true },
     ],
   },
