@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
-import { apiFetch } from '@/lib/api'
+import { apiGet, apiPost, apiPatch, apiDelete } from '@/lib/api'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -314,7 +314,7 @@ export default function ITSismoPage() {
   const fetchStatus = useCallback(async () => {
     setLoadingStatus(true)
     try {
-      const data = await apiFetch<StatusPayload>('/api/it/status')
+      const data = await apiGet<StatusPayload>('/it/status')
       setStatus(data)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Error cargando estado de servicios')
@@ -326,7 +326,7 @@ export default function ITSismoPage() {
   const fetchDeuda = useCallback(async () => {
     setLoadingDeuda(true)
     try {
-      const data = await apiFetch<DeudaItem[]>('/api/it/deuda')
+      const data = await apiGet<DeudaItem[]>('/it/deuda')
       setDeuda(data)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Error cargando deuda técnica')
@@ -341,17 +341,14 @@ export default function ITSismoPage() {
   }, [fetchStatus, fetchDeuda])
 
   const handleAddDeuda = async (data: NewDeuda) => {
-    await apiFetch('/api/it/deuda', { method: 'POST', body: JSON.stringify(data) })
+    await apiPost('/it/deuda', data)
     await fetchDeuda()
   }
 
   const handlePatch = async (codigo: string, estado: DeudaItem['estado']) => {
     setPatchingId(codigo)
     try {
-      await apiFetch(`/api/it/deuda/${codigo}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ estado }),
-      })
+      await apiPatch(`/it/deuda/${codigo}`, { estado })
       setDeuda(prev =>
         prev.map(d => d.codigo === codigo ? { ...d, estado } : d)
       )
@@ -364,7 +361,7 @@ export default function ITSismoPage() {
     if (!window.confirm(`¿Eliminar deuda técnica ${codigo}?`)) return
     setDeletingId(codigo)
     try {
-      await apiFetch(`/api/it/deuda/${codigo}`, { method: 'DELETE' })
+      await apiDelete(`/it/deuda/${codigo}`)
       setDeuda(prev => prev.filter(d => d.codigo !== codigo))
     } finally {
       setDeletingId(null)

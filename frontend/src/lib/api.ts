@@ -130,6 +130,25 @@ export async function apiGet<T = unknown>(path: string): Promise<T> {
   return res.json()
 }
 
+export async function apiDelete<T = unknown>(path: string): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+  })
+  captureRenewalHeader(res)
+  if (res.status === 401) {
+    handleUnauthorized()
+    throw new Error('Tu sesión expiró')
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || 'Error de red')
+  }
+  // DELETE may return 204 No Content
+  if (res.status === 204) return {} as T
+  return res.json()
+}
+
 export function chatSSE(
   message: string,
   sessionId: string | null,
