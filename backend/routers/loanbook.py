@@ -342,6 +342,108 @@ async def patch_loanbook(
     }
 
 
+class PatchCuotaBody(BaseModel):
+    """Edición manual de una cuota individual.
+
+    No toca saldo — solo corrige metadatos de la cuota.
+    Para registrar un pago real (con waterfall + saldo), usar registrar-pago.
+    """
+    estado: str | None = None          # pendiente | pagada | condonada
+    fecha_pago: str | None = None      # yyyy-MM-dd
+    monto_pagado: float | None = None
+    metodo_pago: str | None = None
+    referencia: str | None = None
+    valor: float | None = None         # overwrite cuota.monto (reestructura)
+    fecha: str | None = None           # overwrite cuota.fecha (reprogramación)
+
+
+ESTADOS_CUOTA = {"pendiente", "pagada", "condonada"}
+
+
+@router.patch("/{identifier}/cuotas/{numero}")
+async def patch_cuota(
+    identifier: str,
+    numero: int,
+    body: PatchCuotaBody,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Edición manual de una cuota individual.
+
+    Corrige metadatos sin tocar saldo_capital ni saldo_pendiente.
+    Útil para correcciones contables, reprogramaciones puntuales y
+    condonaciones que no implican movimiento de efectivo.
+
+    Para registrar un pago con waterfall completo, usar registrar-pago.
+    """
+    lb = await _find_lb_by_identifier(db, identifier)
+    cuotas: list[dict] = lb.get("cuotas", [])
+
+    target = next((c for c in cuotas if c.get("numero") == numero), None)
+    if target is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Cuota #{numero} no encontrada en {lb['loanbook_id']}",
+        )
+
+    cambios: dict = {}
+    if body.estado is not None:
+        if body.estado not in ESTADOS_CUOTA:
+            raise HTTPException(status_code=400, detail=f"estado debe ser: {sorted(ESTADOS_CUOTA)}")
+        target["estado"] = body.estado
+        cambios["estado"] = body.estado
+    if body.fecha_pago is not None:
+        target["fecha_pago"] = body.fecha_pago
+        cambios["fecha_pago"] = body.fecha_pago
+    if body.monto_pagado is not None:
+        target["monto_pagado"] = body.monto_pagado
+        cambios["monto_pagado"] = body.monto_pagado
+    if body.metodo_pago is not None:
+        target["metodo_pago"] = body.metodo_pago
+        cambios["metodo_pago"] = body.metodo_pago
+    if body.referencia is not None:
+        target["referencia"] = body.referencia
+        cambios["referencia"] = body.referencia
+    if body.valor is not None:
+        target["monto"] = body.valor
+        cambios["monto"] = body.valor
+    if body.fecha is not None:
+        target["fecha"] = body.fecha
+        cambios["fecha"] = body.fecha
+
+    if not cambios:
+        raise HTTPException(status_code=400, detail="No se enviaron campos para actualizar")
+
+    await db.loanbook.update_one(
+        {"loanbook_id": lb["loanbook_id"]},
+        {"$set": {
+            "cuotas": cuotas,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }},
+    )
+
+    await _publish_event(
+        db,
+        "cuota.editada.manual",
+        "routers.loanbook.manual",
+        {
+            "loanbook_id": lb["loanbook_id"],
+            "cuota_numero": numero,
+            "cambios": cambios,
+        },
+        accion=f"Edición manual cuota #{numero} en {lb['loanbook_id']}",
+    )
+
+    logger.info(f"Cuota editada: {lb['loanbook_id']} #{numero} cambios={list(cambios.keys())}")
+
+    return {
+        "success": True,
+        "loanbook_id": lb["loanbook_id"],
+        "cuota_numero": numero,
+        "campos_actualizados": list(cambios.keys()),
+        "cuota": target,
+    }
+
+
 async def _find_lb_by_identifier(db: AsyncIOMotorDatabase, identifier: str) -> dict:
     """Lookup helper: accept VIN or loanbook_id."""
     lb = None

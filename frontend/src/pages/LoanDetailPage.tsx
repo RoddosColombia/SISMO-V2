@@ -194,6 +194,12 @@ export default function LoanDetailPage({ idProp, onClose }: LoanDetailPageProps 
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
 
+  // Edit cuota state
+  const [editingCuota, setEditingCuota] = useState<Cuota | null>(null)
+  const [cuotaForm, setCuotaForm] = useState<Record<string, string>>({})
+  const [savingCuota, setSavingCuota] = useState(false)
+  const [saveCuotaError, setSaveCuotaError] = useState('')
+
   const loadLoanbook = useCallback(async () => {
     if (!id) return
     setLoading(true)
@@ -266,6 +272,42 @@ export default function LoanDetailPage({ idProp, onClose }: LoanDetailPageProps 
     }
   }
 
+  function startEditCuota(c: Cuota) {
+    setCuotaForm({
+      estado: c.estado || '',
+      fecha_pago: c.fecha_pago || '',
+      referencia: '',
+      valor: String(c.monto ?? ''),
+      fecha: c.fecha || '',
+    })
+    setSaveCuotaError('')
+    setEditingCuota(c)
+  }
+
+  async function handlePatchCuota(e: React.FormEvent) {
+    e.preventDefault()
+    if (!id || !editingCuota) return
+    const payload: Record<string, string | number> = {}
+    const f = cuotaForm
+    if (f.estado) payload.estado = f.estado
+    if (f.fecha_pago) payload.fecha_pago = f.fecha_pago
+    if (f.referencia) payload.referencia = f.referencia
+    if (f.valor) payload.valor = parseFloat(f.valor)
+    if (f.fecha) payload.fecha = f.fecha
+    if (Object.keys(payload).length === 0) { setEditingCuota(null); return }
+    setSavingCuota(true)
+    setSaveCuotaError('')
+    try {
+      await apiPatch(`/loanbook/${id}/cuotas/${editingCuota.numero}`, payload)
+      await loadLoanbook()
+      setEditingCuota(null)
+    } catch (e: unknown) {
+      setSaveCuotaError(e instanceof Error ? e.message : 'Error al guardar')
+    } finally {
+      setSavingCuota(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full bg-surface">
@@ -328,6 +370,7 @@ export default function LoanDetailPage({ idProp, onClose }: LoanDetailPageProps 
   const pagadasList = cuotas.filter(c => c.estado === 'pagada')
 
   return (
+    <>
     <div className="flex flex-col h-full bg-surface overflow-y-auto">
       {/* Header */}
       <div className="sticky top-0 z-10 bg-surface/95 backdrop-blur-sm px-4 py-3 sm:px-6">
@@ -585,6 +628,7 @@ export default function LoanDetailPage({ idProp, onClose }: LoanDetailPageProps 
                   <th className="text-right px-2 py-2 font-medium">Valor</th>
                   <th className="text-center px-2 py-2 font-medium">Estado</th>
                   <th className="text-right px-2 py-2 font-medium">Mora</th>
+                  <th className="w-6"></th>
                 </tr>
               </thead>
               <tbody>
@@ -611,6 +655,17 @@ export default function LoanDetailPage({ idProp, onClose }: LoanDetailPageProps 
                       <td className="px-2 py-1.5 text-center">{emoji}</td>
                       <td className="px-2 py-1.5 text-right">
                         {mora > 0 ? <span className="text-red-600 font-medium">{formatCOP(mora)}</span> : '—'}
+                      </td>
+                      <td className="px-1 py-1.5 text-center">
+                        <button
+                          onClick={() => startEditCuota(c)}
+                          className="text-on-surface-variant hover:text-primary transition-colors"
+                          title={`Editar cuota #${c.numero}`}
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
+                          </svg>
+                        </button>
                       </td>
                     </tr>
                   )
@@ -689,5 +744,75 @@ export default function LoanDetailPage({ idProp, onClose }: LoanDetailPageProps 
 
       </div>
     </div>
+
+    {/* ── Cuota edit modal ── */}
+
+    {editingCuota && (
+      <div
+        className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
+        onClick={(e) => { if (e.target === e.currentTarget) setEditingCuota(null) }}
+      >
+        <div className="w-full max-w-sm bg-white rounded-2xl shadow-2xl overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-surface-container-low">
+            <h3 className="font-display font-bold text-sm text-on-surface">
+              Editar cuota #{editingCuota.numero}
+            </h3>
+            <button
+              onClick={() => setEditingCuota(null)}
+              className="text-on-surface-variant hover:text-on-surface transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <p className="text-[11px] text-amber-700 bg-amber-50 px-5 py-2 border-b border-amber-100">
+            Solo corrige metadatos. No afecta saldo capital.
+          </p>
+          <form onSubmit={handlePatchCuota} className="px-5 py-4 space-y-3">
+            <div>
+              <label className="block text-[11px] text-on-surface-variant mb-0.5">Estado</label>
+              <select
+                value={cuotaForm.estado ?? ''}
+                onChange={e => setCuotaForm(f => ({ ...f, estado: e.target.value }))}
+                className="w-full px-2 py-1.5 text-sm border border-surface-container-low rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-primary"
+              >
+                <option value="">— sin cambio —</option>
+                <option value="pendiente">pendiente</option>
+                <option value="pagada">pagada</option>
+                <option value="condonada">condonada</option>
+              </select>
+            </div>
+            {([
+              { label: 'Fecha pago', field: 'fecha_pago', type: 'date' },
+              { label: 'Referencia', field: 'referencia', type: 'text' },
+              { label: 'Valor cuota (sobreescribe)', field: 'valor', type: 'number' },
+              { label: 'Fecha cuota (reprogramar)', field: 'fecha', type: 'date' },
+            ] as Array<{ label: string; field: string; type: string }>).map(({ label, field, type }) => (
+              <div key={field}>
+                <label className="block text-[11px] text-on-surface-variant mb-0.5">{label}</label>
+                <input
+                  type={type}
+                  value={cuotaForm[field] ?? ''}
+                  onChange={e => setCuotaForm(f => ({ ...f, [field]: e.target.value }))}
+                  className="w-full px-2 py-1.5 text-sm border border-surface-container-low rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-primary font-mono"
+                />
+              </div>
+            ))}
+            {saveCuotaError && (
+              <p className="text-xs text-red-600 bg-red-50 rounded-md px-3 py-2">{saveCuotaError}</p>
+            )}
+            <button
+              type="submit"
+              disabled={savingCuota}
+              className="w-full py-2 bg-primary text-white rounded-md text-sm font-medium disabled:opacity-50 transition-opacity"
+            >
+              {savingCuota ? 'Guardando...' : 'Guardar cambios'}
+            </button>
+          </form>
+        </div>
+      </div>
+    )}
+    </>
   )
 }
