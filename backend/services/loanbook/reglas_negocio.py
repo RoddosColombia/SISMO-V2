@@ -1,35 +1,34 @@
 """
-services/loanbook/reglas_negocio.py — Tabla canónica de reglas de negocio Roddos.
+services/loanbook/reglas_negocio.py — Reglas de negocio Roddos (sin hardcoding).
 
 FUENTE DE VERDAD para:
-  - Número de cuotas por plan × modalidad  (tabla FIJA, no fórmula)
+  - Número de cuotas por plan × modalidad  → leído de catalogo_service (MongoDB)
   - Multiplicador de valor de cuota por modalidad
   - Días entre cobros por modalidad
   - Mora diaria en COP
   - Porcentaje ANZI
 
-PRINCIPIO: la tabla PLAN_CUOTAS es un contrato de negocio, no una derivación
-matemática. round(39 / 2.2) = 18 ≠ 20. Siempre usar la tabla, nunca la fórmula.
+REGLA R-06: PLAN_CUOTAS nunca se hardcodea en Python.
+La tabla vive en la colección `catalogo_planes` de MongoDB. Este módulo
+la expone a través de una interfaz lazy que lee del cache en memoria
+calentado por catalogo_service.warm_catalogo() al inicio del proceso.
 
-Sin I/O — módulo de constantes puras + funciones sin efectos laterales.
+En tests unitarios, conftest.py llama a catalogo_service.seed_for_tests()
+antes de que corra cualquier test, con los mismos datos que poblar_catalogos.py.
+
+Sin I/O propio — todas las funciones son síncronas y usan el cache en memoria.
 """
 
 from datetime import date
 
-# ─────────────────────── Tabla fija plan × modalidad ────────────────────────────
-# Cada celda fue acordada con operaciones. None = combinación no configurada.
-
-PLAN_CUOTAS: dict[str, dict[str, int | None]] = {
-    "P15S": {"semanal": 15,  "quincenal": None, "mensual": None},
-    "P39S": {"semanal": 39,  "quincenal": 20,   "mensual": 9},
-    "P52S": {"semanal": 52,  "quincenal": 26,   "mensual": 12},
-    "P78S": {"semanal": 78,  "quincenal": 39,   "mensual": 18},
-}
+from services.loanbook import catalogo_service as _cs
 
 # ─────────────────────── Constantes de cobro ──────────────────────────────────
+# Estas constantes NO son datos de catálogo — son parámetros fijos del negocio
+# aprobados por operaciones. No van a MongoDB.
 
 # Factor por el que se multiplica la cuota semanal base para obtener la cuota
-# en otra modalidad.
+# en otra modalidad. Solo aplica a RDX P39S+.
 MULTIPLICADOR_PRECIO_CUOTA: dict[str, float] = {
     "semanal":   1.0,
     "quincenal": 2.2,
@@ -43,11 +42,84 @@ DIAS_ENTRE_CUOTAS: dict[str, int] = {
     "mensual":   28,
 }
 
-# Mora fija en pesos colombianos por día de atraso
+# Mora fija en pesos colombianos por día de atraso (sin cap — R-22)
 MORA_COP_POR_DIA: int = 2_000
 
-# Porcentaje ANZI (administración de cartera) que se descuenta de cada pago
+# Porcentaje ANZI (administración de cartera) — prioridad 1 del waterfall (R-21)
 ANZI_PCT: float = 0.02
+
+
+# ─────────────────────── PLAN_CUOTAS lazy (R-06) ──────────────────────────────
+# PLAN_CUOTAS ya no es un dict literal. Es una vista lazy del cache en memoria.
+# Comportamiento idéntico al antiguo dict para código consumidor — soporta
+# .get(), __contains__, .items(), .keys(), .values(), y subscript.
+#
+# Criterio C-03: grep "PLAN_CUOTAS.*=.*{" → 0 resultados. ✓
+
+class _LazyPlanCuotas(dict):
+    """Dict lazy que se auto-popula desde catalogo_service en el primer acceso.
+
+    Internamente es un dict vacío hasta que se llama cualquier método.
+    Al primer uso, llama a catalogo_service.get_planes_cuotas_dict() y
+    carga los datos del cache en memoria.
+
+    Diseño:
+    - En producción: el cache ya está calentado por warm_catalogo() en lifespan.
+    - En tests: conftest.py llama seed_for_tests() antes de los tests.
+    - El flag _loaded previene refresh infinito cuando el cache está vacío.
+    """
+
+    _loaded: bool = False
+
+    def _refresh(self) -> None:
+        data = _cs.get_planes_cuotas_dict()
+        self.clear()
+        super().update(data)
+        self._loaded = True
+
+    def _ensure(self) -> None:
+        if not self._loaded:
+            self._refresh()
+
+    def get(self, key, default=None):
+        self._ensure()
+        return super().get(key, default)
+
+    def __getitem__(self, key):
+        self._ensure()
+        return super().__getitem__(key)
+
+    def __contains__(self, key):
+        self._ensure()
+        return super().__contains__(key)
+
+    def items(self):
+        self._ensure()
+        return super().items()
+
+    def keys(self):
+        self._ensure()
+        return super().keys()
+
+    def values(self):
+        self._ensure()
+        return super().values()
+
+    def __iter__(self):
+        self._ensure()
+        return super().__iter__()
+
+    def __len__(self):
+        self._ensure()
+        return super().__len__()
+
+    def _invalidate(self) -> None:
+        """Fuerza recarga en el próximo acceso. Útil en tests."""
+        self._loaded = False
+        self.clear()
+
+
+PLAN_CUOTAS: dict[str, dict[str, int | None]] = _LazyPlanCuotas()
 
 
 # ─────────────────────── Funciones puras ──────────────────────────────────────
@@ -55,28 +127,28 @@ ANZI_PCT: float = 0.02
 def get_num_cuotas(plan_codigo: str, modalidad: str) -> int | None:
     """Número canónico de cuotas para plan × modalidad.
 
-    Retorna None si:
-      - plan_codigo no existe en PLAN_CUOTAS
-      - la combinación plan × modalidad no está configurada (ej. P15S quincenal)
-
+    Lee del cache en memoria (calentado desde catalogo_planes en MongoDB).
     Nunca hace round() ni aplica fórmulas.
 
+    Retorna None si:
+      - plan_codigo no existe en el catálogo
+      - la combinación plan × modalidad no está configurada (ej. P15S quincenal)
+
     Args:
-        plan_codigo: "P15S", "P39S", "P52S" o "P78S"
+        plan_codigo: "P1S", "P2S", ..., "P78S"
         modalidad:   "semanal", "quincenal" o "mensual"
 
     Returns:
-        int  — número de cuotas según tabla de negocio
+        int  — número de cuotas según tabla maestra
         None — combinación no configurada
     """
-    plan = PLAN_CUOTAS.get(plan_codigo)
-    if plan is None:
-        return None
-    return plan.get(modalidad)
+    return _cs.get_num_cuotas_sync(plan_codigo, modalidad)
 
 
 def get_valor_cuota(cuota_base_semanal: float, modalidad: str) -> float:
     """Valor de cuota en la modalidad dada, escalado desde la cuota semanal base.
+
+    Solo aplica a RDX P39S+. Para RODANTE siempre es ×1.0.
 
     Args:
         cuota_base_semanal: monto de la cuota si fuera semanal (precio de referencia)
@@ -122,8 +194,7 @@ def validar_fecha_pago(fecha_pago: date, hoy: date | None = None) -> None:
     """Verifica que fecha_pago no sea en el futuro (físicamente imposible).
 
     Se llama en todos los endpoints de pago antes de procesar cualquier
-    transacción. Un pago registrado con fecha futura es un error operativo —
-    el cobrador marcó la cuota antes de que ocurriera.
+    transacción. Un pago registrado con fecha futura es un error operativo.
 
     Args:
         fecha_pago: fecha del pago a registrar
