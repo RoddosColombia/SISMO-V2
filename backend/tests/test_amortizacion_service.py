@@ -129,21 +129,23 @@ class TestGenerarCronograma:
     def test_primera_cuota_es_miercoles(self):
         """Regla del miércoles: fecha_entrega lunes 17 mar → primer miércoles >= 24 mar = 25 mar."""
         cuotas = self._gen()
-        assert cuotas[0]["fecha_programada"].weekday() == 2  # Wednesday
+        # fecha_programada se persiste como string ISO para BSON — convertir para comparar
+        assert date.fromisoformat(cuotas[0]["fecha_programada"]).weekday() == 2
 
     def test_primera_fecha_es_25_marzo(self):
         """fecha_entrega 17-mar (lunes) → entrega+7 = 24-mar (lunes) → primer miércoles = 25-mar."""
         cuotas = self._gen()
-        assert cuotas[0]["fecha_programada"] == date(2026, 3, 25)
+        assert cuotas[0]["fecha_programada"] == "2026-03-25"
 
     def test_fechas_son_miercoles_consecutivos(self):
         """Todas las cuotas semanales deben caer en miércoles con 7 días de diferencia."""
         cuotas = self._gen()
         for i, c in enumerate(cuotas):
-            assert c["fecha_programada"].weekday() == 2, f"Cuota {i+1} no es miércoles"
+            fp = date.fromisoformat(c["fecha_programada"])
+            assert fp.weekday() == 2, f"Cuota {i+1} no es miércoles"
             if i > 0:
-                delta = (cuotas[i]["fecha_programada"] - cuotas[i-1]["fecha_programada"]).days
-                assert delta == 7
+                fp_prev = date.fromisoformat(cuotas[i-1]["fecha_programada"])
+                assert (fp - fp_prev).days == 7
 
     def test_capital_mas_interes_igual_total(self):
         """R-19: monto_capital + monto_interes == monto_total (salvo última cuota)."""
@@ -216,8 +218,9 @@ class TestGenerarCronograma:
             fecha_entrega=date(2026, 1, 1), n_cuotas=6,
         )
         for i in range(1, len(cuotas)):
-            delta = (cuotas[i]["fecha_programada"] - cuotas[i-1]["fecha_programada"]).days
-            assert delta == 14
+            fp      = date.fromisoformat(cuotas[i]["fecha_programada"])
+            fp_prev = date.fromisoformat(cuotas[i-1]["fecha_programada"])
+            assert (fp - fp_prev).days == 14
 
 
 # ─────────────────────── BLOQUE 3 — aplicar_waterfall ────────────────────────

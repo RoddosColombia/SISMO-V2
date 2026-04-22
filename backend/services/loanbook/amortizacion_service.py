@@ -188,7 +188,8 @@ def generar_cronograma(
 
         cronograma.append({
             "numero": k,
-            "fecha_programada": fecha_programada,
+            "fecha_programada": fecha_programada.isoformat(),  # str — BSON no acepta datetime.date
+            "fecha": fecha_programada.isoformat(),             # alias usado por endpoints legados
             "monto_total": monto_total,
             "monto_capital": monto_capital,
             "monto_interes": monto_interes,
