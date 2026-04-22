@@ -13,12 +13,14 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, Field
 
 from core.auth import get_current_user
 from core.database import get_db
 from services.loanbook.auditor import auditar_loanbooks as _auditar_loanbooks
+from services.loanbook.excel_export import generar_excel as _generar_excel
 from services.loanbook.reparador import reparar_loanbook as _reparar_loanbook
 from services.loanbook.reglas_negocio import PLAN_CUOTAS as _PLAN_CUOTAS, validar_fecha_pago as _validar_fecha_pago
 from services.loanbook.state_calculator import (
@@ -119,6 +121,38 @@ async def get_auditoria(
     # Strip MongoDB _id before passing to pure function
     loanbooks = [{k: v for k, v in doc.items() if k != "_id"} for doc in docs]
     return _auditar_loanbooks(loanbooks)
+
+
+@router.get("/export-excel")
+async def export_excel(
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Descarga el portafolio completo en Excel (.xlsx) con 2 hojas.
+
+    Hoja "Creditos": una fila por loanbook, columnas DB vs tabla PLAN_CUOTAS,
+    celdas rojas donde hay diferencias.
+
+    Hoja "Cuotas": una fila por cuota con flags es_cuota_corrupta / motivo.
+
+    Requiere autenticación.
+    """
+    from datetime import date as _date
+    from io import BytesIO as _BytesIO
+
+    docs = await db.loanbook.find().to_list(length=2000)
+    loanbooks = [{k: v for k, v in doc.items() if k != "_id"} for doc in docs]
+
+    xlsx_bytes = _generar_excel(loanbooks)
+
+    fecha_str = _date.today().isoformat()
+    filename  = f"portafolio_roddos_{fecha_str}.xlsx"
+
+    return StreamingResponse(
+        _BytesIO(xlsx_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 @router.post("/reparar-todos")

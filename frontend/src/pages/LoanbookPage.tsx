@@ -496,6 +496,31 @@ export default function LoanbookPage() {
     }
   }, [])
 
+  const [excelLoading, setExcelLoading] = useState(false)
+  const descargarExcel = useCallback(async () => {
+    setExcelLoading(true)
+    try {
+      const token = localStorage.getItem('token')
+      const res = await fetch('/api/loanbook/export-excel', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (!res.ok) throw new Error(`Error ${res.status}`)
+      const blob = await res.blob()
+      const url  = URL.createObjectURL(blob)
+      const a    = document.createElement('a')
+      a.href     = url
+      a.download = `portafolio_roddos_${new Date().toISOString().slice(0, 10)}.xlsx`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : 'Error al descargar Excel')
+    } finally {
+      setExcelLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     setLoading(true)
     loadData().finally(() => setLoading(false))
@@ -522,28 +547,47 @@ export default function LoanbookPage() {
             <h1 className="font-display text-lg font-bold text-on-surface">Créditos</h1>
             <p className="text-sm text-on-surface-variant mt-0.5">Gestión de cartera y loanbooks activos</p>
           </div>
-          {/* Tab toggle */}
-          <div className="flex gap-1 bg-surface-container-low rounded-lg p-1">
+          <div className="flex items-center gap-2">
+            {/* Descargar Excel */}
             <button
-              onClick={() => setTab('cartera')}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                tab === 'cartera'
-                  ? 'bg-surface-container-lowest text-on-surface shadow-ambient-1'
-                  : 'text-on-surface-variant hover:text-on-surface'
-              }`}
+              onClick={descargarExcel}
+              disabled={excelLoading}
+              title="Descargar portafolio en Excel"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-container-low text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors disabled:opacity-50"
             >
-              Cartera
+              {excelLoading ? (
+                <span className="w-3.5 h-3.5 border border-current border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+              )}
+              Excel
             </button>
-            <button
-              onClick={() => setTab('auditoria')}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                tab === 'auditoria'
-                  ? 'bg-surface-container-lowest text-on-surface shadow-ambient-1'
-                  : 'text-on-surface-variant hover:text-on-surface'
-              }`}
-            >
-              Auditoría
-            </button>
+
+            {/* Tab toggle */}
+            <div className="flex gap-1 bg-surface-container-low rounded-lg p-1">
+              <button
+                onClick={() => setTab('cartera')}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                  tab === 'cartera'
+                    ? 'bg-surface-container-lowest text-on-surface shadow-ambient-1'
+                    : 'text-on-surface-variant hover:text-on-surface'
+                }`}
+              >
+                Cartera
+              </button>
+              <button
+                onClick={() => setTab('auditoria')}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                  tab === 'auditoria'
+                    ? 'bg-surface-container-lowest text-on-surface shadow-ambient-1'
+                    : 'text-on-surface-variant hover:text-on-surface'
+                }`}
+              >
+                Auditoría
+              </button>
+            </div>
           </div>
         </div>
       </div>
