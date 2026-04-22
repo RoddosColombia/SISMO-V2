@@ -176,16 +176,20 @@ Base URL producción: https://sismo-backend-40ca.onrender.com
 |--------|------|---------|-----------|
 | GET | /api/loanbook | loanbook.py | Lista todos los loanbooks |
 | POST | /api/loanbook | loanbook.py | Crear loanbook nuevo |
-| GET | /api/loanbook/auditoria | loanbook.py | Auditoría estructural del portafolio (BUILD 1 Sprint Estructural) |
+| GET | /api/loanbook/auditoria | loanbook.py | Auditoría estructural del portafolio (BUILD 1) |
 | GET | /api/loanbook/stats | loanbook.py | KPIs de cartera (totales, mora, recaudo) |
+| POST | /api/loanbook/reparar-todos | loanbook.py | Reparar inconsistencias en todo el portafolio (BUILD 3) |
 | GET | /api/loanbook/{id} | loanbook.py | Detalle de un loanbook |
-| GET | /api/loanbook/{id}/snapshot | loanbook.py | Snapshot para dashboard |
-| PUT | /api/loanbook/{id}/entrega | loanbook.py | Registrar entrega de moto |
-| PUT | /api/loanbook/{id}/pago | loanbook.py | Registrar pago de cuota |
+| PUT | /api/loanbook/{id} | loanbook.py | Edición canónica con auto-derivación de plan (BUILD 4) |
+| PUT | /api/loanbook/{id}/entrega | loanbook.py | Activación canónica: pendiente_entrega→activo + cronograma (BUILD 4) |
+| PUT | /api/loanbook/{id}/pago | loanbook.py | Pago canónico con waterfall ANZI completo (BUILD 4) |
+| POST | /api/loanbook/{id}/reparar | loanbook.py | Reparar inconsistencias de un crédito (BUILD 3) |
 | POST | /api/loanbook/{id}/gestion | loanbook.py | Registrar gestión de cobro |
 | POST | /api/loanbook/{id}/ptp | loanbook.py | Registrar promesa de pago |
-| PATCH | /api/loanbook/{id} | loanbook.py | [DEPRECATED] Edición manual de campos (Sprint Cobranza) |
+| PATCH | /api/loanbook/{id} | loanbook.py | [DEPRECATED] Edición manual — usar PUT /{id} |
 | PATCH | /api/loanbook/{id}/cuotas/{n} | loanbook.py | [DEPRECATED] Corrección manual de cuota (Sprint Cobranza) |
+| POST | /api/loanbook/{id}/registrar-pago | loanbook.py | [DEPRECATED] Pago manual — usar PUT /{id}/pago |
+| POST | /api/loanbook/{id}/registrar-entrega | loanbook.py | [DEPRECATED] Entrega manual — usar PUT /{id}/entrega |
 
 ### 4C. RADAR
 

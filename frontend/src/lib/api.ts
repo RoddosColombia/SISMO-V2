@@ -114,6 +114,26 @@ export async function apiPatch<T = unknown>(path: string, body: unknown): Promis
   return res.json()
 }
 
+export async function apiPut<T = unknown>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(body),
+  })
+  captureRenewalHeader(res)
+  if (res.status === 401) {
+    handleUnauthorized()
+    throw new Error('Tu sesión expiró')
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    const e = new Error(err.detail || 'Error de red') as Error & { status?: number }
+    e.status = res.status
+    throw e
+  }
+  return res.json()
+}
+
 export async function apiGet<T = unknown>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     headers: authHeaders(),

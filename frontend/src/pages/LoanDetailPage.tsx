@@ -1,6 +1,28 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { apiGet, apiPatch } from '@/lib/api'
+import { apiGet, apiPatch, apiPut } from '@/lib/api'
+
+// ─── Constantes de plan (espejo exacto de state_calculator.py) ───────────────
+const PLANES_RODDOS: Record<string, number> = {
+  P15S: 15,
+  P39S: 39,
+  P52S: 52,
+  P78S: 78,
+}
+const MULT_CUOTAS: Record<string, number> = {
+  semanal: 1.0,
+  quincenal: 1 / 2.2,
+  mensual: 1 / 4.4,
+}
+function derivarTotalCuotas(planCodigo: string, modalidad: string): number | null {
+  const base = PLANES_RODDOS[planCodigo]
+  if (base == null) return null
+  const factor = MULT_CUOTAS[modalidad] ?? 1.0
+  return Math.round(base * factor)
+}
+function calcularValorTotal(numCuotas: number, cuotaMonto: number, cuotaInicial: number): number {
+  return numCuotas * cuotaMonto + cuotaInicial
+}
 import LoanActionPanel from '@/components/LoanActionPanel'
 
 interface LoanDetailPageProps {
@@ -237,21 +259,30 @@ export default function LoanDetailPage({ idProp, onClose }: LoanDetailPageProps 
     setSaveError('')
   }
 
-  async function handlePatchCredito(e: React.FormEvent) {
+  // Live preview — derived values as user types (mirrors state_calculator.py)
+  const previewPlanCodigo = (creditoForm.plan_codigo as string) || (lb?.plan_codigo ?? '')
+  const previewModalidad  = (creditoForm.modalidad as string)  || (lb?.modalidad ?? 'semanal')
+  const previewCuotaMonto = parseFloat(String(creditoForm.cuota_valor || lb?.cuota_monto || 0)) || 0
+  const previewCuotaInicial = parseFloat(String(creditoForm.cuota_inicial || lb?.plan?.cuota_inicial || 0)) || 0
+  const previewNumCuotas  = derivarTotalCuotas(previewPlanCodigo, previewModalidad)
+  const previewValorTotal = previewNumCuotas != null
+    ? calcularValorTotal(previewNumCuotas, previewCuotaMonto, previewCuotaInicial)
+    : null
+
+  async function handlePutCredito(e: React.FormEvent) {
     e.preventDefault()
     if (!id) return
-    const payload: Record<string, string | number | boolean> = {}
+    const payload: Record<string, string | number> = {}
     const f = creditoForm
-    if (f.plan_codigo !== undefined && f.plan_codigo !== '') payload.plan_codigo = f.plan_codigo as string
-    if (f.modalidad !== undefined && f.modalidad !== '') payload.modalidad = f.modalidad as string
-    if (f.cuota_valor !== undefined && f.cuota_valor !== '') payload.cuota_valor = parseFloat(f.cuota_valor as string)
-    if (f.total_cuotas !== undefined && f.total_cuotas !== '') payload.total_cuotas = parseInt(f.total_cuotas as string, 10)
-    if (f.fecha_factura !== undefined && f.fecha_factura !== '') payload.fecha_factura = f.fecha_factura as string
-    if (f.fecha_entrega !== undefined && f.fecha_entrega !== '') payload.fecha_entrega = f.fecha_entrega as string
-    if (f.primera_cuota !== undefined && f.primera_cuota !== '') payload.primera_cuota = f.primera_cuota as string
-    if (f.vin !== undefined && f.vin !== '') payload.vin = f.vin as string
-    if (f.modelo !== undefined && f.modelo !== '') payload.modelo = f.modelo as string
-    if (f.cliente_telefono !== undefined && f.cliente_telefono !== '') payload.cliente_telefono = f.cliente_telefono as string
+    if (f.plan_codigo && f.plan_codigo !== '') payload.plan_codigo = f.plan_codigo as string
+    if (f.modalidad && f.modalidad !== '')     payload.modalidad   = f.modalidad as string
+    if (f.cuota_valor && f.cuota_valor !== '') payload.cuota_valor = parseFloat(f.cuota_valor as string)
+    if (f.cuota_inicial && f.cuota_inicial !== '') payload.cuota_inicial = parseFloat(f.cuota_inicial as string)
+    if (f.fecha_entrega && f.fecha_entrega !== '') payload.fecha_entrega = f.fecha_entrega as string
+    if (f.primera_cuota && f.primera_cuota !== '') payload.primera_cuota = f.primera_cuota as string
+    if (f.vin && f.vin !== '')     payload.vin    = f.vin as string
+    if (f.modelo && f.modelo !== '') payload.modelo = f.modelo as string
+    if (f.cliente_telefono && f.cliente_telefono !== '') payload.cliente_telefono = f.cliente_telefono as string
     if (f.cliente_telefono_alternativo !== undefined) payload.cliente_telefono_alternativo = f.cliente_telefono_alternativo as string
 
     if (Object.keys(payload).length === 0) {
@@ -261,7 +292,7 @@ export default function LoanDetailPage({ idProp, onClose }: LoanDetailPageProps 
     setSaving(true)
     setSaveError('')
     try {
-      await apiPatch(`/loanbook/${id}`, payload)
+      await apiPut(`/loanbook/${id}`, payload)
       await loadLoanbook()
       setEditingCredito(false)
       setCreditoForm({})
@@ -510,13 +541,12 @@ export default function LoanDetailPage({ idProp, onClose }: LoanDetailPageProps 
           </div>
 
           {editingCredito ? (
-            <form onSubmit={handlePatchCredito} className="space-y-3">
+            <form onSubmit={handlePutCredito} className="space-y-3">
               {([
                 { label: 'Plan', field: 'plan_codigo', type: 'text' },
                 { label: 'Modalidad', field: 'modalidad', type: 'select', options: ['semanal', 'quincenal', 'mensual'] },
                 { label: 'Valor cuota', field: 'cuota_valor', type: 'number' },
-                { label: 'Total cuotas', field: 'total_cuotas', type: 'number' },
-                { label: 'Fecha factura', field: 'fecha_factura', type: 'date' },
+                { label: 'Cuota inicial', field: 'cuota_inicial', type: 'number' },
                 { label: 'Fecha entrega', field: 'fecha_entrega', type: 'date' },
                 { label: 'Primera cuota', field: 'primera_cuota', type: 'date' },
                 { label: 'VIN', field: 'vin', type: 'text' },
@@ -545,6 +575,26 @@ export default function LoanDetailPage({ idProp, onClose }: LoanDetailPageProps 
                   )}
                 </div>
               ))}
+
+              {/* Live preview — auto-derivación visible mientras el usuario edita */}
+              {previewNumCuotas != null && (
+                <div className="rounded-lg bg-primary/5 border border-primary/20 px-3 py-2.5 space-y-1">
+                  <p className="text-[10px] text-primary font-semibold uppercase tracking-wider">Preview auto-derivado</p>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-on-surface-variant">Cuotas ({previewPlanCodigo} {previewModalidad})</span>
+                    <span className="font-bold text-on-surface">{previewNumCuotas}</span>
+                  </div>
+                  {previewCuotaMonto > 0 && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-on-surface-variant">Valor total</span>
+                      <span className="font-bold text-primary">
+                        {new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(previewValorTotal ?? 0)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {saveError && (
                 <p className="text-xs text-red-600 bg-red-50 rounded-md px-3 py-2">{saveError}</p>
               )}

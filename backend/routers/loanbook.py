@@ -20,7 +20,11 @@ from core.auth import get_current_user
 from core.database import get_db
 from services.loanbook.auditor import auditar_loanbooks as _auditar_loanbooks
 from services.loanbook.reparador import reparar_loanbook as _reparar_loanbook
-from services.loanbook.state_calculator import patch_set_from_recalculo as _patch_set_recalculo
+from services.loanbook.state_calculator import (
+    PLANES_RODDOS as _PLANES_RODDOS,
+    patch_set_from_recalculo as _patch_set_recalculo,
+    _derivar_total_cuotas,
+)
 from core.loanbook_model import (
     MORA_TASA_DIARIA,
     aplicar_waterfall,
@@ -949,4 +953,359 @@ async def registrar_entrega(
         "fecha_entrega": fecha_entrega_str,
         "fecha_primera_cuota": fpc.isoformat(),
         "num_cuotas": len(cuotas),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CANONICAL PUT ENDPOINTS — Sprint Estructural BUILD 4
+# Reemplazan los PATCH/POST /registrar-* del Sprint Cobranza (ahora DEPRECATED).
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class PutLoanbookBody(BaseModel):
+    """Edición canónica de metadatos del crédito con auto-derivación.
+
+    plan_codigo determina num_cuotas automáticamente (PLANES_RODDOS).
+    valor_total se recalcula siempre: num_cuotas × cuota_valor + cuota_inicial.
+    """
+    plan_codigo: str | None = None          # P15S | P39S | P52S | P78S
+    modalidad: str | None = None            # semanal | quincenal | mensual
+    cuota_valor: float | None = None        # valor por cuota en la modalidad
+    cuota_inicial: float | None = None      # enganche / cuota inicial
+    vin: str | None = None
+    modelo: str | None = None
+    tipo_producto: str | None = None
+    cliente_telefono: str | None = None
+    cliente_telefono_alternativo: str | None = None
+    fecha_entrega: str | None = None        # yyyy-MM-dd
+    primera_cuota: str | None = None        # yyyy-MM-dd (miércoles)
+
+
+@router.put("/{identifier}")
+async def put_loanbook(
+    identifier: str,
+    body: PutLoanbookBody,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Edición canónica de un loanbook con auto-derivación de plan.
+
+    - plan_codigo en PLANES_RODDOS → deriva num_cuotas automáticamente
+    - valor_total recalculado al final vía recalcular_loanbook()
+    - Retorna 422 si plan_codigo o modalidad son inválidos
+    """
+    lb = await _find_lb_by_identifier(db, identifier)
+    update: dict = {}
+
+    # Validar y aplicar plan_codigo
+    if body.plan_codigo is not None:
+        if body.plan_codigo not in _PLANES_RODDOS:
+            raise HTTPException(
+                status_code=422,
+                detail=f"plan_codigo '{body.plan_codigo}' inválido. Válidos: {sorted(_PLANES_RODDOS.keys())}",
+            )
+        update["plan_codigo"] = body.plan_codigo
+        update["plan.codigo"] = body.plan_codigo
+
+    # Validar y aplicar modalidad
+    if body.modalidad is not None:
+        if body.modalidad not in MODALIDADES:
+            raise HTTPException(
+                status_code=422,
+                detail=f"modalidad '{body.modalidad}' inválida. Válidas: {sorted(MODALIDADES)}",
+            )
+        update["modalidad"] = body.modalidad
+        update["plan.modalidad"] = body.modalidad
+
+    if body.cuota_valor is not None:
+        update["cuota_monto"] = body.cuota_valor
+        update["plan.cuota_valor"] = body.cuota_valor
+
+    if body.cuota_inicial is not None:
+        update["plan.cuota_inicial"] = body.cuota_inicial
+
+    if body.vin is not None:
+        update["vin"] = body.vin
+    if body.modelo is not None:
+        update["modelo"] = body.modelo
+    if body.tipo_producto is not None:
+        update["tipo_producto"] = body.tipo_producto
+    if body.cliente_telefono is not None:
+        update["cliente.telefono"] = body.cliente_telefono
+    if body.cliente_telefono_alternativo is not None:
+        update["cliente.telefono_alternativo"] = body.cliente_telefono_alternativo
+    if body.fecha_entrega is not None:
+        update["fecha_entrega"] = body.fecha_entrega
+    if body.primera_cuota is not None:
+        update["fecha_primer_pago"] = body.primera_cuota
+
+    if not update:
+        raise HTTPException(status_code=422, detail="No se enviaron campos para actualizar")
+
+    update["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.loanbook.update_one({"loanbook_id": lb["loanbook_id"]}, {"$set": update})
+
+    # Auto-derivación canónica: num_cuotas y valor_total desde PLANES_RODDOS
+    await _recalcular_y_persistir(db, lb["loanbook_id"])
+
+    await _publish_event(
+        db, "loanbook.editado.canonico", "routers.loanbook.put",
+        {"loanbook_id": lb["loanbook_id"], "campos": list(body.model_fields_set)},
+        accion=f"PUT canónico {lb['loanbook_id']}",
+    )
+
+    lb_updated = await db.loanbook.find_one({"loanbook_id": lb["loanbook_id"]})
+    lb_updated.pop("_id", None)
+    return {"success": True, "loanbook_id": lb["loanbook_id"], "loanbook": lb_updated}
+
+
+class PutEntregaBody(BaseModel):
+    """Activación canónica del crédito con validación estricta."""
+    fecha_entrega: str                      # yyyy-MM-dd — obligatorio
+    fecha_primera_cuota: str | None = None  # yyyy-MM-dd — debe ser miércoles
+    dia_cobro_especial: str | None = None
+
+
+@router.put("/{identifier}/entrega")
+async def put_entrega(
+    identifier: str,
+    body: PutEntregaBody,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Activación canónica: pendiente_entrega → activo + cronograma.
+
+    Validación estricta:
+      - 422 si el crédito no está en pendiente_entrega
+      - 422 si fecha_primera_cuota no es miércoles
+      - 422 si num_cuotas no está configurado
+    """
+    lb = await _find_lb_by_identifier(db, identifier)
+
+    if lb.get("estado") != "pendiente_entrega":
+        raise HTTPException(
+            status_code=422,
+            detail=f"Solo aplica a créditos en pendiente_entrega (estado actual: '{lb.get('estado')}')",
+        )
+
+    try:
+        fecha_entrega = date.fromisoformat(body.fecha_entrega)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="fecha_entrega inválida (use yyyy-MM-dd)")
+
+    if body.fecha_primera_cuota:
+        try:
+            fpc = date.fromisoformat(body.fecha_primera_cuota)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="fecha_primera_cuota inválida (use yyyy-MM-dd)")
+        if fpc.weekday() != 2:
+            raise HTTPException(
+                status_code=422,
+                detail=f"fecha_primera_cuota debe ser miércoles. '{fpc.isoformat()}' es {fpc.strftime('%A')}",
+            )
+    else:
+        fpc = _next_wednesday_from(fecha_entrega + timedelta(days=7))
+
+    modalidad = lb.get("modalidad", "semanal")
+    num_cuotas = lb.get("num_cuotas", 0) or 0
+    cuota_monto = lb.get("cuota_monto", 0) or 0
+
+    if num_cuotas <= 0:
+        raise HTTPException(
+            status_code=422,
+            detail="num_cuotas no configurado. Use PUT /{id} para establecer plan_codigo primero.",
+        )
+
+    fechas = calcular_cronograma(
+        fecha_entrega=fecha_entrega,
+        modalidad=modalidad,
+        num_cuotas=num_cuotas,
+        fecha_primer_pago=fpc,
+        dia_cobro_especial=body.dia_cobro_especial,
+    )
+
+    cuotas = [
+        {"numero": i + 1, "monto": cuota_monto, "estado": "pendiente",
+         "fecha": f.isoformat(), "fecha_pago": None, "mora_acumulada": 0}
+        for i, f in enumerate(fechas)
+    ]
+
+    await db.loanbook.update_one(
+        {"loanbook_id": lb["loanbook_id"]},
+        {"$set": {
+            "estado": "activo",
+            "fecha_entrega": body.fecha_entrega,
+            "fecha_primer_pago": fpc.isoformat(),
+            "cuotas": cuotas,
+            "cuotas_pagadas": 0,
+            "cuotas_total": len(cuotas),
+            "saldo_capital": num_cuotas * cuota_monto,
+            "saldo_pendiente": num_cuotas * cuota_monto,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }},
+    )
+    await _recalcular_y_persistir(db, lb["loanbook_id"])
+    await _publish_event(
+        db, "moto.entregada.canonico", "routers.loanbook.put",
+        {"loanbook_id": lb["loanbook_id"], "fecha_entrega": body.fecha_entrega,
+         "fecha_primera_cuota": fpc.isoformat()},
+        accion=f"Entrega canónica {lb['loanbook_id']}",
+    )
+
+    return {
+        "success": True,
+        "loanbook_id": lb["loanbook_id"],
+        "estado": "activo",
+        "fecha_entrega": body.fecha_entrega,
+        "fecha_primera_cuota": fpc.isoformat(),
+        "num_cuotas": len(cuotas),
+    }
+
+
+class PutPagoBody(BaseModel):
+    """Registro canónico de pago con waterfall completo."""
+    monto_pago: float
+    metodo_pago: str = "efectivo"
+    fecha_pago: str | None = None           # yyyy-MM-dd
+    referencia: str | None = None
+    cuota_numero: int | None = None         # apunta a cuota específica (bypass waterfall)
+
+
+@router.put("/{identifier}/pago")
+async def put_pago(
+    identifier: str,
+    body: PutPagoBody,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Registro canónico de pago con waterfall ANZI → mora → vencidas → corriente.
+
+    Equivalente canónico del POST /registrar-pago (DEPRECATED).
+    Requiere autenticación. Aplica recalcular_loanbook() al final.
+    """
+    metodo = body.metodo_pago.lower()
+    if metodo not in METODOS_PAGO:
+        raise HTTPException(status_code=422, detail=f"metodo_pago inválido. Use: {sorted(METODOS_PAGO)}")
+
+    lb = await _find_lb_by_identifier(db, identifier)
+    if lb.get("estado") in ("pendiente_entrega", "saldado", "castigado"):
+        raise HTTPException(
+            status_code=422,
+            detail=f"No se puede registrar pago en estado '{lb.get('estado')}'",
+        )
+
+    today = date.today()
+    fecha_pago_str = body.fecha_pago or today.isoformat()
+    try:
+        fecha_pago = date.fromisoformat(fecha_pago_str)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="fecha_pago inválida (use yyyy-MM-dd)")
+
+    cuotas = lb.get("cuotas", [])
+    if not cuotas:
+        raise HTTPException(status_code=422, detail="Loanbook sin cuotas — ejecuta PUT /{id}/entrega primero")
+
+    anzi_pct = lb.get("anzi_pct", 0.02) or 0.0
+    mora_pendiente = 0
+    for c in cuotas:
+        if c.get("estado") == "pagada" or not c.get("fecha"):
+            continue
+        fc = date.fromisoformat(c["fecha"])
+        mora = calcular_mora(fc, fecha_pago, MORA_TASA_DIARIA)
+        c["mora_acumulada"] = mora
+        mora_pendiente += mora
+
+    vencidas_total = sum(
+        c["monto"] for c in cuotas
+        if c.get("estado") != "pagada" and c.get("fecha")
+        and date.fromisoformat(c["fecha"]) < fecha_pago
+    )
+    corriente_monto = 0
+    for c in cuotas:
+        if c.get("estado") == "pagada":
+            continue
+        if c.get("fecha") and date.fromisoformat(c["fecha"]) >= fecha_pago:
+            corriente_monto = c["monto"]
+            break
+        if not c.get("fecha"):
+            corriente_monto = c["monto"]
+            break
+
+    saldo_capital = lb.get("saldo_capital", 0) or 0
+    alloc = aplicar_waterfall(
+        monto_pago=body.monto_pago,
+        anzi_pct=anzi_pct,
+        mora_pendiente=mora_pendiente,
+        cuotas_vencidas_total=vencidas_total,
+        cuota_corriente=corriente_monto,
+        saldo_capital=saldo_capital,
+    )
+
+    pago_parcial = False
+    if body.cuota_numero is not None:
+        target = next((c for c in cuotas if c.get("numero") == body.cuota_numero), None)
+        if target is None:
+            raise HTTPException(status_code=404, detail=f"Cuota #{body.cuota_numero} no encontrada")
+        if target.get("estado") == "pagada":
+            raise HTTPException(status_code=409, detail=f"Cuota #{body.cuota_numero} ya está pagada")
+        pago_parcial = body.monto_pago < target["monto"]
+        target.update({"estado": "pagada", "fecha_pago": fecha_pago_str,
+                        "mora_acumulada": 0, "metodo_pago": metodo, "referencia": body.referencia})
+    else:
+        rem_venc = alloc["vencidas"]
+        rem_corr = alloc["corriente"]
+        for c in cuotas:
+            if c.get("estado") == "pagada":
+                continue
+            if c.get("fecha"):
+                fc = date.fromisoformat(c["fecha"])
+                if fc < fecha_pago and rem_venc >= c["monto"]:
+                    c.update({"estado": "pagada", "fecha_pago": fecha_pago_str,
+                               "mora_acumulada": 0, "metodo_pago": metodo, "referencia": body.referencia})
+                    rem_venc -= c["monto"]
+                    continue
+                if fc >= fecha_pago and rem_corr >= c["monto"]:
+                    c.update({"estado": "pagada", "fecha_pago": fecha_pago_str,
+                               "mora_acumulada": 0, "metodo_pago": metodo, "referencia": body.referencia})
+                    rem_corr -= c["monto"]
+                    break
+            elif rem_corr >= c["monto"]:
+                c.update({"estado": "pagada", "fecha_pago": fecha_pago_str,
+                           "metodo_pago": metodo, "referencia": body.referencia})
+                rem_corr -= c["monto"]
+                break
+
+    cuotas_pagadas = sum(1 for c in cuotas if c.get("estado") == "pagada")
+    new_saldo = max(saldo_capital - alloc["corriente"] - alloc["vencidas"] - alloc["capital"], 0)
+    nuevo_estado = "saldado" if new_saldo == 0 and cuotas_pagadas == len(cuotas) else estado_from_dpd(calcular_dpd(cuotas, fecha_pago))
+
+    await db.loanbook.update_one(
+        {"loanbook_id": lb["loanbook_id"]},
+        {"$set": {
+            "cuotas": cuotas,
+            "saldo_capital": new_saldo,
+            "saldo_pendiente": new_saldo,
+            "total_pagado": (lb.get("total_pagado", 0) or 0) + body.monto_pago,
+            "total_mora_pagada": (lb.get("total_mora_pagada", 0) or 0) + alloc["mora"],
+            "total_anzi_pagado": (lb.get("total_anzi_pagado", 0) or 0) + alloc["anzi"],
+            "cuotas_pagadas": cuotas_pagadas,
+            "estado": nuevo_estado,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }},
+    )
+    await _recalcular_y_persistir(db, lb["loanbook_id"])
+    await _publish_event(
+        db, "pago.cuota.canonico", "routers.loanbook.put",
+        {"loanbook_id": lb["loanbook_id"], "monto_pago": body.monto_pago,
+         "fecha_pago": fecha_pago_str, "desglose": alloc, "cuota_numero": body.cuota_numero},
+        accion=f"Pago canónico ${body.monto_pago:,.0f} {lb.get('vin') or lb['loanbook_id']}",
+    )
+
+    return {
+        "success": True,
+        "loanbook_id": lb["loanbook_id"],
+        "nuevo_saldo": new_saldo,
+        "nuevo_estado": nuevo_estado,
+        "cuotas_pagadas": cuotas_pagadas,
+        "desglose": alloc,
+        "pago_parcial": pago_parcial,
     }
