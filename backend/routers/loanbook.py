@@ -11,6 +11,7 @@ POST /api/loanbook/{id}/registrar-entrega       — Manual: activate a credit on
 import logging
 import uuid
 from datetime import date, datetime, timedelta, timezone
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -1391,3 +1392,46 @@ async def estado_historial(
 
     historial = [{k: v for k, v in d.items() if k != "_id"} for d in docs]
     return {"codigo": codigo, "total": len(historial), "historial": historial}
+
+
+# ─────────────────────── B3: Loan Tape Excel export ──────────────────────────
+
+@router.get("/export-loan-tape")
+async def export_loan_tape_excel(
+    fecha_corte: Optional[date] = None,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Exporta el Loan Tape completo en formato Excel (.xlsx).
+
+    Genera un archivo con 5 hojas:
+      1. Loan Tape RDX     — Un loanbook RDX por fila, 38 columnas
+      2. Loan Tape RODANTE — Un loanbook RODANTE por fila
+      3. Cronograma        — Una cuota por fila de todos los loanbooks
+      4. KPIs Mora         — 8 indicadores de cartera con semáforo
+      5. Roll Rate         — Matriz 5×5 de migración entre buckets
+
+    Parámetros:
+      fecha_corte (opcional): Fecha de corte para el reporte.
+                               Defaults al día de hoy si no se especifica.
+
+    Requiere autenticación.
+    """
+    from services.loanbook.loan_tape_service import generar_loan_tape
+
+    fecha = fecha_corte or date.today()
+
+    loanbooks = await db.loanbook.find({}).to_list(length=5000)
+
+    xlsx_bytes = generar_loan_tape(loanbooks, fecha_corte=fecha)
+
+    filename = f"loanbook_roddos_{fecha.strftime('%Y-%m-%d')}.xlsx"
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    }
+    return StreamingResponse(
+        iter([xlsx_bytes]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=headers,
+    )

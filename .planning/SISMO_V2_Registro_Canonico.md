@@ -686,3 +686,60 @@ Solo cuando `moto_valor_origen > 0`. Campo `ltv` inyectado en `metadata_producto
 | `test_loanbook_schema.py` | 52 | ✅ GREEN (sin regresión) |
 | `test_catalogo_service.py` | 48 | ✅ GREEN (sin regresión) |
 | **Total B0+B1+B2** | **206+** | ✅ Sin regresiones nuevas |
+
+---
+
+## 17. BUILD B3 — Loan Tape Excel Export
+
+**Branch:** `build/B3-loan-tape-excel`
+**Commit:** (pendiente)
+**Fecha:** Abril 2026
+
+### 17A. Nuevos archivos
+
+| Archivo | Descripción |
+|---------|-------------|
+| `backend/services/loanbook/loan_tape_service.py` | Función pura `generar_loan_tape(loanbooks, fecha_corte) -> bytes` |
+| `backend/tests/test_loan_tape.py` | 37 tests del generador Excel |
+
+### 17B. Archivos modificados
+
+| Archivo | Cambio |
+|---------|--------|
+| `backend/routers/loanbook.py` | `GET /api/loanbook/export-loan-tape` + `Optional` import |
+
+### 17C. Estructura del Excel (5 hojas)
+
+| Hoja | Contenido | Columnas |
+|------|-----------|----------|
+| `Loan Tape RDX` | Un loanbook RDX por fila, celdas rojas en datos inválidos | 38 cols (`_COLS_RDX`) |
+| `Loan Tape RODANTE` | Un loanbook RODANTE por fila, columnas condicionales por subtipo | `_COLS_RODANTE_BASE` |
+| `Cronograma` | Una cuota por fila de todos los loanbooks, color coding por estado | 20 cols (`_COLS_CRONOGRAMA`) |
+| `KPIs Mora` | 8 indicadores de cartera con valor, umbral y semáforo (●) | 4 cols |
+| `Roll Rate` | Matriz 5×5 de migración entre buckets (placeholder 0.0%) | 5 estados |
+
+### 17D. Reglas implementadas
+
+- **Función pura**: `generar_loan_tape` no hace I/O — recibe `loanbooks: list[dict]`, devuelve `bytes`
+- **Patrón**: igual que `excel_export.py` — DB fetch en el router, pure service
+- **Celdas rojas RDX**: vin vacío → col `moto_vin`; saldo<0 → col `saldo_capital`; dpd>0 y estado=="Current" → cols `dpd` + `estado`
+- **Cronograma**: acepta tanto `cuota["fecha"]` como `cuota["fecha_programada"]`; color verde=pagada, rojo=vencida, amarillo=próximo miércoles
+- **KPIs**: mora promedio, % cartera mora, valor mora, intereses mora, tasa early, tasa late+, tasa pre-default, collection rate
+- **Roll Rate**: placeholder 0.0% con `number_format = "0.0%"`, pendiente historial en `loanbook_modificaciones`
+- **Filename convention**: `loanbook_roddos_YYYY-MM-DD.xlsx`
+
+### 17E. Endpoint nuevo
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| GET | `/api/loanbook/export-loan-tape` | Descarga Excel con 5 hojas; parámetro `fecha_corte` opcional (default: hoy) |
+
+### 17F. Tests
+
+| Suite | Tests | Estado |
+|-------|-------|--------|
+| `test_loan_tape.py` | 37 | ✅ GREEN |
+| `test_estados_service.py` | 81 | ✅ GREEN (sin regresión) |
+| `test_dpd_scheduler.py` | 25 | ✅ GREEN (sin regresión) |
+| `test_loanbook_schema.py` | 52 | ✅ GREEN (sin regresión) |
+| **Total B0+B1+B2+B3** | **195** | ✅ Sin regresiones |
