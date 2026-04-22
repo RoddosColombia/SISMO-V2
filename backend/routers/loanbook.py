@@ -20,6 +20,7 @@ from core.auth import get_current_user
 from core.database import get_db
 from services.loanbook.auditor import auditar_loanbooks as _auditar_loanbooks
 from services.loanbook.reparador import reparar_loanbook as _reparar_loanbook
+from services.loanbook.reglas_negocio import PLAN_CUOTAS as _PLAN_CUOTAS, validar_fecha_pago as _validar_fecha_pago
 from services.loanbook.state_calculator import (
     PLANES_RODDOS as _PLANES_RODDOS,
     patch_set_from_recalculo as _patch_set_recalculo,
@@ -1199,6 +1200,12 @@ async def put_pago(
         fecha_pago = date.fromisoformat(fecha_pago_str)
     except ValueError:
         raise HTTPException(status_code=422, detail="fecha_pago inválida (use yyyy-MM-dd)")
+
+    # Gate: fecha_pago futura es físicamente imposible
+    try:
+        _validar_fecha_pago(fecha_pago, hoy=today)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
 
     cuotas = lb.get("cuotas", [])
     if not cuotas:

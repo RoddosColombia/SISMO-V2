@@ -38,12 +38,15 @@ def test_p39s_semanal_auto_deriva_39():
     assert resultado == 39
 
 
-# ─── 3. P52S quincenal auto-deriva 24 cuotas ─────────────────────────────────
+# ─── 3. P52S quincenal auto-deriva 26 cuotas ─────────────────────────────────
 
-def test_p52s_quincenal_auto_deriva_24():
-    """PUT con plan_codigo=P52S modalidad=quincenal → round(52 / 2.2) = 24."""
+def test_p52s_quincenal_auto_deriva_26():
+    """PUT con plan_codigo=P52S modalidad=quincenal → tabla PLAN_CUOTAS dice 26.
+
+    round(52/2.2)=24 era la fórmula incorrecta. La tabla de negocio manda: 26.
+    """
     resultado = _derivar_total_cuotas("P52S", "quincenal")
-    assert resultado == round(52 / 2.2)  # 24
+    assert resultado == 26
 
 
 # ─── 4. fecha_primera_cuota no-miércoles debe fallar ─────────────────────────

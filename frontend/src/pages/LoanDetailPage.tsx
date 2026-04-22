@@ -2,23 +2,20 @@ import { useEffect, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { apiGet, apiPatch, apiPut } from '@/lib/api'
 
-// ─── Constantes de plan (espejo exacto de state_calculator.py) ───────────────
-const PLANES_RODDOS: Record<string, number> = {
-  P15S: 15,
-  P39S: 39,
-  P52S: 52,
-  P78S: 78,
-}
-const MULT_CUOTAS: Record<string, number> = {
-  semanal: 1.0,
-  quincenal: 1 / 2.2,
-  mensual: 1 / 4.4,
+// ─── Tabla fija plan × modalidad (espejo exacto de reglas_negocio.PLAN_CUOTAS) ─
+// NUNCA derivar via round(base/2.2). La tabla es el contrato de negocio.
+// P39S quincenal = 20 (no 18), P52S quincenal = 26 (no 24).
+const PLAN_CUOTAS: Record<string, Record<string, number | null>> = {
+  P15S: { semanal: 15,  quincenal: null, mensual: null },
+  P39S: { semanal: 39,  quincenal: 20,   mensual: 9 },
+  P52S: { semanal: 52,  quincenal: 26,   mensual: 12 },
+  P78S: { semanal: 78,  quincenal: 39,   mensual: 18 },
 }
 function derivarTotalCuotas(planCodigo: string, modalidad: string): number | null {
-  const base = PLANES_RODDOS[planCodigo]
-  if (base == null) return null
-  const factor = MULT_CUOTAS[modalidad] ?? 1.0
-  return Math.round(base * factor)
+  return PLAN_CUOTAS[planCodigo]?.[modalidad] ?? null
+}
+function calcularValorTotal(numCuotas: number, cuotaMonto: number, cuotaInicial: number): number {
+  return numCuotas * cuotaMonto + cuotaInicial
 }
 function calcularValorTotal(numCuotas: number, cuotaMonto: number, cuotaInicial: number): number {
   return numCuotas * cuotaMonto + cuotaInicial

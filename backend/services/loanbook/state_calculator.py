@@ -22,26 +22,16 @@ import copy
 from datetime import date
 
 from core.loanbook_model import calcular_dpd, estado_from_dpd
+from services.loanbook.reglas_negocio import PLAN_CUOTAS, get_num_cuotas
 
 # ─────────────────────── Constantes de negocio ────────────────────────────────
 
+# Re-exportado para backward-compat con imports existentes.
+# La fuente de verdad es reglas_negocio.PLAN_CUOTAS.
 PLANES_RODDOS: dict[str, int] = {
-    "P15S": 15,   # Comparendos — 15 cuotas semanales
-    "P39S": 39,   # Motos estándar — 39 semanas ≈ 9 meses
-    "P52S": 52,   # Motos estándar — 52 semanas = 1 año
-    "P78S": 78,   # Motos premium — 78 semanas ≈ 18 meses
-}
-
-MULTIPLICADOR_TOTAL_CUOTAS: dict[str, float] = {
-    "semanal":   1.0,
-    "quincenal": 1 / 2.2,   # round(39/2.2) = 18
-    "mensual":   1 / 4.4,   # round(39/4.4) = 9
-}
-
-MULTIPLICADOR_VALOR_CUOTA: dict[str, float] = {
-    "semanal":   1.0,
-    "quincenal": 2.2,
-    "mensual":   4.4,
+    plan: vals["semanal"]  # type: ignore[index]
+    for plan, vals in PLAN_CUOTAS.items()
+    if vals.get("semanal") is not None
 }
 
 # Estados terminales — no se sobreescriben con DPD
@@ -54,12 +44,11 @@ ESTADO_NO_ENTREGADO = "pendiente_entrega"
 # ─────────────────────── Helpers internos ─────────────────────────────────────
 
 def _derivar_total_cuotas(plan_codigo: str, modalidad: str) -> int | None:
-    """Número canónico de cuotas según plan y modalidad."""
-    base = PLANES_RODDOS.get(plan_codigo)
-    if base is None:
-        return None
-    factor = MULTIPLICADOR_TOTAL_CUOTAS.get(modalidad, 1.0)
-    return round(base * factor)
+    """Número canónico de cuotas según plan y modalidad.
+
+    Delega a reglas_negocio.get_num_cuotas() — tabla fija, sin fórmulas.
+    """
+    return get_num_cuotas(plan_codigo, modalidad)
 
 
 def _plan_codigo(lb: dict) -> str | None:

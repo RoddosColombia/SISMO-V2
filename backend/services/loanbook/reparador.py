@@ -56,6 +56,13 @@ def reparar_loanbook(
     """
     Analiza y (opcionalmente) repara un loanbook.
 
+    Reglas de reparación (en orden):
+      A. fecha_pago > hoy (físicamente imposible):
+         - Sin evidencia → revertir a pendiente
+         - Con evidencia  → marcar requiere_revision_manual=True (no tocar)
+      B. fecha_cuota > hoy AND estado=pagada AND sin evidencia → revertir
+      C. num_cuotas / valor_total incorrectos → corregir via recalcular_loanbook()
+
     Args:
         lb:       Documento loanbook sin _id.
         hoy:      Fecha de referencia (default: date.today()). Inyectable para tests.
@@ -67,6 +74,7 @@ def reparar_loanbook(
           - loanbook_id
           - tiene_problemas: bool
           - reparaciones: list[dict] — descripción de cada corrección
+          - requieren_revision_manual: list[dict] — cuotas con referencia y fecha imposible
           - documento_reparado: dict | None — el doc corregido si dry_run=False
     """
     if hoy is None:
@@ -77,22 +85,54 @@ def reparar_loanbook(
     cliente = lb.get("cliente", {}).get("nombre", "Desconocido")
 
     reparaciones: list[dict] = []
+    revision_manual: list[dict] = []
     doc = copy.deepcopy(lb)
     cuotas: list[dict] = doc.get("cuotas", [])
 
-    # ── Reparación 1: cuotas futuras marcadas pagadas sin evidencia ───────────
     for c in cuotas:
-        if c.get("estado") != "pagada":
-            continue
         fecha_cuota = c.get("fecha", "")
-        if not fecha_cuota or fecha_cuota <= hoy_str:
-            # Pasada o sin fecha — no es seed corrupto (aunque no tenga evidencia)
+        fecha_pago_c = c.get("fecha_pago") or ""
+        estado_c = c.get("estado", "")
+        evidencia = _tiene_evidencia_real(c)
+
+        # ── Regla A: fecha_pago registrada en el futuro (físicamente imposible) ──
+        if fecha_pago_c and fecha_pago_c > hoy_str:
+            if evidencia:
+                # Tiene referencia bancaria — no tocar, pero señalar para revisión
+                revision_manual.append({
+                    "cuota_numero": c.get("numero"),
+                    "fecha_cuota": fecha_cuota,
+                    "fecha_pago": fecha_pago_c,
+                    "estado": estado_c,
+                    "razon": "fecha_pago futura con referencia bancaria — requiere revisión humana",
+                })
+                if not dry_run:
+                    c["requiere_revision_manual"] = True
+            else:
+                # Sin referencia → revertir
+                reparaciones.append({
+                    "tipo": "cuota_fecha_pago_futura_revertida",
+                    "cuota_numero": c.get("numero"),
+                    "fecha_cuota": fecha_cuota,
+                    "fecha_pago_registrada": fecha_pago_c,
+                    "estado_anterior": estado_c,
+                    "estado_nuevo": "pendiente",
+                    "razon": "fecha_pago en el futuro sin referencia (físicamente imposible)",
+                })
+                if not dry_run:
+                    c["estado"] = "pendiente"
+                    c["fecha_pago"] = None
+            continue  # ya procesada — no aplica regla B
+
+        # ── Regla B: cuota futura marcada pagada sin evidencia ─────────────────
+        if estado_c != "pagada":
             continue
-        if _tiene_evidencia_real(c):
-            # Pago adelantado legítimo — no tocar
+        if not fecha_cuota or fecha_cuota <= hoy_str:
+            continue  # cuota pasada — no es seed corrupto
+        if evidencia:
+            # Pago adelantado legítimo con referencia bancaria — no tocar
             continue
 
-        # Cuota futura pagada sin evidencia → revertir
         reparaciones.append({
             "tipo": "cuota_seed_revertida",
             "cuota_numero": c.get("numero"),
@@ -101,12 +141,11 @@ def reparar_loanbook(
             "estado_nuevo": "pendiente",
             "razon": "Cuota futura sin referencia ni método de pago real (seed corrupto)",
         })
-
         if not dry_run:
             c["estado"] = "pendiente"
             c["fecha_pago"] = None
 
-    # ── Reparación 2: num_cuotas / valor_total incorrectos ────────────────────
+    # ── Regla C: num_cuotas / valor_total incorrectos ─────────────────────────
     num_cuotas_antes = doc.get("num_cuotas")
     valor_total_antes = doc.get("valor_total")
 
@@ -120,7 +159,7 @@ def reparar_loanbook(
             "tipo": "num_cuotas_corregido",
             "valor_anterior": num_cuotas_antes,
             "valor_nuevo": num_cuotas_despues,
-            "razon": f"PLANES_RODDOS[{doc.get('plan_codigo')}] × modalidad[{doc.get('modalidad')}]",
+            "razon": f"PLAN_CUOTAS[{doc.get('plan_codigo')}][{doc.get('modalidad')}]",
         })
 
     if valor_total_antes != valor_total_despues:
@@ -134,7 +173,8 @@ def reparar_loanbook(
     return {
         "loanbook_id": loanbook_id,
         "cliente": cliente,
-        "tiene_problemas": len(reparaciones) > 0,
+        "tiene_problemas": len(reparaciones) > 0 or len(revision_manual) > 0,
         "reparaciones": reparaciones,
+        "requieren_revision_manual": revision_manual,
         "documento_reparado": doc_recalculado if not dry_run else None,
     }

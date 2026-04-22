@@ -105,18 +105,18 @@ def test_p15s_semanal_corrige_a_15():
     assert resultado["num_cuotas"] == 15
 
 
-def test_p52s_quincenal_divide_entre_2_2():
-    """P52S quincenal → round(52 / 2.2) = 24 cuotas."""
+def test_p52s_quincenal_tabla_fija_26():
+    """P52S quincenal → tabla PLAN_CUOTAS dice 26 (no round(52/2.2)=24)."""
     lb = _make_lb(plan_codigo="P52S", modalidad="quincenal", cuota_monto=180_000 * 2, num_cuotas=99)
     resultado = recalcular_loanbook(lb)
-    assert resultado["num_cuotas"] == round(52 / 2.2)  # 24
+    assert resultado["num_cuotas"] == 26
 
 
-def test_p39s_mensual_divide_entre_4_4():
-    """P39S mensual → round(39 / 4.4) = 9 cuotas."""
+def test_p39s_mensual_tabla_fija_9():
+    """P39S mensual → tabla PLAN_CUOTAS dice 9 (coincide con round(39/4.4)=9)."""
     lb = _make_lb(plan_codigo="P39S", modalidad="mensual", cuota_monto=204_000 * 4, num_cuotas=99)
     resultado = recalcular_loanbook(lb)
-    assert resultado["num_cuotas"] == round(39 / 4.4)  # 9
+    assert resultado["num_cuotas"] == 9
 
 
 # ─── Tests de valor_total ─────────────────────────────────────────────────────
