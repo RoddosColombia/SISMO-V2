@@ -262,7 +262,9 @@ async def generar_cronogramas_todos(
                 {"$set": {"cuotas": nuevas_cuotas, "updated_at": datetime.utcnow()}},
             )
             procesados += 1
-        except Exception:
+        except Exception as e:
+            lb_id = lb.get("loanbook_id", str(lb.get("_id", "?")))
+            logger.error(f"[generar-cronogramas-todos] Error en {lb_id}: {type(e).__name__}: {e}")
             errores += 1
 
     return {
