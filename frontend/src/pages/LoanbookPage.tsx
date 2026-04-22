@@ -473,6 +473,29 @@ export default function LoanbookPage() {
     }
   }, [])
 
+  const repararUno = useCallback(async (loanbookId: string) => {
+    if (!window.confirm(`¿Reparar ${loanbookId}? Se corregirán num_cuotas, valor_total y cuotas seed.`)) return
+    try {
+      await apiPost(`/loanbook/${loanbookId}/reparar?dry_run=false`, {})
+      // Re-run audit to reflect changes
+      const data = await apiGet<AuditoriaResult>('/loanbook/auditoria')
+      setAuditResult(data)
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : 'Error al reparar')
+    }
+  }, [])
+
+  const repararTodos = useCallback(async () => {
+    if (!window.confirm('¿Reparar TODOS los loanbooks con inconsistencias? Esta acción aplica cambios en producción.')) return
+    try {
+      await apiPost('/loanbook/reparar-todos?dry_run=false', {})
+      const data = await apiGet<AuditoriaResult>('/loanbook/auditoria')
+      setAuditResult(data)
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : 'Error al reparar todos')
+    }
+  }, [])
+
   useEffect(() => {
     setLoading(true)
     loadData().finally(() => setLoading(false))
@@ -542,6 +565,14 @@ export default function LoanbookPage() {
               >
                 {auditLoading ? 'Ejecutando...' : 'Ejecutar auditoría'}
               </button>
+              {auditResult && auditResult.resumen.valor_total_incorrecto + auditResult.resumen.total_cuotas_incorrecto_segun_plan + auditResult.resumen.cuotas_pagadas_con_fecha_imposible > 0 && (
+                <button
+                  onClick={repararTodos}
+                  className="px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors"
+                >
+                  Reparar todos
+                </button>
+              )}
               {auditResult && (
                 <span className="text-xs text-on-surface-variant">
                   {new Date(auditResult.fecha_auditoria).toLocaleString('es-CO')} · {auditResult.total_loanbooks} loanbooks analizados
@@ -629,6 +660,7 @@ export default function LoanbookPage() {
                             <th className="text-left px-3 py-2 text-on-surface-variant font-medium">Plan</th>
                             <th className="text-center px-3 py-2 text-on-surface-variant font-medium">Muestra</th>
                             <th className="text-center px-3 py-2 text-on-surface-variant font-medium">Correcto</th>
+                            <th className="px-3 py-2" />
                           </tr>
                         </thead>
                         <tbody>
@@ -639,6 +671,12 @@ export default function LoanbookPage() {
                               <td className="px-3 py-2 text-on-surface-variant">{c.plan_codigo} · {c.modalidad}</td>
                               <td className="px-3 py-2 text-center text-red-600 font-bold">{c.total_cuotas_muestra}</td>
                               <td className="px-3 py-2 text-center text-emerald-600 font-bold">{c.total_cuotas_correcto}</td>
+                              <td className="px-3 py-2">
+                                <button onClick={() => repararUno(c.loanbook_id)}
+                                  className="px-2 py-1 rounded text-[10px] font-medium bg-amber-500/10 text-amber-700 hover:bg-amber-500/20 transition-colors whitespace-nowrap">
+                                  Reparar
+                                </button>
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -657,9 +695,15 @@ export default function LoanbookPage() {
                     <div className="space-y-0">
                       {auditResult.casos.cuotas_pagadas_fecha_imposible.map(c => (
                         <div key={c.loanbook_id} className="px-4 py-3 border-t border-surface-container-low first:border-0">
-                          <div className="flex items-baseline gap-2 mb-1.5">
-                            <span className="font-mono text-xs text-on-surface-variant">{c.loanbook_id}</span>
-                            <span className="text-sm font-medium text-on-surface">{c.cliente}</span>
+                          <div className="flex items-center justify-between mb-1.5">
+                            <div className="flex items-baseline gap-2">
+                              <span className="font-mono text-xs text-on-surface-variant">{c.loanbook_id}</span>
+                              <span className="text-sm font-medium text-on-surface">{c.cliente}</span>
+                            </div>
+                            <button onClick={() => repararUno(c.loanbook_id)}
+                              className="px-2 py-1 rounded text-[10px] font-medium bg-orange-500/10 text-orange-700 hover:bg-orange-500/20 transition-colors whitespace-nowrap shrink-0">
+                              Reparar
+                            </button>
                           </div>
                           <div className="flex flex-wrap gap-1.5">
                             {c.cuotas.map(cu => (

@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from core.auth import get_current_user
 from core.database import get_db
 from services.loanbook.auditor import auditar_loanbooks as _auditar_loanbooks
+from services.loanbook.reparador import reparar_loanbook as _reparar_loanbook
 from services.loanbook.state_calculator import patch_set_from_recalculo as _patch_set_recalculo
 from core.loanbook_model import (
     MORA_TASA_DIARIA,
@@ -113,6 +114,49 @@ async def get_auditoria(
     # Strip MongoDB _id before passing to pure function
     loanbooks = [{k: v for k, v in doc.items() if k != "_id"} for doc in docs]
     return _auditar_loanbooks(loanbooks)
+
+
+@router.post("/reparar-todos")
+async def reparar_todos(
+    dry_run: bool = True,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Repara inconsistencias estructurales en TODOS los loanbooks del portafolio.
+
+    dry_run=True (default): solo describe qué cambiaría, sin persistir.
+    dry_run=False: aplica las reparaciones en MongoDB.
+
+    Requiere autenticación.
+    """
+    docs = await db.loanbook.find().to_list(length=2000)
+    resultados = []
+    reparados = 0
+
+    for doc in docs:
+        doc.pop("_id", None)
+        resultado = _reparar_loanbook(doc, dry_run=dry_run)
+
+        if resultado["tiene_problemas"]:
+            resultados.append(resultado)
+            if not dry_run and resultado["documento_reparado"]:
+                doc_rep = resultado["documento_reparado"]
+                campos = {k: v for k, v in doc_rep.items()
+                          if k in ("num_cuotas", "valor_total", "saldo_capital",
+                                   "total_pagado", "plan", "cuotas", "estado")}
+                await db.loanbook.update_one(
+                    {"loanbook_id": resultado["loanbook_id"]},
+                    {"$set": campos},
+                )
+                reparados += 1
+
+    return {
+        "dry_run": dry_run,
+        "total_analizados": len(docs),
+        "con_problemas": len(resultados),
+        "reparados": reparados if not dry_run else 0,
+        "detalle": resultados,
+    }
 
 
 @router.get("")
@@ -228,6 +272,48 @@ async def get_loanbook(
     lb["proxima_cuota"] = proxima
 
     return lb
+
+
+@router.post("/{identifier}/reparar")
+async def reparar_uno(
+    identifier: str,
+    dry_run: bool = True,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Repara inconsistencias estructurales de un loanbook individual.
+
+    dry_run=True (default): describe qué cambiaría, sin persistir.
+    dry_run=False: aplica las reparaciones en MongoDB.
+
+    Acepta VIN o loanbook_id. Requiere autenticación.
+    """
+    lb = await _find_lb_by_identifier(db, identifier)
+    lb.pop("_id", None)
+
+    resultado = _reparar_loanbook(lb, dry_run=dry_run)
+
+    if not dry_run and resultado["tiene_problemas"] and resultado["documento_reparado"]:
+        doc_rep = resultado["documento_reparado"]
+        campos = {k: v for k, v in doc_rep.items()
+                  if k in ("num_cuotas", "valor_total", "saldo_capital",
+                           "total_pagado", "plan", "cuotas", "estado")}
+        await db.loanbook.update_one(
+            {"loanbook_id": resultado["loanbook_id"]},
+            {"$set": campos},
+        )
+        await _publish_event(
+            db,
+            "loanbook.reparado",
+            "routers.loanbook.reparador",
+            {
+                "loanbook_id": resultado["loanbook_id"],
+                "reparaciones": resultado["reparaciones"],
+            },
+            accion=f"Reparación estructural {resultado['loanbook_id']}",
+        )
+
+    return resultado
 
 
 # ═══════════════════════════════════════════
