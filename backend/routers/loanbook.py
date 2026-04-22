@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from core.auth import get_current_user
 from core.database import get_db
 from services.loanbook.auditor import auditar_loanbooks as _auditar_loanbooks
+from services.loanbook.state_calculator import patch_set_from_recalculo as _patch_set_recalculo
 from core.loanbook_model import (
     MORA_TASA_DIARIA,
     aplicar_waterfall,
@@ -355,6 +356,7 @@ async def patch_loanbook(
         accion=f"Edición manual {lb['loanbook_id']}: {', '.join(campos)}",
     )
 
+    await _recalcular_y_persistir(db, lb["loanbook_id"])
     logger.info(f"Loanbook editado: {lb['loanbook_id']} campos={campos}")
 
     return {
@@ -455,6 +457,7 @@ async def patch_cuota(
         accion=f"Edición manual cuota #{numero} en {lb['loanbook_id']}",
     )
 
+    await _recalcular_y_persistir(db, lb["loanbook_id"])
     logger.info(f"Cuota editada: {lb['loanbook_id']} #{numero} cambios={list(cambios.keys())}")
 
     return {
@@ -481,6 +484,28 @@ async def _find_lb_by_identifier(db: AsyncIOMotorDatabase, identifier: str) -> d
             detail=f"Loanbook no encontrado para identifier '{identifier}'",
         )
     return lb
+
+
+async def _recalcular_y_persistir(db: AsyncIOMotorDatabase, loanbook_id: str) -> None:
+    """Post-write recálculo estructural de campos derivados.
+
+    Corrige num_cuotas, valor_total y saldo_capital a partir de PLANES_RODDOS
+    y la lista de cuotas real. NO sobreescribe estado ni dpd — cada endpoint
+    ya los gestiona con su propia lógica de negocio.
+    """
+    lb = await db.loanbook.find_one({"loanbook_id": loanbook_id})
+    if not lb:
+        return
+    lb.pop("_id", None)
+    patch = _patch_set_recalculo(lb)
+    # Solo campos estructurales — estado y dpd los gestiona cada endpoint
+    campos = {k: v for k, v in patch.items()
+              if k in ("num_cuotas", "valor_total", "saldo_capital", "total_pagado", "plan")}
+    if campos:
+        await db.loanbook.update_one(
+            {"loanbook_id": loanbook_id},
+            {"$set": campos},
+        )
 
 
 async def _publish_event(db: AsyncIOMotorDatabase, event_type: str, source: str, datos: dict, alegra_id: str | None = None, accion: str = "") -> None:
@@ -666,6 +691,7 @@ async def registrar_pago_manual(
         accion=f"Pago manual ${body.monto_pago:,.0f} VIN {lb.get('vin') or lb['loanbook_id']}",
     )
 
+    await _recalcular_y_persistir(db, lb["loanbook_id"])
     logger.info(f"Pago manual registrado: {lb['loanbook_id']} ${body.monto_pago:,.0f} método={metodo}")
 
     return {
@@ -827,6 +853,8 @@ async def registrar_entrega(
         },
         accion=f"Entrega manual {lb['loanbook_id']} — primer cobro {fpc.isoformat()}",
     )
+
+    await _recalcular_y_persistir(db, lb["loanbook_id"])
 
     return {
         "success": True,
