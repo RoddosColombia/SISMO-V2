@@ -350,7 +350,10 @@ async def listar_loanbooks(
         proxima = None
         for c in cuotas:
             if c.get("estado") != "pagada" and c.get("fecha"):
-                proxima = {"fecha": c["fecha"], "monto": c["monto"]}
+                proxima = {
+                    "fecha": c["fecha"],
+                    "monto": c.get("monto") or c.get("monto_total", 0),
+                }
                 break
 
         lb["cuotas_pagadas"] = pagadas
