@@ -22,17 +22,68 @@ import copy
 from datetime import date
 
 from core.loanbook_model import calcular_dpd, estado_from_dpd
-from services.loanbook.reglas_negocio import PLAN_CUOTAS, get_num_cuotas
+from services.loanbook.reglas_negocio import get_num_cuotas
+from services.loanbook import catalogo_service as _cs
 
 # ─────────────────────── Constantes de negocio ────────────────────────────────
 
-# Re-exportado para backward-compat con imports existentes.
-# La fuente de verdad es reglas_negocio.PLAN_CUOTAS.
-PLANES_RODDOS: dict[str, int] = {
-    plan: vals["semanal"]  # type: ignore[index]
-    for plan, vals in PLAN_CUOTAS.items()
-    if vals.get("semanal") is not None
-}
+# PLANES_RODDOS — dict lazy: plan_codigo → num_cuotas_semanal.
+# Se auto-popula desde catalogo_service en el primer acceso.
+# En producción el cache ya está calentado por warm_catalogo() en lifespan.
+# En tests conftest.py llama seed_for_tests() antes de los tests.
+
+class _LazyPlanesRoddos(dict):
+    """Dict lazy que se auto-popula desde catalogo_service en el primer acceso."""
+
+    _loaded: bool = False
+
+    def _refresh(self) -> None:
+        self.clear()
+        super().update(_cs.get_planes_roddos_dict())
+        self._loaded = True
+
+    def _ensure(self) -> None:
+        if not self._loaded:
+            self._refresh()
+
+    def get(self, key, default=None):
+        self._ensure()
+        return super().get(key, default)
+
+    def __getitem__(self, key):
+        self._ensure()
+        return super().__getitem__(key)
+
+    def __contains__(self, key):
+        self._ensure()
+        return super().__contains__(key)
+
+    def keys(self):
+        self._ensure()
+        return super().keys()
+
+    def values(self):
+        self._ensure()
+        return super().values()
+
+    def items(self):
+        self._ensure()
+        return super().items()
+
+    def __iter__(self):
+        self._ensure()
+        return super().__iter__()
+
+    def __len__(self):
+        self._ensure()
+        return super().__len__()
+
+    def _invalidate(self) -> None:
+        self._loaded = False
+        self.clear()
+
+
+PLANES_RODDOS: dict[str, int] = _LazyPlanesRoddos()
 
 # Estados terminales — no se sobreescriben con DPD
 ESTADOS_TERMINALES = {"saldado", "castigado"}

@@ -510,3 +510,105 @@ Implementado en: `validar_fecha_pago()` → `PUT /{id}/pago`.
 | `test_valor_total_kreyser_P39S_quincenal` | test_reglas_negocio.py | 20×420k+1.46M=9.86M |
 | `test_p52s_quincenal_tabla_fija_26` | test_state_calculator.py | recalcular_loanbook corrige a 26 |
 | 58 tests total, todos GREEN | — | — |
+
+---
+
+## 14. BUILD B0 — Catálogos maestros en MongoDB (R-06)
+
+**Branch:** `build/B1-schema-dual` (commit: f1e208d)
+**Estado:** COMPLETO
+
+### 14A. Cambios
+
+| Archivo | Acción | Descripción |
+|---------|--------|-------------|
+| `services/loanbook/catalogo_service.py` | NUEVO | Cache en memoria de catálogos — `warm_catalogo()` async + lectura sync |
+| `scripts/poblar_catalogos.py` | NUEVO | Pobla `catalogo_planes` (10 docs) y `catalogo_rodante` (4 docs) en MongoDB |
+| `services/loanbook/reglas_negocio.py` | MODIFICADO | Eliminado `PLAN_CUOTAS` hardcoded → `_LazyPlanCuotas(dict)` proxy |
+| `services/loanbook/state_calculator.py` | MODIFICADO | Eliminado `PLANES_RODDOS` hardcoded → `_LazyPlanesRoddos(dict)` proxy |
+| `core/database.py` | MODIFICADO | `warm_catalogo(db)` en lifespan de FastAPI |
+| `tests/conftest.py` | MODIFICADO | `seed_catalogos` fixture autouse session para tests unitarios |
+| `tests/test_catalogo_service.py` | NUEVO | 48 tests del cache en memoria |
+
+### 14B. Reglas implementadas
+
+- **R-06:** `PLAN_CUOTAS` NUNCA hardcoded en Python. Solo fuente: `catalogo_planes` MongoDB.
+- Los lazy dicts (`_LazyPlanCuotas`, `_LazyPlanesRoddos`) se auto-populan al primer acceso.
+- `seed_for_tests()` permite tests unitarios sin MongoDB.
+
+---
+
+## 15. BUILD B1 — Schema dual RDX/RODANTE
+
+**Branch:** `build/B1-schema-dual`
+**Estado:** COMPLETO (pendiente ejecución en prod)
+
+### 15A. Nuevos archivos
+
+| Archivo | Descripción |
+|---------|-------------|
+| `models/__init__.py` | Paquete models |
+| `models/loanbook_schema.py` | Pydantic schemas: 5 metadata classes + `LoanbookBase/Create/Update` |
+| `scripts/migrar_loanbooks_a_schema_dual.py` | Migración idempotente — backup + expand schema + 4 colecciones |
+| `services/loanbook/loanbook_service.py` | `registrar_acuerdo_pago()`, `registrar_cierre()`, `registrar_modificacion()` |
+| `tests/test_loanbook_schema.py` | 52 tests del schema dual (todos GREEN) |
+
+### 15B. Validaciones Pydantic (model_validator)
+
+| Regla | Descripción | Error |
+|-------|-------------|-------|
+| R-06 | `plan_codigo` validado contra `catalogo_planes` en memoria | ValueError descriptivo |
+| R-23 | RODANTE solo acepta `modalidad_pago='semanal'` | ValueError con "R-23" |
+| — | RODANTE requiere `subtipo_rodante` | ValueError |
+| — | RDX prohíbe `subtipo_rodante` | ValueError |
+| P-07 | RODANTE+P78S/P52S/P39S rechazados | ValidationError |
+| P-10 | RODANTE+quincenal/mensual rechazados | ValidationError |
+
+### 15C. Metadata por producto/subtipo
+
+| Producto/subtipo | Modelo Pydantic | Campos requeridos |
+|-----------------|-----------------|-------------------|
+| RDX | `MetadataRDX` | `moto_vin`, `moto_modelo` |
+| RODANTE/repuestos | `MetadataRepuestos` | `referencia_sku`, `cantidad`, `valor_unitario`, `descripcion_repuesto` |
+| RODANTE/soat | `MetadataSoat` | `poliza_numero`, `aseguradora`, `cilindraje_moto`, `vigencia_desde`, `vigencia_hasta`, `valor_soat`, `placa_cubierta` |
+| RODANTE/comparendo | `MetadataComparendo` | `comparendo_numero`, `entidad_emisora`, `fecha_infraccion`, `valor_comparendo` |
+| RODANTE/licencia | `MetadataLicencia` | `categoria_licencia`, `centro_ensenanza_nombre`, `centro_ensenanza_nit`, `fecha_inicio_curso`, `valor_curso` |
+
+### 15D. Nuevos campos en documento loanbook
+
+| Campo | Tipo | Default migración |
+|-------|------|-------------------|
+| `producto` | "RDX" \| "RODANTE" | inferido de `tipo_producto` |
+| `subtipo_rodante` | enum \| null | inferido de `tipo_producto` |
+| `metadata_producto` | dict | construido de campos sueltos (vin, modelo, motor, placa) |
+| `saldo_intereses` | float | 0.0 |
+| `score_riesgo` | enum \| null | null |
+| `whatsapp_status` | enum | "pending" |
+| `sub_bucket_semanal` | enum \| null | null |
+| `fecha_vencimiento` | date \| null | última cuota |
+| `acuerdo_activo_id` | str \| null | null |
+
+### 15E. Nuevas colecciones
+
+| Colección | Índice | Checklist |
+|-----------|--------|-----------|
+| `inventario_repuestos` | `referencia_sku` (unique) | C-04 |
+| `loanbook_acuerdos` | `(loanbook_id, created_at)` | C-05 |
+| `loanbook_cierres` | `loanbook_codigo` (unique) | C-06 |
+| `loanbook_modificaciones` | `(loanbook_id, ts)` | C-07 |
+
+### 15F. LTV auto-cálculo
+
+Para `LoanbookCreate` con `producto='RDX'`:
+```python
+ltv = round(monto_original / moto_valor_origen, 3)
+```
+Solo cuando `moto_valor_origen > 0`. Campo `ltv` inyectado en `metadata_producto`.
+
+### 15G. Tests
+
+| Suite | Tests | Estado |
+|-------|-------|--------|
+| `test_loanbook_schema.py` | 52 | ✅ GREEN |
+| `test_catalogo_service.py` | 48 | ✅ GREEN |
+| Regresiones vs baseline | 0 | ✅ Sin regresión |

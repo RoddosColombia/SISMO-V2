@@ -44,6 +44,14 @@ async def lifespan(app: FastAPI):
     await init_db()
     db = await get_db()
 
+    # ── Catálogos maestros Loanbook ────────────────────────────────────
+    try:
+        from services.loanbook.catalogo_service import warm_catalogo
+        await warm_catalogo(db)
+        logger.info("catalogo_service: warm_catalogo completado")
+    except Exception as e:
+        logger.error(f"catalogo_service: warm_catalogo falló: {e}")
+
     # ── DataKeeper event processor ─────────────────────────────────────
     try:
         from core.event_processor import EventProcessor, ensure_datakeeper_indexes
