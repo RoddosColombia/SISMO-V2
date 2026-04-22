@@ -3,7 +3,7 @@
 ARCHIVO VIVO — Actualizar con cada build, cada endpoint nuevo, cada colección nueva.
 REGLA: Si no está en este archivo, no existe. Si vas a crear algo nuevo, primero verificar aquí que no exista ya.
 
-Última actualización: Abril 2026 — FASE 8-A (ab7d4aa)
+Última actualización: Abril 2026 — Sprint v3 Reglas de Negocio (5b46ee8)
 
 ---
 
@@ -177,6 +177,7 @@ Base URL producción: https://sismo-backend-40ca.onrender.com
 | GET | /api/loanbook | loanbook.py | Lista todos los loanbooks |
 | POST | /api/loanbook | loanbook.py | Crear loanbook nuevo |
 | GET | /api/loanbook/auditoria | loanbook.py | Auditoría estructural del portafolio (BUILD 1) |
+| GET | /api/loanbook/export-excel | loanbook.py | Descarga portafolio .xlsx con 2 hojas y flags corrupción (v3-B) |
 | GET | /api/loanbook/stats | loanbook.py | KPIs de cartera (totales, mora, recaudo) |
 | POST | /api/loanbook/reparar-todos | loanbook.py | Reparar inconsistencias en todo el portafolio (BUILD 3) |
 | GET | /api/loanbook/{id} | loanbook.py | Detalle de un loanbook |
@@ -448,3 +449,64 @@ Cada vez que se crea algo nuevo en SISMO:
 4. NUNCA hacer commit sin actualizar este archivo si se creó algo nuevo
 
 El archivo vive en: .planning/SISMO_V2_Registro_Canonico.md
+
+---
+
+## 13. TABLA FIJA PLAN × MODALIDAD — PLAN_CUOTAS
+
+**Fuente de verdad:** `backend/services/loanbook/reglas_negocio.py`
+
+**REGLA INAMOVIBLE:** El número de cuotas es un contrato de negocio, NO una derivación matemática.
+`round(39 / 2.2) = 18 ≠ 20`. Siempre usar la tabla, nunca la fórmula.
+
+### 13A. Número de cuotas por plan × modalidad
+
+| Plan | Semanal | Quincenal | Mensual | Observación |
+|------|---------|-----------|---------|-------------|
+| P15S | 15 | — | — | Comparendos/multas — solo semanal |
+| P39S | 39 | 20 | 9 | Motos estándar ~9 meses |
+| P52S | 52 | 26 | 12 | Motos estándar 1 año |
+| P78S | 78 | 39 | 18 | Motos premium ~18 meses |
+
+`None` = combinación no configurada → el auditor la reporta en `combinacion_no_configurada`.
+
+### 13B. Multiplicadores de valor de cuota
+
+| Modalidad | Factor vs cuota semanal | Días entre cobros |
+|-----------|------------------------|-------------------|
+| semanal | 1.0× | 7 días |
+| quincenal | 2.2× | 14 días |
+| mensual | 4.4× | 28 días |
+
+### 13C. Constantes operativas
+
+| Constante | Valor | Ubicación |
+|-----------|-------|-----------|
+| MORA_COP_POR_DIA | $2,000 COP/día | reglas_negocio.py |
+| ANZI_PCT | 2% de cada pago | reglas_negocio.py |
+
+### 13D. Regla fecha_pago
+
+`fecha_pago > hoy` → HTTP 422 en todos los endpoints de pago (físicamente imposible).
+Implementado en: `validar_fecha_pago()` → `PUT /{id}/pago`.
+
+### 13E. Módulos que implementan esta tabla
+
+| Módulo | Rol |
+|--------|-----|
+| `services/loanbook/reglas_negocio.py` | Fuente única — PLAN_CUOTAS + funciones puras |
+| `services/loanbook/state_calculator.py` | Delega a `get_num_cuotas()` — recalcula campos derivados |
+| `services/loanbook/auditor.py` | Detecta desviaciones vs tabla en el portafolio |
+| `services/loanbook/reparador.py` | Corrige desviaciones via `recalcular_loanbook()` |
+| `services/loanbook/excel_export.py` | Export .xlsx con comparación DB vs tabla |
+| `frontend/src/pages/LoanDetailPage.tsx` | Espejo JS de PLAN_CUOTAS para live preview |
+
+### 13F. Tests de cobertura
+
+| Test | Archivo | Celdas verificadas |
+|------|---------|-------------------|
+| `test_P39S_quincenal_son_20` | test_reglas_negocio.py | P39S×quincenal=20 (el bug corregido) |
+| `test_P52S_quincenal_son_26` | test_reglas_negocio.py | P52S×quincenal=26 |
+| `test_valor_total_kreyser_P39S_quincenal` | test_reglas_negocio.py | 20×420k+1.46M=9.86M |
+| `test_p52s_quincenal_tabla_fija_26` | test_state_calculator.py | recalcular_loanbook corrige a 26 |
+| 58 tests total, todos GREEN | — | — |
