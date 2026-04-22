@@ -1350,3 +1350,44 @@ async def put_pago(
         "desglose": alloc,
         "pago_parcial": pago_parcial,
     }
+
+
+# ─────────────────────── B2: DPD scheduler + estado historial ────────────────
+
+@router.post("/recalcular-dpd")
+async def recalcular_dpd_manual(
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Trigger manual del scheduler DPD.
+
+    Recalcula DPD, estado, sub_bucket_semanal y mora_acumulada_cop en todos
+    los loanbooks activos. Equivalente a la ejecución automática de las 06:00 AM.
+    Requiere autenticación.
+    """
+    from services.loanbook.dpd_scheduler import calcular_dpd_todos
+    stats = await calcular_dpd_todos(db)
+    return {"ok": True, "stats": stats}
+
+
+@router.get("/{codigo}/estado-historial")
+async def estado_historial(
+    codigo: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Historial de transiciones de estado para un loanbook.
+
+    Lee desde loanbook_modificaciones los cambios de estado y las
+    transiciones inválidas detectadas por el scheduler DPD.
+    Ordenado por timestamp descendente (más reciente primero).
+    """
+    docs = await db.loanbook_modificaciones.find(
+        {
+            "loanbook_codigo": codigo,
+            "tipo": {"$in": ["cambio_estado", "transicion_invalida"]},
+        }
+    ).sort("ts", -1).to_list(length=100)
+
+    historial = [{k: v for k, v in d.items() if k != "_id"} for d in docs]
+    return {"codigo": codigo, "total": len(historial), "historial": historial}

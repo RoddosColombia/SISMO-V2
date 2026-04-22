@@ -612,3 +612,77 @@ Solo cuando `moto_valor_origen > 0`. Campo `ltv` inyectado en `metadata_producto
 | `test_loanbook_schema.py` | 52 | ✅ GREEN |
 | `test_catalogo_service.py` | 48 | ✅ GREEN |
 | Regresiones vs baseline | 0 | ✅ Sin regresión |
+
+---
+
+## 16. BUILD B2 — Máquina de estados + sub-buckets + scheduler DPD
+
+**Branch:** `build/B2-estados-dpd`
+**Estado:** COMPLETO (pendiente deploy Render)
+
+### 16A. Nuevos archivos
+
+| Archivo | Descripción |
+|---------|-------------|
+| `services/loanbook/estados_service.py` | Clasificadores puros + matriz de transiciones + mora sin cap |
+| `services/loanbook/dpd_scheduler.py` | `calcular_dpd_todos()` + loop `run_dpd_scheduler()` 06:00 AM Bogotá |
+| `frontend/src/components/loanbook/EstadoBadge.tsx` | Badge React con 9 colores oficiales |
+| `tests/test_estados_service.py` | 81 tests — todos GREEN |
+| `tests/test_dpd_scheduler.py` | 25 tests — todos GREEN |
+
+### 16B. Archivos modificados
+
+| Archivo | Cambio |
+|---------|--------|
+| `core/database.py` | `_dpd_scheduler_task` + `run_dpd_scheduler(db)` en lifespan |
+| `routers/loanbook.py` | `POST /recalcular-dpd` + `GET /{codigo}/estado-historial` |
+
+### 16C. Los 9 estados y 7 sub-buckets (rangos v1.1 Opción A)
+
+| Estado | DPD | Color Tailwind |
+|--------|-----|----------------|
+| `Aprobado` | None | `bg-blue-100 text-blue-700` |
+| `Current` | 0 | `bg-green-100 text-green-700` |
+| `Early Delinquency` | 1–7 | `bg-yellow-100 text-yellow-800` |
+| `Mid Delinquency` | 8–14 | `bg-orange-100 text-orange-700` |
+| `Late Delinquency` | 15–45 | `bg-red-100 text-red-700` |
+| `Default` | 46–49 | `bg-red-800 text-white` |
+| `Charge-Off` | 50+ | `bg-black text-white` |
+| `Modificado` | Variable | `bg-purple-100 text-purple-700` |
+| `Pagado` | N/A | `bg-gray-200 text-gray-600` |
+
+| Sub-bucket | DPD |
+|-----------|-----|
+| `Grace` | 1–7 |
+| `Warning` | 8–14 |
+| `Alert` | 15–21 |
+| `Critical` | 22–30 |
+| `Severe` | 31–45 |
+| `Pre-default` | 46–49 |
+| `Default` | 50+ |
+
+### 16D. Reglas implementadas
+
+- **R-22:** mora $2.000 COP/día, sin cap
+- **cap 3.3:** matriz `TRANSICIONES_PERMITIDAS` — `validar_transicion()` lanza `HTTPException 422`
+- **Scheduler:** `asyncio.create_task(run_dpd_scheduler(db))` en lifespan — mismo patrón que `alegra_sync.py`. Duerme hasta 06:00 AM Bogotá con `ZoneInfo("America/Bogota")`
+- **Audit log:** cada cambio de estado → `loanbook_modificaciones` con `tipo="cambio_estado"`
+- **Evento bus:** `loanbook.estado.cambiado` via `core.events.publish_event()`
+- **Transición inválida:** scheduler registra `tipo="transicion_invalida"` y no modifica estado
+
+### 16E. Endpoints nuevos
+
+| Endpoint | Descripción |
+|----------|-------------|
+| `POST /api/loanbook/recalcular-dpd` | Trigger manual del scheduler — requiere auth |
+| `GET /api/loanbook/{codigo}/estado-historial` | Audit trail de transiciones — requiere auth |
+
+### 16F. Tests
+
+| Suite | Tests | Estado |
+|-------|-------|--------|
+| `test_estados_service.py` | 81 | ✅ GREEN |
+| `test_dpd_scheduler.py` | 25 | ✅ GREEN |
+| `test_loanbook_schema.py` | 52 | ✅ GREEN (sin regresión) |
+| `test_catalogo_service.py` | 48 | ✅ GREEN (sin regresión) |
+| **Total B0+B1+B2** | **206+** | ✅ Sin regresiones nuevas |
