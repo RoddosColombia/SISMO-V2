@@ -501,7 +501,7 @@ export default function LoanbookPage() {
     setExcelLoading(true)
     try {
       const token = localStorage.getItem('token')
-      const res = await fetch('/api/loanbook/export-excel', {
+      const res = await fetch('/api/loanbook/export-loan-tape', {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       })
       if (!res.ok) throw new Error(`Error ${res.status}`)
@@ -509,7 +509,7 @@ export default function LoanbookPage() {
       const url  = URL.createObjectURL(blob)
       const a    = document.createElement('a')
       a.href     = url
-      a.download = `portafolio_roddos_${new Date().toISOString().slice(0, 10)}.xlsx`
+      a.download = `loanbook_roddos_${new Date().toISOString().slice(0, 10)}.xlsx`
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
