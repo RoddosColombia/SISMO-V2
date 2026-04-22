@@ -17,9 +17,6 @@ function derivarTotalCuotas(planCodigo: string, modalidad: string): number | nul
 function calcularValorTotal(numCuotas: number, cuotaMonto: number, cuotaInicial: number): number {
   return numCuotas * cuotaMonto + cuotaInicial
 }
-function calcularValorTotal(numCuotas: number, cuotaMonto: number, cuotaInicial: number): number {
-  return numCuotas * cuotaMonto + cuotaInicial
-}
 import LoanActionPanel from '@/components/LoanActionPanel'
 
 interface LoanDetailPageProps {
