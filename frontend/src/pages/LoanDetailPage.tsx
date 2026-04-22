@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { apiGet } from '@/lib/api'
+import { apiGet, apiPatch } from '@/lib/api'
 import LoanActionPanel from '@/components/LoanActionPanel'
 
 interface LoanDetailPageProps {
@@ -188,6 +188,12 @@ export default function LoanDetailPage({ idProp, onClose }: LoanDetailPageProps 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
+  // Edit credito state
+  const [editingCredito, setEditingCredito] = useState(false)
+  const [creditoForm, setCreditoForm] = useState<Record<string, string | boolean>>({})
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState('')
+
   const loadLoanbook = useCallback(async () => {
     if (!id) return
     setLoading(true)
@@ -205,6 +211,60 @@ export default function LoanDetailPage({ idProp, onClose }: LoanDetailPageProps 
   useEffect(() => {
     loadLoanbook()
   }, [loadLoanbook])
+
+  function startEditCredito() {
+    if (!lb) return
+    setCreditoForm({
+      plan_codigo: lb.plan?.codigo || lb.plan_codigo || '',
+      modalidad: lb.plan?.modalidad || lb.modalidad || '',
+      cuota_valor: String(lb.plan?.cuota_valor ?? lb.cuota_monto ?? ''),
+      total_cuotas: String(lb.plan?.total_cuotas ?? lb.num_cuotas ?? ''),
+      fecha_factura: lb.fechas?.factura || '',
+      fecha_entrega: lb.fechas?.entrega || lb.fecha_entrega || '',
+      primera_cuota: lb.fechas?.primera_cuota || lb.fecha_primer_pago || '',
+      vin: lb.moto?.vin || lb.vin || '',
+      modelo: lb.moto?.modelo || lb.modelo || '',
+      cliente_telefono: lb.cliente?.telefono || '',
+      cliente_telefono_alternativo: lb.cliente?.telefono_alternativo || '',
+    })
+    setEditingCredito(true)
+    setSaveError('')
+  }
+
+  async function handlePatchCredito(e: React.FormEvent) {
+    e.preventDefault()
+    if (!id) return
+    const payload: Record<string, string | number | boolean> = {}
+    const f = creditoForm
+    if (f.plan_codigo !== undefined && f.plan_codigo !== '') payload.plan_codigo = f.plan_codigo as string
+    if (f.modalidad !== undefined && f.modalidad !== '') payload.modalidad = f.modalidad as string
+    if (f.cuota_valor !== undefined && f.cuota_valor !== '') payload.cuota_valor = parseFloat(f.cuota_valor as string)
+    if (f.total_cuotas !== undefined && f.total_cuotas !== '') payload.total_cuotas = parseInt(f.total_cuotas as string, 10)
+    if (f.fecha_factura !== undefined && f.fecha_factura !== '') payload.fecha_factura = f.fecha_factura as string
+    if (f.fecha_entrega !== undefined && f.fecha_entrega !== '') payload.fecha_entrega = f.fecha_entrega as string
+    if (f.primera_cuota !== undefined && f.primera_cuota !== '') payload.primera_cuota = f.primera_cuota as string
+    if (f.vin !== undefined && f.vin !== '') payload.vin = f.vin as string
+    if (f.modelo !== undefined && f.modelo !== '') payload.modelo = f.modelo as string
+    if (f.cliente_telefono !== undefined && f.cliente_telefono !== '') payload.cliente_telefono = f.cliente_telefono as string
+    if (f.cliente_telefono_alternativo !== undefined) payload.cliente_telefono_alternativo = f.cliente_telefono_alternativo as string
+
+    if (Object.keys(payload).length === 0) {
+      setEditingCredito(false)
+      return
+    }
+    setSaving(true)
+    setSaveError('')
+    try {
+      await apiPatch(`/loanbook/${id}`, payload)
+      await loadLoanbook()
+      setEditingCredito(false)
+      setCreditoForm({})
+    } catch (e: unknown) {
+      setSaveError(e instanceof Error ? e.message : 'Error al guardar')
+    } finally {
+      setSaving(false)
+    }
+  }
 
   if (loading) {
     return (
@@ -383,24 +443,97 @@ export default function LoanDetailPage({ idProp, onClose }: LoanDetailPageProps 
         </Section>
 
         {/* SECCION 3: CREDITO */}
-        <Section title="Datos del crédito">
-          <Row label="Plan" value={lb.plan?.codigo || lb.plan_codigo || '—'} />
-          <Row label="Modalidad" value={lb.plan?.modalidad || lb.modalidad || '—'} />
-          <Row label="Valor cuota" value={formatCOP(cuotaMonto)} />
-          <Row label="Cuota inicial pagada" value={formatCOP(lb.plan?.cuota_inicial)} />
-          <Row label="Fecha factura" value={formatDate(lb.fechas?.factura)} />
-          <Row label="Fecha entrega" value={formatDate(lb.fechas?.entrega || lb.fecha_entrega)} />
-          <Row label="Primera cuota" value={formatDate(lb.fechas?.primera_cuota || lb.fecha_primer_pago)} />
-          <div className="border-t border-surface-container-low my-2"></div>
-          <Row label="Valor total crédito" value={formatCOP(valorTotal)} />
-          <div className="flex justify-between items-baseline gap-3 py-2">
-            <span className="text-on-surface-variant text-sm">Saldo pendiente</span>
-            <span className="font-display text-xl font-bold text-on-surface">{formatCOP(saldo)}</span>
+        <section className="bg-white rounded-xl shadow-sm px-4 py-4 sm:px-5 sm:py-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-display font-bold text-on-surface text-sm uppercase tracking-wider">Datos del crédito</h2>
+            {!editingCredito ? (
+              <button
+                onClick={startEditCredito}
+                className="flex items-center gap-1 text-xs text-primary hover:opacity-75 transition-opacity"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
+                </svg>
+                Editar
+              </button>
+            ) : (
+              <button
+                onClick={() => { setEditingCredito(false); setCreditoForm({}); setSaveError('') }}
+                className="text-xs text-on-surface-variant hover:opacity-75 transition-opacity"
+              >
+                Cancelar
+              </button>
+            )}
           </div>
-          {lb.alegra_factura_id && (
-            <Row label="Alegra factura" value={<span className="font-mono text-xs">{lb.alegra_factura_id}</span>} />
+
+          {editingCredito ? (
+            <form onSubmit={handlePatchCredito} className="space-y-3">
+              {([
+                { label: 'Plan', field: 'plan_codigo', type: 'text' },
+                { label: 'Modalidad', field: 'modalidad', type: 'select', options: ['semanal', 'quincenal', 'mensual'] },
+                { label: 'Valor cuota', field: 'cuota_valor', type: 'number' },
+                { label: 'Total cuotas', field: 'total_cuotas', type: 'number' },
+                { label: 'Fecha factura', field: 'fecha_factura', type: 'date' },
+                { label: 'Fecha entrega', field: 'fecha_entrega', type: 'date' },
+                { label: 'Primera cuota', field: 'primera_cuota', type: 'date' },
+                { label: 'VIN', field: 'vin', type: 'text' },
+                { label: 'Modelo', field: 'modelo', type: 'text' },
+                { label: 'Teléfono cliente', field: 'cliente_telefono', type: 'text' },
+                { label: 'Tel. alternativo', field: 'cliente_telefono_alternativo', type: 'text' },
+              ] as Array<{ label: string; field: string; type: string; options?: string[] }>).map(({ label, field, type, options }) => (
+                <div key={field}>
+                  <label className="block text-[11px] text-on-surface-variant mb-0.5">{label}</label>
+                  {type === 'select' ? (
+                    <select
+                      value={String(creditoForm[field] ?? '')}
+                      onChange={e => setCreditoForm(f => ({ ...f, [field]: e.target.value }))}
+                      className="w-full px-2 py-1.5 text-sm border border-surface-container-low rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-primary"
+                    >
+                      <option value="">— sin cambio —</option>
+                      {options!.map(o => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                  ) : (
+                    <input
+                      type={type}
+                      value={String(creditoForm[field] ?? '')}
+                      onChange={e => setCreditoForm(f => ({ ...f, [field]: e.target.value }))}
+                      className="w-full px-2 py-1.5 text-sm border border-surface-container-low rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-primary font-mono"
+                    />
+                  )}
+                </div>
+              ))}
+              {saveError && (
+                <p className="text-xs text-red-600 bg-red-50 rounded-md px-3 py-2">{saveError}</p>
+              )}
+              <button
+                type="submit"
+                disabled={saving}
+                className="w-full py-2 bg-primary text-white rounded-md text-sm font-medium disabled:opacity-50 transition-opacity"
+              >
+                {saving ? 'Guardando...' : 'Guardar cambios'}
+              </button>
+            </form>
+          ) : (
+            <>
+              <Row label="Plan" value={lb.plan?.codigo || lb.plan_codigo || '—'} />
+              <Row label="Modalidad" value={lb.plan?.modalidad || lb.modalidad || '—'} />
+              <Row label="Valor cuota" value={formatCOP(cuotaMonto)} />
+              <Row label="Cuota inicial pagada" value={formatCOP(lb.plan?.cuota_inicial)} />
+              <Row label="Fecha factura" value={formatDate(lb.fechas?.factura)} />
+              <Row label="Fecha entrega" value={formatDate(lb.fechas?.entrega || lb.fecha_entrega)} />
+              <Row label="Primera cuota" value={formatDate(lb.fechas?.primera_cuota || lb.fecha_primer_pago)} />
+              <div className="border-t border-surface-container-low my-2"></div>
+              <Row label="Valor total crédito" value={formatCOP(valorTotal)} />
+              <div className="flex justify-between items-baseline gap-3 py-2">
+                <span className="text-on-surface-variant text-sm">Saldo pendiente</span>
+                <span className="font-display text-xl font-bold text-on-surface">{formatCOP(saldo)}</span>
+              </div>
+              {lb.alegra_factura_id && (
+                <Row label="Alegra factura" value={<span className="font-mono text-xs">{lb.alegra_factura_id}</span>} />
+              )}
+            </>
           )}
-        </Section>
+        </section>
 
         {/* SECCION 4: CARTERA */}
         <Section title="Resumen de cartera">

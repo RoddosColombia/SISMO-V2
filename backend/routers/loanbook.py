@@ -212,6 +212,28 @@ async def get_loanbook(
 # ═══════════════════════════════════════════
 
 METODOS_PAGO = {"efectivo", "bancolombia", "bbva", "davivienda", "nequi", "transferencia", "otro"}
+MODALIDADES = {"semanal", "quincenal", "mensual"}
+
+
+class PatchLoanbookBody(BaseModel):
+    """Campos opcionales para edición manual del crédito.
+
+    Solo se aplican los campos enviados (PATCH semántico).
+    No recalcula cronograma ni saldo — para eso usar registrar-entrega.
+    """
+    plan_codigo: str | None = None
+    modalidad: str | None = None
+    cuota_valor: float | None = None
+    cuota_inicial_pagada: bool | None = None
+    total_cuotas: int | None = None
+    fecha_factura: str | None = None
+    fecha_entrega: str | None = None
+    primera_cuota: str | None = None
+    vin: str | None = None
+    modelo: str | None = None
+    cliente_telefono: str | None = None
+    cliente_telefono_alternativo: str | None = None
+    tipo_producto: str | None = None
 
 
 class RegistrarPagoBody(BaseModel):
@@ -233,6 +255,91 @@ class RegistrarEntregaBody(BaseModel):
     fecha_entrega: str | None = None
     fecha_primera_cuota: str | None = None
     dia_cobro_especial: str | None = None
+
+
+@router.patch("/{identifier}")
+async def patch_loanbook(
+    identifier: str,
+    body: PatchLoanbookBody,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Edición manual de campos del crédito.
+
+    Solo actualiza los campos enviados (PATCH semántico).
+    NO recalcula cronograma ni saldo — solo sobreescribe metadatos del crédito.
+    Para regenerar cuotas, usar registrar-entrega después.
+    """
+    lb = await _find_lb_by_identifier(db, identifier)
+
+    update: dict = {}
+
+    if body.plan_codigo is not None:
+        update["plan_codigo"] = body.plan_codigo
+        update["plan.codigo"] = body.plan_codigo
+    if body.modalidad is not None:
+        if body.modalidad not in MODALIDADES:
+            raise HTTPException(status_code=400, detail=f"modalidad debe ser: {sorted(MODALIDADES)}")
+        update["modalidad"] = body.modalidad
+        update["plan.modalidad"] = body.modalidad
+    if body.cuota_valor is not None:
+        update["cuota_monto"] = body.cuota_valor
+        update["plan.cuota_valor"] = body.cuota_valor
+    if body.cuota_inicial_pagada is not None:
+        update["cuota_inicial_pagada"] = body.cuota_inicial_pagada
+    if body.total_cuotas is not None:
+        update["num_cuotas"] = body.total_cuotas
+        update["plan.total_cuotas"] = body.total_cuotas
+    if body.fecha_factura is not None:
+        update["fechas.factura"] = body.fecha_factura
+    if body.fecha_entrega is not None:
+        update["fecha_entrega"] = body.fecha_entrega
+        update["fechas.entrega"] = body.fecha_entrega
+    if body.primera_cuota is not None:
+        update["fecha_primer_pago"] = body.primera_cuota
+        update["fechas.primera_cuota"] = body.primera_cuota
+    if body.vin is not None:
+        update["vin"] = body.vin
+        update["moto.vin"] = body.vin
+    if body.modelo is not None:
+        update["modelo"] = body.modelo
+        update["moto.modelo"] = body.modelo
+    if body.cliente_telefono is not None:
+        update["cliente.telefono"] = body.cliente_telefono
+    if body.cliente_telefono_alternativo is not None:
+        update["cliente.telefono_alternativo"] = body.cliente_telefono_alternativo
+    if body.tipo_producto is not None:
+        update["tipo_producto"] = body.tipo_producto
+
+    if not update:
+        raise HTTPException(status_code=400, detail="No se enviaron campos para actualizar")
+
+    update["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    await db.loanbook.update_one(
+        {"loanbook_id": lb["loanbook_id"]},
+        {"$set": update},
+    )
+
+    campos = list(body.model_fields_set)
+    await _publish_event(
+        db,
+        "loanbook.editado",
+        "routers.loanbook.manual",
+        {
+            "loanbook_id": lb["loanbook_id"],
+            "campos_editados": campos,
+            "valores": body.model_dump(exclude_none=True),
+        },
+        accion=f"Edición manual {lb['loanbook_id']}: {', '.join(campos)}",
+    )
+
+    logger.info(f"Loanbook editado: {lb['loanbook_id']} campos={campos}")
+
+    return {
+        "success": True,
+        "loanbook_id": lb["loanbook_id"],
+        "campos_actualizados": campos,
+    }
 
 
 async def _find_lb_by_identifier(db: AsyncIOMotorDatabase, identifier: str) -> dict:
