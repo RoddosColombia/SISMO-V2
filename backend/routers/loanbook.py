@@ -234,16 +234,17 @@ async def generar_cronogramas_todos(
             continue
 
         try:
-            fecha_entrega_raw = lb.get("fecha_entrega")
+            fechas = lb.get("fechas") or {}
+            fecha_entrega_raw = lb.get("fecha_entrega") or fechas.get("entrega")
             if not fecha_entrega_raw:
                 omitidos += 1
                 continue
             fecha_entrega = date.fromisoformat(str(fecha_entrega_raw)[:10])
             saldo = float(lb.get("saldo_capital") or lb.get("saldo_pendiente") or 0)
-            cuota_p = float(lb.get("cuota_periodica") or lb.get("cuota_monto") or 0)
+            cuota_p = float(lb.get("cuota_monto") or lb.get("cuota_periodica") or 0)
             tasa = float(lb.get("tasa_ea") or 0)
-            modalidad = lb.get("modalidad_pago") or lb.get("modalidad") or "semanal"
-            n = int(lb.get("total_cuotas") or len(cuotas) or 0)
+            modalidad = lb.get("modalidad") or lb.get("modalidad_pago") or "semanal"
+            n = int(lb.get("num_cuotas") or lb.get("total_cuotas") or len(cuotas) or 0)
             if saldo <= 0 or n <= 0:
                 omitidos += 1
                 continue
@@ -1530,11 +1531,7 @@ async def calcular_liquidacion(
     """
     from services.loanbook.amortizacion_service import calcular_liquidacion_anticipada
 
-    lb = await db.loanbook.find_one(
-        {"$or": [{"loanbook_id": codigo}, {"loanbook_codigo": codigo}]}
-    )
-    if not lb:
-        raise HTTPException(status_code=404, detail=f"Loanbook '{codigo}' no encontrado")
+    lb = await _find_lb_by_identifier(db, codigo)
 
     resultado = calcular_liquidacion_anticipada(lb, fecha_liquidacion)
     return resultado
@@ -1555,15 +1552,17 @@ async def generar_cronograma_endpoint(
     """
     from services.loanbook.amortizacion_service import generar_cronograma as _gen_cron
 
-    lb = await db.loanbook.find_one(
-        {"$or": [{"loanbook_id": codigo}, {"loanbook_codigo": codigo}]}
-    )
-    if not lb:
-        raise HTTPException(status_code=404, detail=f"Loanbook '{codigo}' no encontrado")
+    lb = await _find_lb_by_identifier(db, codigo)
 
-    fecha_entrega_raw = lb.get("fecha_entrega")
+    # fecha_entrega: campo top-level (seteado por registrar-entrega) con
+    # fallback al subdocumento fechas.entrega (seteado por PATCH)
+    fechas = lb.get("fechas") or {}
+    fecha_entrega_raw = lb.get("fecha_entrega") or fechas.get("entrega")
     if not fecha_entrega_raw:
-        raise HTTPException(status_code=422, detail="Loanbook sin fecha_entrega — ejecuta registrar-entrega primero")
+        raise HTTPException(
+            status_code=422,
+            detail="Loanbook sin fecha_entrega — ejecuta registrar-entrega primero",
+        )
 
     try:
         fecha_entrega = date.fromisoformat(str(fecha_entrega_raw)[:10])
@@ -1572,14 +1571,16 @@ async def generar_cronograma_endpoint(
 
     saldo = float(lb.get("saldo_capital") or lb.get("saldo_pendiente") or 0)
     if saldo <= 0:
-        raise HTTPException(status_code=422, detail="saldo_capital debe ser > 0 para generar cronograma")
+        raise HTTPException(status_code=422, detail="saldo debe ser > 0 para generar cronograma")
 
-    cuota_p = float(lb.get("cuota_periodica") or lb.get("cuota_monto") or 0)
+    # Campos reales del schema: cuota_monto (top-level), modalidad (top-level),
+    # num_cuotas (top-level) — igual que usa registrar-entrega
+    cuota_p = float(lb.get("cuota_monto") or lb.get("cuota_periodica") or 0)
     tasa = float(lb.get("tasa_ea") or 0)
-    modalidad = lb.get("modalidad_pago") or lb.get("modalidad") or "semanal"
-    n = int(lb.get("total_cuotas") or len(lb.get("cuotas") or []) or 0)
+    modalidad = lb.get("modalidad") or lb.get("modalidad_pago") or "semanal"
+    n = int(lb.get("num_cuotas") or lb.get("total_cuotas") or len(lb.get("cuotas") or []) or 0)
     if n <= 0:
-        raise HTTPException(status_code=422, detail="total_cuotas debe ser > 0")
+        raise HTTPException(status_code=422, detail="num_cuotas debe ser > 0")
 
     try:
         nuevas_cuotas = _gen_cron(
@@ -1598,4 +1599,4 @@ async def generar_cronograma_endpoint(
         {"$set": {"cuotas": nuevas_cuotas, "updated_at": datetime.utcnow()}},
     )
 
-    return {"ok": True, "loanbook_codigo": codigo, "cuotas_generadas": len(nuevas_cuotas)}
+    return {"ok": True, "loanbook_id": lb["loanbook_id"], "cuotas_generadas": len(nuevas_cuotas)}
