@@ -199,6 +199,79 @@ async def export_loan_tape_excel(
     )
 
 
+# ─────────────────────── B4: Amortización + Waterfall + Cronogramas ──────────
+
+@router.post("/generar-cronogramas-todos")
+async def generar_cronogramas_todos(
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Regenera el cronograma de amortización real para todos los loanbooks activos.
+
+    Añade monto_capital + monto_interes a cada cuota de los loanbooks que
+    aún no tienen ese desglose. Los loanbooks con cuotas ya desglosadas
+    se omiten para evitar sobreescribir datos reales.
+
+    Úsese una sola vez en producción tras el deploy de B4.
+    Requiere autenticación.
+    """
+    from services.loanbook.amortizacion_service import generar_cronograma as _gen_cron
+
+    lbs = await db.loanbook.find(
+        {"estado": {"$nin": ["Pagado", "Charge-Off", "saldado", "castigado"]}}
+    ).to_list(length=5000)
+
+    procesados = 0
+    omitidos = 0
+    errores = 0
+
+    for lb in lbs:
+        cuotas = lb.get("cuotas") or []
+        # Omitir si ya tienen monto_capital definido
+        ya_tiene_desglose = any(c.get("monto_capital") for c in cuotas)
+        if ya_tiene_desglose:
+            omitidos += 1
+            continue
+
+        try:
+            fecha_entrega_raw = lb.get("fecha_entrega")
+            if not fecha_entrega_raw:
+                omitidos += 1
+                continue
+            fecha_entrega = date.fromisoformat(str(fecha_entrega_raw)[:10])
+            saldo = float(lb.get("saldo_capital") or lb.get("saldo_pendiente") or 0)
+            cuota_p = float(lb.get("cuota_periodica") or lb.get("cuota_monto") or 0)
+            tasa = float(lb.get("tasa_ea") or 0)
+            modalidad = lb.get("modalidad_pago") or lb.get("modalidad") or "semanal"
+            n = int(lb.get("total_cuotas") or len(cuotas) or 0)
+            if saldo <= 0 or n <= 0:
+                omitidos += 1
+                continue
+
+            nuevas_cuotas = _gen_cron(
+                saldo_inicial=saldo,
+                cuota_periodica=cuota_p,
+                tasa_ea=tasa,
+                modalidad=modalidad,
+                fecha_entrega=fecha_entrega,
+                n_cuotas=n,
+            )
+            await db.loanbook.update_one(
+                {"_id": lb["_id"]},
+                {"$set": {"cuotas": nuevas_cuotas, "updated_at": datetime.utcnow()}},
+            )
+            procesados += 1
+        except Exception:
+            errores += 1
+
+    return {
+        "ok": True,
+        "procesados": procesados,
+        "omitidos": omitidos,
+        "errores": errores,
+    }
+
+
 @router.post("/reparar-todos")
 async def reparar_todos(
     dry_run: bool = True,
@@ -1435,3 +1508,94 @@ async def estado_historial(
 
     historial = [{k: v for k, v in d.items() if k != "_id"} for d in docs]
     return {"codigo": codigo, "total": len(historial), "historial": historial}
+
+
+@router.get("/{codigo}/calcular-liquidacion")
+async def calcular_liquidacion(
+    codigo: str,
+    fecha_liquidacion: date,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Proyecta el monto exacto para saldar anticipadamente un loanbook.
+
+    Retorna:
+      - saldo_capital: capital pendiente
+      - mora_acumulada: mora acumulada a la fecha
+      - monto_liquidacion: total a pagar (capital + mora)
+      - cuotas_pendientes_valor: valor nominal de cuotas restantes
+      - descuento_intereses_futuros: ahorro por pagar anticipado
+
+    Requiere autenticación.
+    """
+    from services.loanbook.amortizacion_service import calcular_liquidacion_anticipada
+
+    lb = await db.loanbook.find_one(
+        {"$or": [{"loanbook_id": codigo}, {"loanbook_codigo": codigo}]}
+    )
+    if not lb:
+        raise HTTPException(status_code=404, detail=f"Loanbook '{codigo}' no encontrado")
+
+    resultado = calcular_liquidacion_anticipada(lb, fecha_liquidacion)
+    return resultado
+
+
+@router.post("/{codigo}/generar-cronograma")
+async def generar_cronograma_endpoint(
+    codigo: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Genera y persiste el cronograma de amortización real para un loanbook.
+
+    Calcula monto_capital + monto_interes por cuota usando amortización francesa.
+    Solo actúa si el loanbook no tiene aún el desglose capital/interés.
+
+    Requiere autenticación.
+    """
+    from services.loanbook.amortizacion_service import generar_cronograma as _gen_cron
+
+    lb = await db.loanbook.find_one(
+        {"$or": [{"loanbook_id": codigo}, {"loanbook_codigo": codigo}]}
+    )
+    if not lb:
+        raise HTTPException(status_code=404, detail=f"Loanbook '{codigo}' no encontrado")
+
+    fecha_entrega_raw = lb.get("fecha_entrega")
+    if not fecha_entrega_raw:
+        raise HTTPException(status_code=422, detail="Loanbook sin fecha_entrega — ejecuta registrar-entrega primero")
+
+    try:
+        fecha_entrega = date.fromisoformat(str(fecha_entrega_raw)[:10])
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"fecha_entrega inválida: {fecha_entrega_raw}")
+
+    saldo = float(lb.get("saldo_capital") or lb.get("saldo_pendiente") or 0)
+    if saldo <= 0:
+        raise HTTPException(status_code=422, detail="saldo_capital debe ser > 0 para generar cronograma")
+
+    cuota_p = float(lb.get("cuota_periodica") or lb.get("cuota_monto") or 0)
+    tasa = float(lb.get("tasa_ea") or 0)
+    modalidad = lb.get("modalidad_pago") or lb.get("modalidad") or "semanal"
+    n = int(lb.get("total_cuotas") or len(lb.get("cuotas") or []) or 0)
+    if n <= 0:
+        raise HTTPException(status_code=422, detail="total_cuotas debe ser > 0")
+
+    try:
+        nuevas_cuotas = _gen_cron(
+            saldo_inicial=saldo,
+            cuota_periodica=cuota_p,
+            tasa_ea=tasa,
+            modalidad=modalidad,
+            fecha_entrega=fecha_entrega,
+            n_cuotas=n,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    await db.loanbook.update_one(
+        {"_id": lb["_id"]},
+        {"$set": {"cuotas": nuevas_cuotas, "updated_at": datetime.utcnow()}},
+    )
+
+    return {"ok": True, "loanbook_codigo": codigo, "cuotas_generadas": len(nuevas_cuotas)}

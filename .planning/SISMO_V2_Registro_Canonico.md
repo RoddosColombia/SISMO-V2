@@ -743,3 +743,61 @@ Solo cuando `moto_valor_origen > 0`. Campo `ltv` inyectado en `metadata_producto
 | `test_dpd_scheduler.py` | 25 | ✅ GREEN (sin regresión) |
 | `test_loanbook_schema.py` | 52 | ✅ GREEN (sin regresión) |
 | **Total B0+B1+B2+B3** | **195** | ✅ Sin regresiones |
+
+---
+
+## 18. BUILD B4 — Amortización francesa + Waterfall ANZI + P1S contado
+
+**Branch:** `build/B4-amortizacion-waterfall`
+**Fecha:** Abril 2026
+
+### 18A. Nuevos archivos
+
+| Archivo | Descripción |
+|---------|-------------|
+| `backend/services/loanbook/amortizacion_service.py` | Motor amortización francesa + Waterfall Opción A (4 funciones puras) |
+| `backend/tests/test_amortizacion_service.py` | 41 tests GREEN |
+
+### 18B. Archivos modificados
+
+| Archivo | Cambio |
+|---------|--------|
+| `backend/routers/loanbook.py` | 3 endpoints nuevos B4 |
+
+### 18C. Funciones puras (`amortizacion_service.py`)
+
+| Función | Descripción |
+|---------|-------------|
+| `tasa_periodica(tasa_ea, modalidad) → float` | Convierte EA → periódica: `(1+ea)^(1/n)-1` |
+| `generar_cronograma(saldo, cuota, tasa_ea, modalidad, fecha_entrega, n) → list[dict]` | Cuotas con `monto_capital` + `monto_interes` reales. Regla del miércoles. Última cuota ajusta capital a saldo exacto |
+| `aplicar_waterfall(lb, monto, fecha) → dict` | R-21: ANZI 2%→mora→vencidas (antigüedad)→corriente→capital anticipado. Retorna `cuotas_actualizadas` + `evento_payload` |
+| `calcular_liquidacion_anticipada(lb, fecha) → dict` | Proyecta monto = saldo + mora; descuento = intereses futuros ahorrados |
+
+### 18D. Reglas implementadas
+
+- **R-19**: Cada cuota tiene `monto_capital` + `monto_interes` + `monto_fees` separados
+- **R-21**: Waterfall Opción A estricto — ANZI 2% del pago bruto antes de todo lo demás
+- **R-22**: Mora $2.000/día sin cap (constante `MORA_COP_POR_DIA = 2_000`)
+- **Regla del miércoles**: primer cobro = primer miércoles ≥ fecha_entrega + 7 días
+- **Última cuota**: `monto_capital = saldo_restante` → `saldo_despues = 0` exacto
+- **P1S contado**: sin cuotas pendientes → pago va todo a capital anticipado tras ANZI
+- **Saldo=0**: `calcular_liquidacion_anticipada` retorna `monto_liquidacion=0` sin proyectar mora
+
+### 18E. Endpoints nuevos
+
+| Método | Ruta | Descripción | Orden |
+|--------|------|-------------|-------|
+| POST | `/api/loanbook/generar-cronogramas-todos` | Batch: regenera cronogramas con capital/interés real para todos los activos | Línea 204 (antes de `/{identifier}`) |
+| GET | `/api/loanbook/{codigo}/calcular-liquidacion` | Proyecta monto de liquidación anticipada | Parametric |
+| POST | `/api/loanbook/{codigo}/generar-cronograma` | Genera y persiste cronograma de amortización para un loanbook | Parametric |
+
+### 18F. Tests
+
+| Suite | Tests | Estado |
+|-------|-------|--------|
+| `test_amortizacion_service.py` | 41 | ✅ GREEN |
+| `test_loan_tape.py` | 37 | ✅ GREEN (sin regresión) |
+| `test_estados_service.py` | 81 | ✅ GREEN (sin regresión) |
+| `test_dpd_scheduler.py` | 25 | ✅ GREEN (sin regresión) |
+| `test_loanbook_schema.py` | 52 | ✅ GREEN (sin regresión) |
+| **Total B0+B1+B2+B3+B4** | **236** | ✅ Sin regresiones |
