@@ -435,3 +435,77 @@ async def eliminar_deuda(
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail=f"Ítem {codigo} no encontrado")
     return {"deleted": codigo}
+
+
+# ── Mantenimiento ─────────────────────────────────────────────────────────────
+
+class LimpiarCuotasBody(BaseModel):
+    dry_run: bool = True
+
+
+@router.post("/limpiar-cuotas-seed-corruptas")
+async def limpiar_cuotas_seed_corruptas(
+    body: LimpiarCuotasBody,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Revierte cuotas futuras mal marcadas como 'pagada' por el seed inicial.
+
+    Idempotente: puede ejecutarse múltiples veces sin efecto secundario.
+    Con dry_run=true (default) solo reporta — NO escribe en MongoDB.
+
+    Criterio de corrupción: cuota.estado == 'pagada' AND cuota.fecha > hoy
+    AND cuota.fecha_pago is None (el seed no registró fecha de pago real).
+
+    Acción: cuota.estado = 'pendiente', cuota.mora_acumulada = 0.
+    """
+    hoy = date.today().isoformat()
+
+    loanbooks = await db.loanbook.find(
+        {"cuotas": {"$elemMatch": {"estado": "pagada", "fecha": {"$gt": hoy}}}}
+    ).to_list(length=1000)
+
+    afectados: list[dict] = []
+
+    for lb in loanbooks:
+        loanbook_id = lb.get("loanbook_id", str(lb.get("_id", "")))
+        cuotas: list[dict] = lb.get("cuotas", [])
+        cuotas_corruptas = []
+
+        for c in cuotas:
+            if (
+                c.get("estado") == "pagada"
+                and c.get("fecha", "") > hoy
+                and not c.get("fecha_pago")   # nunca tuvo pago real
+            ):
+                cuotas_corruptas.append(c.get("numero"))
+                c["estado"] = "pendiente"
+                c["mora_acumulada"] = 0
+
+        if cuotas_corruptas:
+            afectados.append({
+                "loanbook_id": loanbook_id,
+                "cuotas_revertidas": cuotas_corruptas,
+            })
+            if not body.dry_run:
+                await db.loanbook.update_one(
+                    {"loanbook_id": loanbook_id},
+                    {"$set": {
+                        "cuotas": cuotas,
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }},
+                )
+
+    return {
+        "dry_run": body.dry_run,
+        "loanbooks_afectados": len(afectados),
+        "cuotas_revertidas_total": sum(len(r["cuotas_revertidas"]) for r in afectados),
+        "detalle": afectados,
+        "ejecutado": not body.dry_run,
+        "mensaje": (
+            f"DRY RUN — {len(afectados)} loanbooks tendrían {sum(len(r['cuotas_revertidas']) for r in afectados)} "
+            f"cuotas revertidas. Envía dry_run=false para aplicar."
+            if body.dry_run
+            else f"Aplicado — {len(afectados)} loanbooks corregidos."
+        ),
+    }

@@ -311,6 +311,11 @@ export default function ITSismoPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  // Cleanup seed corruptas
+  const [cleanupDryResult, setCleanupDryResult] = useState<{ loanbooks_afectados: number; cuotas_revertidas_total: number; detalle: Array<{ loanbook_id: string; cuotas_revertidas: number[] }> } | null>(null)
+  const [cleanupRunning, setCleanupRunning] = useState(false)
+  const [cleanupMsg, setCleanupMsg] = useState('')
+
   const fetchStatus = useCallback(async () => {
     setLoadingStatus(true)
     try {
@@ -365,6 +370,37 @@ export default function ITSismoPage() {
       setDeuda(prev => prev.filter(d => d.codigo !== codigo))
     } finally {
       setDeletingId(null)
+    }
+  }
+
+  const handleCleanupDryRun = async () => {
+    setCleanupRunning(true)
+    setCleanupMsg('')
+    setCleanupDryResult(null)
+    try {
+      const res = await apiPost<typeof cleanupDryResult & { mensaje: string }>('/it/limpiar-cuotas-seed-corruptas', { dry_run: true })
+      setCleanupDryResult(res)
+      setCleanupMsg(res?.mensaje || '')
+    } catch (e: unknown) {
+      setCleanupMsg(e instanceof Error ? e.message : 'Error en dry run')
+    } finally {
+      setCleanupRunning(false)
+    }
+  }
+
+  const handleCleanupApply = async () => {
+    if (!cleanupDryResult || cleanupDryResult.loanbooks_afectados === 0) return
+    if (!window.confirm(`¿Aplicar limpieza? Se revertirán ${cleanupDryResult.cuotas_revertidas_total} cuotas en ${cleanupDryResult.loanbooks_afectados} loanbooks.`)) return
+    setCleanupRunning(true)
+    setCleanupMsg('')
+    try {
+      const res = await apiPost<{ mensaje: string; loanbooks_afectados: number; cuotas_revertidas_total: number }>('/it/limpiar-cuotas-seed-corruptas', { dry_run: false })
+      setCleanupMsg(res?.mensaje || 'Aplicado')
+      setCleanupDryResult(null)
+    } catch (e: unknown) {
+      setCleanupMsg(e instanceof Error ? e.message : 'Error al aplicar')
+    } finally {
+      setCleanupRunning(false)
     }
   }
 
@@ -700,6 +736,67 @@ export default function ITSismoPage() {
             </table>
           </div>
         )}
+      </section>
+
+      {/* ── Mantenimiento ── */}
+      <section className="border border-red-200 rounded-xl p-4 bg-red-50/40">
+        <h2 className="text-sm font-bold text-red-800 uppercase tracking-wider mb-1">Mantenimiento</h2>
+        <p className="text-xs text-red-700 mb-3">
+          Acciones destructivas — solo para IT. Siempre correr dry run primero.
+        </p>
+
+        <div className="bg-white rounded-lg border border-red-100 p-3">
+          <p className="text-xs font-medium text-on-surface mb-0.5">Limpiar cuotas seed corruptas</p>
+          <p className="text-[11px] text-on-surface-variant mb-3">
+            Revierte cuotas futuras marcadas como "pagada" por el seed inicial
+            (sin fecha_pago real). Idempotente.
+          </p>
+
+          {cleanupMsg && (
+            <p className={`text-xs rounded-md px-3 py-2 mb-3 ${cleanupMsg.includes('Error') ? 'bg-red-100 text-red-700' : 'bg-emerald-50 text-emerald-700'}`}>
+              {cleanupMsg}
+            </p>
+          )}
+
+          {cleanupDryResult && cleanupDryResult.loanbooks_afectados > 0 && (
+            <div className="mb-3 text-[11px] text-on-surface-variant bg-amber-50 border border-amber-200 rounded-md p-2 space-y-1">
+              <p className="font-medium text-amber-800">
+                Dry run: {cleanupDryResult.loanbooks_afectados} loanbooks · {cleanupDryResult.cuotas_revertidas_total} cuotas a revertir
+              </p>
+              {cleanupDryResult.detalle.slice(0, 5).map(d => (
+                <p key={d.loanbook_id} className="font-mono">
+                  {d.loanbook_id} → cuotas #{d.cuotas_revertidas.join(', #')}
+                </p>
+              ))}
+              {cleanupDryResult.detalle.length > 5 && (
+                <p className="italic">…y {cleanupDryResult.detalle.length - 5} más</p>
+              )}
+            </div>
+          )}
+
+          {cleanupDryResult && cleanupDryResult.loanbooks_afectados === 0 && (
+            <p className="text-xs text-emerald-700 mb-3">✅ No se encontraron cuotas corruptas.</p>
+          )}
+
+          <div className="flex gap-2 flex-wrap">
+            <button
+              onClick={handleCleanupDryRun}
+              disabled={cleanupRunning}
+              className="px-3 py-1.5 text-xs rounded-md border border-red-300 text-red-700 bg-white hover:bg-red-50 disabled:opacity-50 transition-colors font-medium"
+            >
+              {cleanupRunning ? 'Ejecutando...' : 'Dry run'}
+            </button>
+            {cleanupDryResult && cleanupDryResult.loanbooks_afectados > 0 && (
+              <button
+                onClick={handleCleanupApply}
+                disabled={cleanupRunning}
+                className="px-3 py-1.5 text-xs rounded-md bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 transition-colors font-medium"
+              >
+                {cleanupRunning ? 'Aplicando...' : `Aplicar (${cleanupDryResult.cuotas_revertidas_total} cuotas)`}
+              </button>
+            )}
+          </div>
+        </div>
       </section>
 
       {/* ── Add modal ── */}
