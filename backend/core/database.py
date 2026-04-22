@@ -12,6 +12,7 @@ _db: AsyncIOMotorDatabase | None = None
 _processor = None  # EventProcessor instance
 _processor_task: asyncio.Task | None = None
 _alegra_sync_task: asyncio.Task | None = None
+_dpd_scheduler_task: asyncio.Task | None = None
 
 
 async def init_db() -> None:
@@ -80,13 +81,21 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Alegra sync loop failed to start: {e}")
 
+    # ── DPD scheduler — 06:00 AM America/Bogotá diario ────────────────
+    try:
+        from services.loanbook.dpd_scheduler import run_dpd_scheduler
+        _dpd_scheduler_task = asyncio.create_task(run_dpd_scheduler(db))
+        logger.info("DPD scheduler started (runs at 06:00 AM Bogota)")
+    except Exception as e:
+        logger.error(f"DPD scheduler failed to start: {e}")
+
     yield
 
     # ── Shutdown ───────────────────────────────────────────────────────
     if _processor:
         await _processor.stop()
 
-    for task in (_processor_task, _alegra_sync_task):
+    for task in (_processor_task, _alegra_sync_task, _dpd_scheduler_task):
         if task:
             task.cancel()
             try:
