@@ -445,37 +445,61 @@ async def registrar_pago_manual(
     )
 
     # Marcar cuotas pagadas según allocation
-    rem_venc = alloc["vencidas"]
-    rem_corr = alloc["corriente"]
-    for c in cuotas:
-        if c.get("estado") == "pagada":
-            continue
-        if c.get("fecha"):
-            fc = date.fromisoformat(c["fecha"])
-            if fc < fecha_pago and rem_venc >= c["monto"]:
-                c["estado"] = "pagada"
-                c["fecha_pago"] = fecha_pago_str
-                c["mora_acumulada"] = 0
-                c["metodo_pago"] = metodo
-                c["referencia"] = body.referencia
-                rem_venc -= c["monto"]
+    # BUILD 2 FIX: cuando cuota_numero es explícito, apuntamos directo a esa cuota.
+    # El monto_pago BRUTO (antes del split ANZI) es lo que cubre la cuota — ANZI es
+    # solo distribución interna del banco, no reduce la cobertura de la cuota.
+    pago_parcial = False
+    if body.cuota_numero is not None:
+        target = next((c for c in cuotas if c.get("numero") == body.cuota_numero), None)
+        if target is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Cuota #{body.cuota_numero} no encontrada en este loanbook",
+            )
+        if target.get("estado") == "pagada":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cuota #{body.cuota_numero} ya está pagada — pago duplicado bloqueado",
+            )
+        pago_parcial = body.monto_pago < target["monto"]
+        target["estado"] = "pagada"
+        target["fecha_pago"] = fecha_pago_str
+        target["mora_acumulada"] = 0
+        target["metodo_pago"] = metodo
+        target["referencia"] = body.referencia
+    else:
+        # Waterfall genérico cuando no se especifica cuota (path original)
+        rem_venc = alloc["vencidas"]
+        rem_corr = alloc["corriente"]
+        for c in cuotas:
+            if c.get("estado") == "pagada":
                 continue
-            if fc >= fecha_pago and rem_corr >= c["monto"]:
-                c["estado"] = "pagada"
-                c["fecha_pago"] = fecha_pago_str
-                c["mora_acumulada"] = 0
-                c["metodo_pago"] = metodo
-                c["referencia"] = body.referencia
-                rem_corr -= c["monto"]
-                break
-        else:
-            if rem_corr >= c["monto"]:
-                c["estado"] = "pagada"
-                c["fecha_pago"] = fecha_pago_str
-                c["metodo_pago"] = metodo
-                c["referencia"] = body.referencia
-                rem_corr -= c["monto"]
-                break
+            if c.get("fecha"):
+                fc = date.fromisoformat(c["fecha"])
+                if fc < fecha_pago and rem_venc >= c["monto"]:
+                    c["estado"] = "pagada"
+                    c["fecha_pago"] = fecha_pago_str
+                    c["mora_acumulada"] = 0
+                    c["metodo_pago"] = metodo
+                    c["referencia"] = body.referencia
+                    rem_venc -= c["monto"]
+                    continue
+                if fc >= fecha_pago and rem_corr >= c["monto"]:
+                    c["estado"] = "pagada"
+                    c["fecha_pago"] = fecha_pago_str
+                    c["mora_acumulada"] = 0
+                    c["metodo_pago"] = metodo
+                    c["referencia"] = body.referencia
+                    rem_corr -= c["monto"]
+                    break
+            else:
+                if rem_corr >= c["monto"]:
+                    c["estado"] = "pagada"
+                    c["fecha_pago"] = fecha_pago_str
+                    c["metodo_pago"] = metodo
+                    c["referencia"] = body.referencia
+                    rem_corr -= c["monto"]
+                    break
 
     new_saldo = max(saldo_capital - alloc["corriente"] - alloc["vencidas"] - alloc["capital"], 0)
     total_pagado = (lb.get("total_pagado", 0) or 0) + body.monto_pago
@@ -527,6 +551,7 @@ async def registrar_pago_manual(
         "nuevo_estado": nuevo_estado,
         "cuotas_pagadas": cuotas_pagadas,
         "desglose": alloc,
+        "pago_parcial": pago_parcial,
     }
 
 
