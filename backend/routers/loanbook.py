@@ -16,7 +16,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, Field
 
+from core.auth import get_current_user
 from core.database import get_db
+from services.loanbook.auditor import auditar_loanbooks as _auditar_loanbooks
 from core.loanbook_model import (
     MORA_TASA_DIARIA,
     aplicar_waterfall,
@@ -90,6 +92,26 @@ async def loanbook_stats(db: AsyncIOMotorDatabase = Depends(get_db)):
         "recaudo_semanal": round(recaudo_semanal),
         "en_mora": en_mora,
     }
+
+
+@router.get("/auditoria")
+async def get_auditoria(
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Auditoría completa de inconsistencias estructurales del portafolio.
+
+    Detecta 3 categorías de corrupción sin modificar nada:
+      1. valor_total_incorrecto — no coincide con total_cuotas × cuota_valor + cuota_inicial
+      2. total_cuotas_incorrecto_segun_plan — no deriva correctamente de plan_codigo + modalidad
+      3. cuotas_pagadas_con_fecha_imposible — cuotas futuras marcadas pagadas sin evidencia real
+
+    Requiere autenticación. Solo lectura.
+    """
+    docs = await db.loanbook.find().to_list(length=2000)
+    # Strip MongoDB _id before passing to pure function
+    loanbooks = [{k: v for k, v in doc.items() if k != "_id"} for doc in docs]
+    return _auditar_loanbooks(loanbooks)
 
 
 @router.get("")

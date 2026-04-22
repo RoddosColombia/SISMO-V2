@@ -176,12 +176,16 @@ Base URL producción: https://sismo-backend-40ca.onrender.com
 |--------|------|---------|-----------|
 | GET | /api/loanbook | loanbook.py | Lista todos los loanbooks |
 | POST | /api/loanbook | loanbook.py | Crear loanbook nuevo |
+| GET | /api/loanbook/auditoria | loanbook.py | Auditoría estructural del portafolio (BUILD 1 Sprint Estructural) |
+| GET | /api/loanbook/stats | loanbook.py | KPIs de cartera (totales, mora, recaudo) |
 | GET | /api/loanbook/{id} | loanbook.py | Detalle de un loanbook |
 | GET | /api/loanbook/{id}/snapshot | loanbook.py | Snapshot para dashboard |
 | PUT | /api/loanbook/{id}/entrega | loanbook.py | Registrar entrega de moto |
 | PUT | /api/loanbook/{id}/pago | loanbook.py | Registrar pago de cuota |
 | POST | /api/loanbook/{id}/gestion | loanbook.py | Registrar gestión de cobro |
 | POST | /api/loanbook/{id}/ptp | loanbook.py | Registrar promesa de pago |
+| PATCH | /api/loanbook/{id} | loanbook.py | [DEPRECATED] Edición manual de campos (Sprint Cobranza) |
+| PATCH | /api/loanbook/{id}/cuotas/{n} | loanbook.py | [DEPRECATED] Corrección manual de cuota (Sprint Cobranza) |
 
 ### 4C. RADAR
 
