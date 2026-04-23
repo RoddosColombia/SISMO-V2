@@ -106,7 +106,6 @@ export default function InformePage() {
         total_sin_pago: raw.total_sin_pago ?? 0,
         valor_en_riesgo: raw.valor_en_riesgo ?? 0,
       }
-      // DEBUG: verificar qué llega del API — quitar después de confirmar
       console.log('[InformePage] informe recibido:', JSON.stringify(data.sin_pago?.[0]))
       setInforme(data)
       setNotasGenerales(data.notas_generales)
@@ -345,6 +344,10 @@ export default function InformePage() {
             </div>
 
             {/* Tabla */}
+            {(() => { console.log('sin_pago[0]:', informe?.sin_pago?.[0]); return null })()}
+            {(!informe || !Array.isArray(informe.sin_pago)) ? (
+              <div className="p-8 text-center text-on-surface-variant text-sm">Cargando datos del informe...</div>
+            ) : (
             <div className="bg-surface-container-lowest rounded-xl overflow-hidden shadow-ambient-1">
               <table className="w-full text-sm">
                 <thead>
@@ -360,7 +363,6 @@ export default function InformePage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-surface-container">
-                  {void console.log('sin_pago[0]:', informe?.sin_pago?.[0])}
                   {(informe.sin_pago ?? []).map(credito => (
                     <tr
                       key={credito.loanbook_id}
@@ -395,7 +397,7 @@ export default function InformePage() {
                       <td className="px-3 py-3">
                         <input
                           type="text"
-                          value={credito.notas}
+                          value={credito.notas ?? ''}
                           onChange={e => {
                             const val = e.target.value
                             setInforme(prev => prev ? {
@@ -422,6 +424,7 @@ export default function InformePage() {
                 </tbody>
               </table>
             </div>
+            )}
           </>
         )}
       </div>
