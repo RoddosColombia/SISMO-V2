@@ -106,7 +106,6 @@ export default function InformePage() {
         total_sin_pago: raw.total_sin_pago ?? 0,
         valor_en_riesgo: raw.valor_en_riesgo ?? 0,
       }
-      console.log('[InformePage] informe recibido:', JSON.stringify(data.sin_pago?.[0]))
       setInforme(data)
       setNotasGenerales(data.notas_generales)
       setSemanaSeleccionada(data.semana_id)
@@ -344,7 +343,6 @@ export default function InformePage() {
             </div>
 
             {/* Tabla */}
-            {(() => { console.log('sin_pago[0]:', informe?.sin_pago?.[0]); return null })()}
             {(!informe || !Array.isArray(informe.sin_pago)) ? (
               <div className="p-8 text-center text-on-surface-variant text-sm">Cargando datos del informe...</div>
             ) : (
