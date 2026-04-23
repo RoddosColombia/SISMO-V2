@@ -131,12 +131,14 @@ export default function InformePage() {
     }
   }, [])
 
-  // Montar: cargar historial + informe de la semana más reciente en secuencia
+  // Montar: hit /semana-actual PRIMERO (activa stale detection del backend),
+  // luego cargar historial para el selector. El orden importa: si cargamos
+  // hist[0].semana_id primero, llamamos /semana/{id} que NO tiene stale detection
+  // y retorna el snapshot viejo con dpd=0.
   useEffect(() => {
     const init = async () => {
-      const hist = await cargarHistorial()
-      const primera = hist[0]?.semana_id
-      await cargarInforme(primera)
+      await cargarInforme(undefined)  // /semana-actual → detecta stale → regenera
+      await cargarHistorial()         // historial ya tiene el informe refrescado
     }
     init()
   }, [])
@@ -358,6 +360,7 @@ export default function InformePage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-surface-container">
+                  {void console.log('sin_pago[0]:', informe?.sin_pago?.[0])}
                   {(informe.sin_pago ?? []).map(credito => (
                     <tr
                       key={credito.loanbook_id}
