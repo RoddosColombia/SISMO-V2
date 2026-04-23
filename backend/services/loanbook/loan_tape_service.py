@@ -103,6 +103,25 @@ def _v(doc: dict, *keys: str) -> Any:
     return cur
 
 
+def _get(lb: dict, *paths: str, default: Any = None) -> Any:
+    """Navega rutas anidadas con fallback dual.
+
+    Ejemplo: _get(lb, 'fechas.factura', 'fecha_factura')
+    Prueba cada path en orden (punto = subdocumento). Retorna el primero no-None.
+    """
+    for path in paths:
+        val: Any = lb
+        for key in path.split("."):
+            if isinstance(val, dict):
+                val = val.get(key)
+            else:
+                val = None
+                break
+        if val is not None:
+            return val
+    return default
+
+
 def _proximo_miercoles(hoy: date) -> date:
     """Fecha del próximo miércoles (weekday=2) a partir de hoy."""
     dias_hasta = (2 - hoy.weekday()) % 7
@@ -161,6 +180,7 @@ def _hoja_rdx(wb: openpyxl.Workbook, loanbooks: list[dict], fecha_corte: date) -
         pagadas = sum(1 for c in cuotas if c.get("estado") == "pagada")
         vencidas = sum(1 for c in cuotas if c.get("estado") in ("vencida", "parcial"))
 
+        moto = lb.get("moto") or {}
         fila = [
             lb.get("loanbook_id") or lb.get("loanbook_codigo"),
             "RDX",
@@ -168,27 +188,27 @@ def _hoja_rdx(wb: openpyxl.Workbook, loanbooks: list[dict], fecha_corte: date) -
             cliente.get("cedula") or lb.get("cliente_cedula"),
             cliente.get("telefono") or lb.get("cliente_telefono"),
             cliente.get("ciudad") or lb.get("cliente_ciudad"),
-            lb.get("plan_codigo") or _v(lb, "plan", "codigo"),
-            lb.get("modalidad_pago") or lb.get("modalidad"),
-            lb.get("fecha_factura"),
-            lb.get("fecha_entrega"),
-            lb.get("fecha_vencimiento"),
-            # moto
-            mp.get("moto_vin") or lb.get("vin"),
-            mp.get("moto_modelo") or lb.get("modelo"),
-            mp.get("moto_motor") or lb.get("motor"),
-            mp.get("moto_placa") or lb.get("placa"),
-            mp.get("moto_anio"),
-            mp.get("moto_cilindraje"),
-            mp.get("moto_valor_origen"),
+            _get(lb, "plan_codigo", "plan.codigo"),
+            _get(lb, "modalidad_pago", "modalidad"),
+            _get(lb, "fecha_factura", "fechas.factura"),
+            _get(lb, "fecha_entrega", "fechas.entrega"),
+            _get(lb, "fecha_vencimiento", "fechas.vencimiento"),
+            # moto — fallback: metadata_producto → moto → top-level
+            mp.get("moto_vin") or moto.get("vin") or lb.get("vin"),
+            mp.get("moto_modelo") or moto.get("modelo") or lb.get("modelo"),
+            mp.get("moto_motor") or moto.get("motor") or lb.get("motor"),
+            mp.get("moto_placa") or moto.get("placa") or lb.get("placa"),
+            mp.get("moto_anio") or moto.get("anio"),
+            mp.get("moto_cilindraje") or moto.get("cilindraje"),
+            mp.get("moto_valor_origen") or moto.get("valor_origen"),
             mp.get("ltv"),
             # montos
-            lb.get("monto_original"),
+            _get(lb, "monto_original", "valor_total"),
             lb.get("cuota_inicial"),
-            lb.get("cuota_periodica") or lb.get("cuota_monto"),
-            lb.get("tasa_ea"),
+            _get(lb, "cuota_periodica", "cuota_monto"),
+            _get(lb, "tasa_ea", "plan.tasa", default=0.39),
             # desempeño
-            lb.get("total_cuotas") or len(cuotas),
+            _get(lb, "total_cuotas", "num_cuotas") or len(cuotas),
             pagadas,
             vencidas,
             lb.get("saldo_capital") or lb.get("saldo_pendiente"),
@@ -266,16 +286,16 @@ def _hoja_rodante(wb: openpyxl.Workbook, loanbooks: list[dict], fecha_corte: dat
             cliente.get("cedula") or lb.get("cliente_cedula"),
             cliente.get("telefono") or lb.get("cliente_telefono"),
             cliente.get("ciudad") or lb.get("cliente_ciudad"),
-            lb.get("plan_codigo") or _v(lb, "plan", "codigo"),
-            lb.get("modalidad_pago") or lb.get("modalidad"),
-            lb.get("fecha_factura"),
-            lb.get("fecha_entrega"),
-            lb.get("fecha_vencimiento"),
-            lb.get("monto_original"),
+            _get(lb, "plan_codigo", "plan.codigo"),
+            _get(lb, "modalidad_pago", "modalidad"),
+            _get(lb, "fecha_factura", "fechas.factura"),
+            _get(lb, "fecha_entrega", "fechas.entrega"),
+            _get(lb, "fecha_vencimiento", "fechas.vencimiento"),
+            _get(lb, "monto_original", "valor_total"),
             lb.get("cuota_inicial"),
-            lb.get("cuota_periodica") or lb.get("cuota_monto"),
-            lb.get("tasa_ea"),
-            lb.get("total_cuotas") or len(cuotas),
+            _get(lb, "cuota_periodica", "cuota_monto"),
+            _get(lb, "tasa_ea", "plan.tasa", default=0.39),
+            _get(lb, "total_cuotas", "num_cuotas") or len(cuotas),
             pagadas,
             vencidas,
             lb.get("saldo_capital") or lb.get("saldo_pendiente"),

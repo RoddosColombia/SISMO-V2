@@ -235,7 +235,7 @@ async def generar_cronogramas_todos(
             fecha_entrega = date.fromisoformat(str(fecha_entrega_raw)[:10])
             saldo = float(lb.get("saldo_capital") or lb.get("saldo_pendiente") or 0)
             cuota_p = float(lb.get("cuota_monto") or lb.get("cuota_periodica") or 0)
-            tasa = float(lb.get("tasa_ea") or 0)
+            tasa = float(lb.get("tasa_ea") or (lb.get("plan") or {}).get("tasa") or 0.39)
             modalidad = lb.get("modalidad") or lb.get("modalidad_pago") or "semanal"
             n = int(lb.get("num_cuotas") or lb.get("total_cuotas") or len(lb.get("cuotas") or []) or 0)
             if saldo <= 0 or n <= 0:
@@ -1598,3 +1598,172 @@ async def generar_cronograma_endpoint(
     )
 
     return {"ok": True, "loanbook_id": lb["loanbook_id"], "cuotas_generadas": len(nuevas_cuotas)}
+
+
+# ─────────────────────── B5: Edición manual ──────────────────────────────────
+
+_CAMPOS_PROTEGIDOS = frozenset({"_id", "loanbook_id", "loanbook_codigo", "cuotas", "estado"})
+
+
+def _serialize_lb(lb: dict) -> dict:
+    """Serializa loanbook removiendo _id."""
+    if lb:
+        lb = dict(lb)
+        lb.pop("_id", None)
+    return lb or {}
+
+
+@router.patch("/{codigo}/editar")
+async def editar_loanbook(
+    codigo: str,
+    campos: dict,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Edita campos del loanbook (excepto campos protegidos). Persiste en MongoDB
+    y registra audit log en loanbook_modificaciones por cada campo modificado.
+    """
+    from services.loanbook.loanbook_service import registrar_modificacion
+
+    campos_filtrados = {k: v for k, v in campos.items() if k not in _CAMPOS_PROTEGIDOS}
+    if not campos_filtrados:
+        raise HTTPException(status_code=400, detail="No hay campos válidos para actualizar")
+
+    lb = await _find_lb_by_identifier(db, codigo)
+
+    campos_filtrados["updated_at"] = datetime.utcnow()
+
+    await db.loanbook.update_one(
+        {"_id": lb["_id"]},
+        {"$set": campos_filtrados},
+    )
+
+    user_id = current_user.get("id") or current_user.get("sub") or "admin"
+    lb_id = lb.get("loanbook_id") or codigo
+    for campo, valor_nuevo in campos_filtrados.items():
+        if campo == "updated_at":
+            continue
+        await registrar_modificacion(
+            db, lb_id, campo, lb.get(campo), valor_nuevo, user_id, "Edición manual"
+        )
+
+    lb_actualizado = await _find_lb_by_identifier(db, codigo)
+    return {
+        "ok": True,
+        "campos_actualizados": [k for k in campos_filtrados if k != "updated_at"],
+        "loanbook": _serialize_lb(lb_actualizado),
+    }
+
+
+# ─────────────────────── B5: Comprobantes de pago ────────────────────────────
+
+import base64  # noqa: E402 — grouped with feature for readability
+from fastapi import UploadFile, File
+
+_FECHA_MINIMA_COMPROBANTE = date(2026, 4, 22)
+_TIPOS_PERMITIDOS = {"image/jpeg", "image/png", "application/pdf"}
+_LIMITES_BYTES = {"image/jpeg": 2 * 1024 * 1024, "image/png": 2 * 1024 * 1024, "application/pdf": 5 * 1024 * 1024}
+
+
+@router.post("/{codigo}/cuotas/{numero_cuota}/comprobante")
+async def subir_comprobante(
+    codigo: str,
+    numero_cuota: int,
+    file: UploadFile = File(...),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Sube comprobante de pago (JPEG/PNG/PDF) para una cuota.
+    Solo aplica a cuotas con fecha_programada >= 2026-04-22.
+    Se almacena como base64 dentro del documento de la cuota en MongoDB.
+    """
+    if file.content_type not in _TIPOS_PERMITIDOS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Tipo no permitido: {file.content_type}. Acepta: JPEG, PNG, PDF",
+        )
+
+    contenido = await file.read()
+    limite = _LIMITES_BYTES.get(file.content_type, 2 * 1024 * 1024)
+    if len(contenido) > limite:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Archivo muy grande. Máximo {limite // (1024 * 1024)}MB para {file.content_type}",
+        )
+
+    lb = await _find_lb_by_identifier(db, codigo)
+    cuotas = lb.get("cuotas") or []
+    cuota_idx = next((i for i, c in enumerate(cuotas) if c.get("numero") == numero_cuota), None)
+    if cuota_idx is None:
+        raise HTTPException(status_code=404, detail=f"Cuota {numero_cuota} no encontrada")
+
+    cuota = cuotas[cuota_idx]
+
+    # Validar fecha mínima
+    fecha_prog_raw = cuota.get("fecha_programada") or cuota.get("fecha")
+    if fecha_prog_raw:
+        try:
+            fecha_prog = date.fromisoformat(str(fecha_prog_raw)[:10])
+            if fecha_prog < _FECHA_MINIMA_COMPROBANTE:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Los comprobantes solo aplican a cuotas desde el 22 de abril de 2026",
+                )
+        except ValueError:
+            pass  # fecha inválida — no bloquear
+
+    comprobante_b64 = base64.b64encode(contenido).decode("utf-8")
+    user_id = current_user.get("id") or current_user.get("sub") or "admin"
+
+    await db.loanbook.update_one(
+        {"_id": lb["_id"]},
+        {
+            "$set": {
+                f"cuotas.{cuota_idx}.comprobante": {
+                    "filename": file.filename,
+                    "content_type": file.content_type,
+                    "data_b64": comprobante_b64,
+                    "uploaded_at": datetime.utcnow(),
+                    "uploaded_by": user_id,
+                    "size_bytes": len(contenido),
+                },
+                "updated_at": datetime.utcnow(),
+            }
+        },
+    )
+
+    return {
+        "ok": True,
+        "cuota": numero_cuota,
+        "filename": file.filename,
+        "tipo": file.content_type,
+        "size_kb": round(len(contenido) / 1024, 1),
+    }
+
+
+@router.get("/{codigo}/cuotas/{numero_cuota}/comprobante")
+async def obtener_comprobante(
+    codigo: str,
+    numero_cuota: int,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Obtiene el comprobante de pago de una cuota (base64)."""
+    lb = await _find_lb_by_identifier(db, codigo)
+    cuotas = lb.get("cuotas") or []
+    cuota = next((c for c in cuotas if c.get("numero") == numero_cuota), None)
+    if not cuota or not cuota.get("comprobante"):
+        raise HTTPException(status_code=404, detail="Esta cuota no tiene comprobante")
+
+    comp = cuota["comprobante"]
+    uploaded_at = comp.get("uploaded_at")
+    if hasattr(uploaded_at, "isoformat"):
+        uploaded_at = uploaded_at.isoformat()
+
+    return {
+        "filename": comp["filename"],
+        "content_type": comp["content_type"],
+        "data_b64": comp["data_b64"],
+        "uploaded_at": uploaded_at,
+        "size_kb": round(comp.get("size_bytes", 0) / 1024, 1),
+    }

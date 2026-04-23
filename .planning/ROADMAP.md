@@ -66,8 +66,8 @@ Plans:
 **Plans:** 7 plans
 
 Plans:
-- [ ] 02-01-PLAN.md -- ToolDispatcher infrastructure + chat.py wiring (Wave 1)
-- [ ] 02-02-PLAN.md -- 8 consultas read-only handlers (Wave 2)
+- [x] 02-01-PLAN.md -- ToolDispatcher infrastructure + chat.py wiring (Wave 1)
+- [x] 02-02-PLAN.md -- 8 consultas read-only handlers (Wave 2)
 - [ ] 02-03-PLAN.md -- Retenciones service + 7 egresos handlers (Wave 3)
 - [ ] 02-04-PLAN.md -- 4 ingresos + CXC handlers (Wave 4)
 - [ ] 02-05-PLAN.md -- 4 facturacion handlers with VIN enforcement (Wave 5)
