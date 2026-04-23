@@ -92,9 +92,22 @@ export default function InformePage() {
         }
         throw new Error('Error cargando informe')
       }
-      const data: Informe = await res.json()
+      const raw = await res.json()
+      // Guard: el backend puede devolver {} si hubo un edge case post-inserción.
+      // Si no tiene semana_id válido, tratar como 404.
+      if (!raw?.semana_id) {
+        setInforme(null)
+        return
+      }
+      const data: Informe = {
+        ...raw,
+        sin_pago: Array.isArray(raw.sin_pago) ? raw.sin_pago : [],
+        notas_generales: raw.notas_generales ?? '',
+        total_sin_pago: raw.total_sin_pago ?? 0,
+        valor_en_riesgo: raw.valor_en_riesgo ?? 0,
+      }
       setInforme(data)
-      setNotasGenerales(data.notas_generales || '')
+      setNotasGenerales(data.notas_generales)
       setSemanaSeleccionada(data.semana_id)
     } catch (e: any) {
       setError(e.message)
@@ -328,7 +341,7 @@ export default function InformePage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-surface-container">
-                  {informe.sin_pago.map(credito => (
+                  {(informe.sin_pago ?? []).map(credito => (
                     <tr
                       key={credito.loanbook_id}
                       className="hover:bg-surface-container/50 transition-colors"
@@ -379,7 +392,7 @@ export default function InformePage() {
                       </td>
                     </tr>
                   ))}
-                  {informe.sin_pago.length === 0 && (
+                  {(informe.sin_pago ?? []).length === 0 && (
                     <tr>
                       <td colSpan={8} className="text-center py-8 text-sm text-on-surface-variant">
                         Todos los créditos al día esta semana.

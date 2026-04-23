@@ -49,6 +49,8 @@ async def get_semana_actual(
     if not informe:
         await generar_informe_semanal(db, generado_por="auto")
         informe = await db.informes_semanales.find_one({"semana_id": semana_id})
+    if not informe:
+        raise HTTPException(status_code=404, detail=f"No se pudo generar informe para {semana_id}")
     return _clean(informe)
 
 
