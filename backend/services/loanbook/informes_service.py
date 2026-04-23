@@ -113,6 +113,29 @@ async def generar_informe_semanal(
                 cuotas_problema.append(c)
 
         if dpd > 0 or cuotas_problema:
+            # DPD real: campo del scheduler (primera opción) → fallback calculado
+            # desde las cuotas ya procesadas (cubre el caso donde el scheduler no
+            # ha corrido aún y dpd sigue en 0 en MongoDB).
+            dpd_real = lb.get("dpd") or lb.get("dpd_nuevo") or 0
+            if not dpd_real and cuotas_problema:
+                # Calcular DPD desde la cuota vencida más antigua del snapshot
+                fechas = []
+                for c in cuotas_problema:
+                    fr = c.get("fecha_programada") or c.get("fecha")
+                    if not fr:
+                        continue
+                    if isinstance(fr, datetime):
+                        fechas.append(fr.date())
+                    elif isinstance(fr, date_type):
+                        fechas.append(fr)
+                    elif isinstance(fr, str):
+                        try:
+                            fechas.append(date_type.fromisoformat(fr[:10]))
+                        except ValueError:
+                            pass
+                if fechas:
+                    dpd_real = (hoy - min(fechas)).days
+
             cliente = lb.get("cliente") or {}
             sin_pago.append({
                 "loanbook_id": lb.get("loanbook_id") or lb.get("loanbook_codigo"),
@@ -120,7 +143,7 @@ async def generar_informe_semanal(
                 "telefono": cliente.get("telefono") or lb.get("cliente_telefono", ""),
                 "saldo": float(lb.get("saldo_pendiente") or lb.get("saldo_capital") or 0),
                 "cuotas_vencidas": len(cuotas_problema),
-                "dpd": dpd or int(lb.get("mora_acumulada_cop") or 0) // 2000 or 0,
+                "dpd": dpd_real,
                 "sub_bucket": lb.get("sub_bucket_semanal"),
                 "estado_gestion": "pendiente",
                 "notas": "",

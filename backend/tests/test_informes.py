@@ -177,6 +177,25 @@ class TestGenerarInformeSemanal:
         assert doc["valor_en_riesgo"] == 0
 
     @pytest.mark.asyncio
+    async def test_dpd_calculado_desde_cuotas_cuando_campo_es_cero(self):
+        """Si dpd=0 en el loanbook (scheduler no corrió), DPD se calcula desde las cuotas."""
+        from services.loanbook.informes_service import generar_informe_semanal
+        from datetime import datetime, timedelta
+        hace_21_dias = (datetime.utcnow() - timedelta(days=21)).strftime("%Y-%m-%d")
+        lb = make_lb(dpd=0, estado="activo", cuotas=[{
+            "estado": "vencida",
+            "fecha_programada": hace_21_dias,
+        }])
+        db = make_db(lbs=[lb], informe=None)
+
+        result = await generar_informe_semanal(db)
+
+        doc = db.informes_semanales.insert_one.call_args[0][0]
+        assert doc["total_sin_pago"] == 1
+        # DPD debe calcularse desde la cuota (21 días), no quedarse en 0
+        assert doc["sin_pago"][0]["dpd"] >= 20  # pequeño margen por hora del día
+
+    @pytest.mark.asyncio
     async def test_informe_fecha_programada_datetime_object(self):
         """fecha_programada como datetime (Motor) debe normalizarse correctamente."""
         from services.loanbook.informes_service import generar_informe_semanal
