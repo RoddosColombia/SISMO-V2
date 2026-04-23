@@ -264,6 +264,64 @@ class TestProcesarUnLoanbook:
         assert resultado["estado_nuevo"] == "Pagado"
         assert resultado["cambio"] is True
 
+    async def test_cuota_pendiente_vencida_se_marca_en_mongodb(self):
+        """Cuota con estado=pendiente y fecha < hoy debe marcarse como vencida en MongoDB."""
+        from services.loanbook.dpd_scheduler import procesar_un_loanbook
+        from bson import ObjectId
+
+        hoy = date(2026, 4, 22)
+        lb = {
+            "_id": ObjectId(),
+            "loanbook_id": "LB-2026-0010",
+            "estado": "Current",
+            "saldo_capital": 500_000,
+            "plan_codigo": "P52S",
+            "cuotas": [
+                {"estado": "pendiente", "fecha_programada": "2026-03-15"},  # 38 días atrás
+                {"estado": "pendiente", "fecha_programada": "2026-04-30"},  # futura
+            ],
+        }
+        db = self._make_db()
+        resultado = await procesar_un_loanbook(db, lb, hoy)
+
+        # DPD debe ser 38
+        assert resultado["dpd_nuevo"] == 38
+
+        # update_one debe haberse llamado al menos 2 veces:
+        # 1) para marcar cuotas vencidas, 2) para actualizar DPD/estado
+        assert db.loanbook.update_one.call_count >= 2
+
+        # La primera llamada debe marcar cuotas.0.estado = "vencida"
+        first_call_update = db.loanbook.update_one.call_args_list[0][0][1]
+        assert first_call_update["$set"].get("cuotas.0.estado") == "vencida"
+        # La cuota futura no debe estar en el marcado
+        assert "cuotas.1.estado" not in first_call_update["$set"]
+
+    async def test_cuota_pendiente_futura_no_se_marca(self):
+        """Cuota pendiente con fecha >= hoy no debe marcarse como vencida."""
+        from services.loanbook.dpd_scheduler import procesar_un_loanbook
+        from bson import ObjectId
+
+        hoy = date(2026, 4, 22)
+        lb = {
+            "_id": ObjectId(),
+            "loanbook_id": "LB-2026-0011",
+            "estado": "Current",
+            "saldo_capital": 500_000,
+            "plan_codigo": "P52S",
+            "cuotas": [
+                {"estado": "pendiente", "fecha_programada": "2026-04-22"},  # hoy exacto
+                {"estado": "pendiente", "fecha_programada": "2026-04-29"},  # futura
+            ],
+        }
+        db = self._make_db()
+        resultado = await procesar_un_loanbook(db, lb, hoy)
+
+        # DPD = 0 (ninguna fecha < hoy)
+        assert resultado["dpd_nuevo"] == 0
+        # Solo debe llamarse update_one una vez (el update final de DPD/estado)
+        assert db.loanbook.update_one.call_count == 1
+
     async def test_transicion_invalida_no_cambia_estado(self):
         """Transición inválida detectada por scheduler → no modifica estado."""
         from services.loanbook.dpd_scheduler import procesar_un_loanbook

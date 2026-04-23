@@ -176,6 +176,48 @@ class TestGenerarInformeSemanal:
         assert doc["total_sin_pago"] == 0
         assert doc["valor_en_riesgo"] == 0
 
+    @pytest.mark.asyncio
+    async def test_informe_fecha_programada_datetime_object(self):
+        """fecha_programada como datetime (Motor) debe normalizarse correctamente."""
+        from services.loanbook.informes_service import generar_informe_semanal
+        from datetime import datetime, date, timedelta
+        # Simular lo que Motor retorna: datetime object (no string)
+        hace_30_dias = datetime.utcnow() - timedelta(days=30)
+        lb = make_lb(dpd=0, estado="activo", cuotas=[{
+            "estado": "pendiente",
+            "fecha_programada": hace_30_dias,  # datetime object, como llega de Motor
+        }])
+        db = make_db(lbs=[lb], informe=None)
+
+        result = await generar_informe_semanal(db)
+
+        assert result["ok"] is True
+        doc = db.informes_semanales.insert_one.call_args[0][0]
+        # La cuota vencida hace 30 días debe aparecer en el informe
+        assert doc["total_sin_pago"] == 1
+        assert doc["sin_pago"][0]["cuotas_vencidas"] == 1
+
+    @pytest.mark.asyncio
+    async def test_informe_cuotas_vencidas_acumuladas_todas_las_semanas(self):
+        """Cuotas de semanas anteriores también cuentan — el informe es acumulado."""
+        from services.loanbook.informes_service import generar_informe_semanal
+        from datetime import datetime, timedelta
+        # 3 cuotas vencidas de meses anteriores
+        cuotas = [
+            {"estado": "vencida", "fecha_programada": (datetime.utcnow() - timedelta(days=90)).strftime("%Y-%m-%d")},
+            {"estado": "vencida", "fecha_programada": (datetime.utcnow() - timedelta(days=60)).strftime("%Y-%m-%d")},
+            {"estado": "pendiente", "fecha_programada": (datetime.utcnow() - timedelta(days=30)).strftime("%Y-%m-%d")},
+        ]
+        lb = make_lb(dpd=90, estado="activo", cuotas=cuotas)
+        db = make_db(lbs=[lb], informe=None)
+
+        result = await generar_informe_semanal(db)
+
+        doc = db.informes_semanales.insert_one.call_args[0][0]
+        assert doc["total_sin_pago"] == 1
+        # Las 3 cuotas de distintas semanas deben contarse
+        assert doc["sin_pago"][0]["cuotas_vencidas"] == 3
+
 
 # ─── Tests endpoints ───────────────────────────────────────────────────────────
 

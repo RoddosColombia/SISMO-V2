@@ -120,11 +120,29 @@ async def procesar_un_loanbook(
     codigo = lb.get("loanbook_id") or lb.get("loanbook_codigo") or str(lb_id)
 
     estado_anterior = lb.get("estado")
-    cuotas = lb.get("cuotas", [])
+    cuotas = list(lb.get("cuotas", []))  # copia mutable
     saldo_capital = float(lb.get("saldo_capital") or lb.get("saldo_pendiente") or 0)
     plan_codigo = lb.get("plan_codigo") or (lb.get("plan") or {}).get("codigo") or ""
 
-    # 1. DPD
+    # 0. Marcar como "vencida" las cuotas pendientes con fecha < hoy (persistir en MongoDB)
+    cuotas_a_vencer: list[int] = []
+    for i, c in enumerate(cuotas):
+        if c.get("estado") != "pendiente":
+            continue
+        fecha_raw = c.get("fecha_programada") or c.get("fecha")
+        if not fecha_raw:
+            continue
+        fecha = _a_fecha(fecha_raw)
+        if fecha < hoy:
+            cuotas[i] = {**c, "estado": "vencida"}
+            cuotas_a_vencer.append(i)
+
+    if cuotas_a_vencer:
+        update_ops = {f"cuotas.{i}.estado": "vencida" for i in cuotas_a_vencer}
+        await db.loanbook.update_one({"_id": lb_id}, {"$set": update_ops})
+        logger.debug("[DPD] %s: %d cuota(s) marcadas como vencida", codigo, len(cuotas_a_vencer))
+
+    # 1. DPD (sobre la lista local ya actualizada)
     dpd_nuevo = _calcular_dpd(cuotas, hoy)
 
     # 2. Estado desde clasificador puro

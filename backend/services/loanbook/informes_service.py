@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import date as date_type, datetime, timedelta
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
@@ -83,18 +83,34 @@ async def generar_informe_semanal(
         {"estado": {"$nin": list(_ESTADOS_EXCLUIDOS)}}
     ).to_list(length=None)
 
-    hoy_iso = hoy.isoformat()
     sin_pago = []
 
     for lb in lbs:
         dpd = lb.get("dpd") or 0
         cuotas = lb.get("cuotas") or []
 
-        cuotas_problema = [
-            c for c in cuotas
-            if c.get("estado") in ("vencida", "pendiente", "parcial")
-            and c.get("fecha_programada", "9999") <= hoy_iso
-        ]
+        # Normalizar fechas correctamente — fecha_programada puede ser datetime (Motor),
+        # date, o string ISO. La comparación string vs datetime da resultados incorrectos.
+        cuotas_problema = []
+        for c in cuotas:
+            if c.get("estado") not in ("vencida", "pendiente", "parcial"):
+                continue
+            fecha_raw = c.get("fecha_programada") or c.get("fecha")
+            if not fecha_raw:
+                continue
+            if isinstance(fecha_raw, datetime):
+                fecha = fecha_raw.date()
+            elif isinstance(fecha_raw, date_type):
+                fecha = fecha_raw
+            elif isinstance(fecha_raw, str):
+                try:
+                    fecha = date_type.fromisoformat(fecha_raw[:10])
+                except ValueError:
+                    continue
+            else:
+                continue
+            if fecha < hoy:
+                cuotas_problema.append(c)
 
         if dpd > 0 or cuotas_problema:
             cliente = lb.get("cliente") or {}
