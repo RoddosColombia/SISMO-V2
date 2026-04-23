@@ -442,7 +442,7 @@ async def get_loanbook(
     proxima = None
     for c in cuotas:
         if c.get("estado") != "pagada" and c.get("fecha"):
-            proxima = {"fecha": c["fecha"], "monto": c["monto"]}
+            proxima = {"fecha": c["fecha"], "monto": (c.get("monto") or c.get("monto_total") or 0)}
             break
 
     lb["cuotas_pagadas"] = pagadas
@@ -830,7 +830,7 @@ async def registrar_pago_manual(
 
     # Vencidas
     vencidas_total = sum(
-        c["monto"] for c in cuotas
+        (c.get("monto") or c.get("monto_total") or 0) for c in cuotas
         if c.get("estado") != "pagada" and c.get("fecha")
         and date.fromisoformat(c["fecha"]) < fecha_pago
     )
@@ -841,10 +841,10 @@ async def registrar_pago_manual(
         if c.get("estado") == "pagada":
             continue
         if c.get("fecha") and date.fromisoformat(c["fecha"]) >= fecha_pago:
-            corriente_monto = c["monto"]
+            corriente_monto = (c.get("monto") or c.get("monto_total") or 0)
             break
         if not c.get("fecha"):
-            corriente_monto = c["monto"]
+            corriente_monto = (c.get("monto") or c.get("monto_total") or 0)
             break
 
     saldo_capital = lb.get("saldo_capital", 0) or lb.get("saldo_pendiente", 0) or 0
@@ -890,29 +890,29 @@ async def registrar_pago_manual(
                 continue
             if c.get("fecha"):
                 fc = date.fromisoformat(c["fecha"])
-                if fc < fecha_pago and rem_venc >= c["monto"]:
+                if fc < fecha_pago and rem_venc >= (c.get("monto") or c.get("monto_total") or 0):
                     c["estado"] = "pagada"
                     c["fecha_pago"] = fecha_pago_str
                     c["mora_acumulada"] = 0
                     c["metodo_pago"] = metodo
                     c["referencia"] = body.referencia
-                    rem_venc -= c["monto"]
+                    rem_venc -= (c.get("monto") or c.get("monto_total") or 0)
                     continue
-                if fc >= fecha_pago and rem_corr >= c["monto"]:
+                if fc >= fecha_pago and rem_corr >= (c.get("monto") or c.get("monto_total") or 0):
                     c["estado"] = "pagada"
                     c["fecha_pago"] = fecha_pago_str
                     c["mora_acumulada"] = 0
                     c["metodo_pago"] = metodo
                     c["referencia"] = body.referencia
-                    rem_corr -= c["monto"]
+                    rem_corr -= (c.get("monto") or c.get("monto_total") or 0)
                     break
             else:
-                if rem_corr >= c["monto"]:
+                if rem_corr >= (c.get("monto") or c.get("monto_total") or 0):
                     c["estado"] = "pagada"
                     c["fecha_pago"] = fecha_pago_str
                     c["metodo_pago"] = metodo
                     c["referencia"] = body.referencia
-                    rem_corr -= c["monto"]
+                    rem_corr -= (c.get("monto") or c.get("monto_total") or 0)
                     break
 
     new_saldo = max(saldo_capital - alloc["corriente"] - alloc["vencidas"] - alloc["capital"], 0)
@@ -1395,7 +1395,7 @@ async def put_pago(
         mora_pendiente += mora
 
     vencidas_total = sum(
-        c["monto"] for c in cuotas
+        (c.get("monto") or c.get("monto_total") or 0) for c in cuotas
         if c.get("estado") != "pagada" and c.get("fecha")
         and date.fromisoformat(c["fecha"]) < fecha_pago
     )
@@ -1404,10 +1404,10 @@ async def put_pago(
         if c.get("estado") == "pagada":
             continue
         if c.get("fecha") and date.fromisoformat(c["fecha"]) >= fecha_pago:
-            corriente_monto = c["monto"]
+            corriente_monto = (c.get("monto") or c.get("monto_total") or 0)
             break
         if not c.get("fecha"):
-            corriente_monto = c["monto"]
+            corriente_monto = (c.get("monto") or c.get("monto_total") or 0)
             break
 
     saldo_capital = lb.get("saldo_capital", 0) or 0
@@ -1438,20 +1438,20 @@ async def put_pago(
                 continue
             if c.get("fecha"):
                 fc = date.fromisoformat(c["fecha"])
-                if fc < fecha_pago and rem_venc >= c["monto"]:
+                if fc < fecha_pago and rem_venc >= (c.get("monto") or c.get("monto_total") or 0):
                     c.update({"estado": "pagada", "fecha_pago": fecha_pago_str,
                                "mora_acumulada": 0, "metodo_pago": metodo, "referencia": body.referencia})
-                    rem_venc -= c["monto"]
+                    rem_venc -= (c.get("monto") or c.get("monto_total") or 0)
                     continue
-                if fc >= fecha_pago and rem_corr >= c["monto"]:
+                if fc >= fecha_pago and rem_corr >= (c.get("monto") or c.get("monto_total") or 0):
                     c.update({"estado": "pagada", "fecha_pago": fecha_pago_str,
                                "mora_acumulada": 0, "metodo_pago": metodo, "referencia": body.referencia})
-                    rem_corr -= c["monto"]
+                    rem_corr -= (c.get("monto") or c.get("monto_total") or 0)
                     break
-            elif rem_corr >= c["monto"]:
+            elif rem_corr >= (c.get("monto") or c.get("monto_total") or 0):
                 c.update({"estado": "pagada", "fecha_pago": fecha_pago_str,
                            "metodo_pago": metodo, "referencia": body.referencia})
-                rem_corr -= c["monto"]
+                rem_corr -= (c.get("monto") or c.get("monto_total") or 0)
                 break
 
     cuotas_pagadas = sum(1 for c in cuotas if c.get("estado") == "pagada")
