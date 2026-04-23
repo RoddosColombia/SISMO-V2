@@ -46,9 +46,23 @@ async def get_semana_actual(
 
     semana_id = _semana_id(date.today())
     informe = await db.informes_semanales.find_one({"semana_id": semana_id})
+
+    # Detectar informe desactualizado: dpd=0 con cuotas vencidas > 0 indica
+    # snapshot generado antes del fix del DPD scheduler. Regenerar automáticamente.
+    if informe:
+        stale = any(
+            e.get("dpd", 0) == 0 and e.get("cuotas_vencidas", 0) > 0
+            for e in informe.get("sin_pago", [])
+        )
+        if stale:
+            logger.info("Informe %s desactualizado (dpd=0 con cuotas vencidas) — regenerando", semana_id)
+            await db.informes_semanales.delete_one({"_id": informe["_id"]})
+            informe = None
+
     if not informe:
         await generar_informe_semanal(db, generado_por="auto")
         informe = await db.informes_semanales.find_one({"semana_id": semana_id})
+
     if not informe:
         raise HTTPException(status_code=404, detail=f"No se pudo generar informe para {semana_id}")
     return _clean(informe)
