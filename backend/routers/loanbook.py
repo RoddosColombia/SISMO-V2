@@ -226,13 +226,6 @@ async def generar_cronogramas_todos(
     errores = 0
 
     for lb in lbs:
-        cuotas = lb.get("cuotas") or []
-        # Omitir si ya tienen monto_capital definido
-        ya_tiene_desglose = any(c.get("monto_capital") for c in cuotas)
-        if ya_tiene_desglose:
-            omitidos += 1
-            continue
-
         try:
             fechas = lb.get("fechas") or {}
             fecha_entrega_raw = lb.get("fecha_entrega") or fechas.get("entrega")
@@ -244,7 +237,7 @@ async def generar_cronogramas_todos(
             cuota_p = float(lb.get("cuota_monto") or lb.get("cuota_periodica") or 0)
             tasa = float(lb.get("tasa_ea") or 0)
             modalidad = lb.get("modalidad") or lb.get("modalidad_pago") or "semanal"
-            n = int(lb.get("num_cuotas") or lb.get("total_cuotas") or len(cuotas) or 0)
+            n = int(lb.get("num_cuotas") or lb.get("total_cuotas") or len(lb.get("cuotas") or []) or 0)
             if saldo <= 0 or n <= 0:
                 omitidos += 1
                 continue
