@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { apiGet, apiPost } from '@/lib/api'
 import LoanOverlayModal from '@/components/LoanOverlayModal'
 
@@ -436,6 +437,7 @@ const ESTADO_FILTER_LABELS: Record<string, string> = {
 }
 
 export default function LoanbookPage() {
+  const navigate = useNavigate()
   const [loanbooks, setLoanbooks] = useState<Loanbook[]>([])
   const [stats, setStats] = useState<Stats | null>(null)
   const [loading, setLoading] = useState(true)
@@ -563,6 +565,15 @@ export default function LoanbookPage() {
                 </svg>
               )}
               Excel
+            </button>
+
+            {/* Informe semanal */}
+            <button
+              onClick={() => navigate('/loanbook/informe')}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-container-low text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors"
+              title="Ver informe semanal de créditos sin pago"
+            >
+              📋 Informe
             </button>
 
             {/* Tab toggle */}

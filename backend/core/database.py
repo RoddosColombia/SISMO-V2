@@ -13,6 +13,7 @@ _processor = None  # EventProcessor instance
 _processor_task: asyncio.Task | None = None
 _alegra_sync_task: asyncio.Task | None = None
 _dpd_scheduler_task: asyncio.Task | None = None
+_informes_scheduler_task: asyncio.Task | None = None
 
 
 async def init_db() -> None:
@@ -40,7 +41,7 @@ def get_processor():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _processor, _processor_task, _alegra_sync_task
+    global _processor, _processor_task, _alegra_sync_task, _informes_scheduler_task
 
     await init_db()
     db = await get_db()
@@ -89,13 +90,21 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"DPD scheduler failed to start: {e}")
 
+    # ── Informes scheduler — jueves 09:00 AM America/Bogotá ───────────
+    try:
+        from services.loanbook.informes_service import run_informes_scheduler
+        _informes_scheduler_task = asyncio.create_task(run_informes_scheduler(db))
+        logger.info("Informes scheduler started (runs Thursdays 09:00 AM Bogota)")
+    except Exception as e:
+        logger.error(f"Informes scheduler failed to start: {e}")
+
     yield
 
     # ── Shutdown ───────────────────────────────────────────────────────
     if _processor:
         await _processor.stop()
 
-    for task in (_processor_task, _alegra_sync_task, _dpd_scheduler_task):
+    for task in (_processor_task, _alegra_sync_task, _dpd_scheduler_task, _informes_scheduler_task):
         if task:
             task.cancel()
             try:

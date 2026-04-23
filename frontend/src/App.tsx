@@ -18,6 +18,7 @@ import CarteraLegacyPage from '@/pages/CarteraLegacyPage'
 import CierresPage from '@/pages/CierresPage'
 import CierreDetallePage from '@/pages/CierreDetallePage'
 import ITSismoPage from '@/pages/ITSismoPage'
+import InformePage from '@/pages/InformePage'
 
 function App() {
   return (
@@ -39,6 +40,7 @@ function App() {
             <Route path="/inventario" element={<InventarioPage />} />
             <Route path="/loanbook" element={<LoanbookPage />} />
             <Route path="/loanbook/:id" element={<LoanDetailPage />} />
+            <Route path="/loanbook/informe" element={<InformePage />} />
             <Route path="/crm" element={<CrmPage />} />
             <Route path="/clientes/:cedula" element={<ClientDetailPage />} />
             <Route path="/plan-separe" element={<PlanSeparePage />} />

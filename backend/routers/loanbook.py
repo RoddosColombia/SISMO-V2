@@ -13,7 +13,7 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, Field
@@ -1616,7 +1616,7 @@ def _serialize_lb(lb: dict) -> dict:
 @router.patch("/{codigo}/editar")
 async def editar_loanbook(
     codigo: str,
-    campos: dict,
+    campos: dict = Body(...),
     db: AsyncIOMotorDatabase = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -1629,13 +1629,27 @@ async def editar_loanbook(
     if not campos_filtrados:
         raise HTTPException(status_code=400, detail="No hay campos válidos para actualizar")
 
-    lb = await _find_lb_by_identifier(db, codigo)
+    # Búsqueda robusta: loanbook_id → loanbook_codigo → vin
+    lb = await db.loanbook.find_one({
+        "$or": [
+            {"loanbook_id": codigo},
+            {"loanbook_codigo": codigo},
+            {"vin": codigo},
+        ]
+    })
+    if not lb:
+        raise HTTPException(status_code=404, detail=f"Loanbook '{codigo}' no encontrado")
 
     campos_filtrados["updated_at"] = datetime.utcnow()
 
-    await db.loanbook.update_one(
+    result = await db.loanbook.update_one(
         {"_id": lb["_id"]},
         {"$set": campos_filtrados},
+    )
+    logger.info(
+        "[EDITAR] %s: matched=%d modified=%d campos=%s",
+        codigo, result.matched_count, result.modified_count,
+        list(k for k in campos_filtrados if k != "updated_at"),
     )
 
     user_id = current_user.get("id") or current_user.get("sub") or "admin"
@@ -1643,13 +1657,18 @@ async def editar_loanbook(
     for campo, valor_nuevo in campos_filtrados.items():
         if campo == "updated_at":
             continue
-        await registrar_modificacion(
-            db, lb_id, campo, lb.get(campo), valor_nuevo, user_id, "Edición manual"
-        )
+        try:
+            await registrar_modificacion(
+                db, lb_id, campo, lb.get(campo), valor_nuevo, user_id, "Edición manual"
+            )
+        except Exception as exc:
+            logger.warning("[EDITAR] audit log falló para %s.%s: %s", lb_id, campo, exc)
 
-    lb_actualizado = await _find_lb_by_identifier(db, codigo)
+    lb_actualizado = await db.loanbook.find_one({"_id": lb["_id"]})
     return {
         "ok": True,
+        "matched": result.matched_count,
+        "modified": result.modified_count,
         "campos_actualizados": [k for k in campos_filtrados if k != "updated_at"],
         "loanbook": _serialize_lb(lb_actualizado),
     }
