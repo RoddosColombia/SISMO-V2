@@ -120,7 +120,7 @@ async def generar_informe_semanal(
                 "telefono": cliente.get("telefono") or lb.get("cliente_telefono", ""),
                 "saldo": float(lb.get("saldo_pendiente") or lb.get("saldo_capital") or 0),
                 "cuotas_vencidas": len(cuotas_problema),
-                "dpd": dpd,
+                "dpd": dpd or int(lb.get("mora_acumulada_cop") or 0) // 2000 or 0,
                 "sub_bucket": lb.get("sub_bucket_semanal"),
                 "estado_gestion": "pendiente",
                 "notas": "",

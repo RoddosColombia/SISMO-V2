@@ -76,18 +76,7 @@ export default function InformePage() {
   const [editandoNotas, setEditandoNotas] = useState(false)
   const [notasGenerales, setNotasGenerales] = useState('')
 
-  // Cargar historial al montar
-  useEffect(() => {
-    fetch('/api/informes/historial', { headers: apiHeaders() })
-      .then(r => r.json())
-      .then((data: HistorialEntry[]) => {
-        setHistorial(data)
-        if (data.length > 0) setSemanaSeleccionada(data[0].semana_id)
-      })
-      .catch(() => {})
-  }, [])
-
-  // Cargar informe cuando cambia la semana seleccionada
+  // Cargar informe para una semana concreta (o semana-actual si no se especifica)
   const cargarInforme = useCallback(async (semana?: string) => {
     setLoading(true)
     setError(null)
@@ -106,7 +95,7 @@ export default function InformePage() {
       const data: Informe = await res.json()
       setInforme(data)
       setNotasGenerales(data.notas_generales || '')
-      if (!semana) setSemanaSeleccionada(data.semana_id)
+      setSemanaSeleccionada(data.semana_id)
     } catch (e: any) {
       setError(e.message)
     } finally {
@@ -114,11 +103,36 @@ export default function InformePage() {
     }
   }, [])
 
-  useEffect(() => {
-    cargarInforme(semanaSeleccionada || undefined)
-  }, [semanaSeleccionada])
+  // Cargar historial y retornarlo (para encadenar con cargarInforme)
+  const cargarHistorial = useCallback(async (): Promise<HistorialEntry[]> => {
+    try {
+      const res = await fetch('/api/informes/historial', { headers: apiHeaders() })
+      if (!res.ok) return []
+      const data: HistorialEntry[] = await res.json()
+      setHistorial(data)
+      return data
+    } catch {
+      return []
+    }
+  }, [])
 
-  // Generar informe manual
+  // Montar: cargar historial + informe de la semana más reciente en secuencia
+  useEffect(() => {
+    const init = async () => {
+      const hist = await cargarHistorial()
+      const primera = hist[0]?.semana_id
+      await cargarInforme(primera)
+    }
+    init()
+  }, [])
+
+  // Selector de semana: el usuario elige manualmente — no hay useEffect extra
+  const handleSemanaChange = useCallback(async (semana: string) => {
+    setSemanaSeleccionada(semana)
+    await cargarInforme(semana)
+  }, [cargarInforme])
+
+  // Generar informe manual: refrescar historial + informe inmediatamente
   const handleGenerar = async () => {
     setGenerando(true)
     try {
@@ -127,7 +141,10 @@ export default function InformePage() {
         headers: apiHeaders(),
       })
       if (!res.ok) throw new Error('Error generando informe')
-      await cargarInforme(semanaSeleccionada || undefined)
+      // Refrescar historial primero (puede haber semana nueva)
+      const hist = await cargarHistorial()
+      const semana = semanaSeleccionada || hist[0]?.semana_id
+      await cargarInforme(semana)
     } catch (e: any) {
       setError(e.message)
     } finally {
@@ -208,7 +225,7 @@ export default function InformePage() {
             {historial.length > 0 && (
               <select
                 value={semanaSeleccionada}
-                onChange={e => setSemanaSeleccionada(e.target.value)}
+                onChange={e => handleSemanaChange(e.target.value)}
                 className="text-xs border border-surface-container rounded-lg px-2 py-1.5 bg-surface-container-low text-on-surface"
               >
                 {historial.map(h => (
