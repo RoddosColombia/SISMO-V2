@@ -106,6 +106,8 @@ export default function InformePage() {
         total_sin_pago: raw.total_sin_pago ?? 0,
         valor_en_riesgo: raw.valor_en_riesgo ?? 0,
       }
+      // DEBUG: verificar qué llega del API — quitar después de confirmar
+      console.log('[InformePage] informe recibido:', JSON.stringify(data.sin_pago?.[0]))
       setInforme(data)
       setNotasGenerales(data.notas_generales)
       setSemanaSeleccionada(data.semana_id)
@@ -285,6 +287,21 @@ export default function InformePage() {
           </div>
         ) : (
           <>
+            {/* Banner: informe desactualizado — DPD=0 con cuotas vencidas indica snapshot viejo */}
+            {(informe.sin_pago ?? []).some(c => c.dpd === 0 && c.cuotas_vencidas > 0) && (
+              <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-center justify-between">
+                <p className="text-xs text-amber-800">
+                  ⚠️ El informe tiene DPD=0 para créditos con cuotas vencidas. Los datos pueden estar desactualizados — regénera para ver los valores correctos.
+                </p>
+                <button
+                  onClick={handleGenerar}
+                  disabled={generando}
+                  className="ml-3 px-3 py-1 text-xs font-medium bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-50 shrink-0"
+                >
+                  Regenerar ahora
+                </button>
+              </div>
+            )}
             {/* Resumen */}
             <div className="grid grid-cols-3 gap-3 mb-4">
               <div className="bg-surface-container-low rounded-xl p-4">
