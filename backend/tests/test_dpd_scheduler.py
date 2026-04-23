@@ -322,17 +322,21 @@ class TestProcesarUnLoanbook:
         # Solo debe llamarse update_one una vez (el update final de DPD/estado)
         assert db.loanbook.update_one.call_count == 1
 
-    async def test_transicion_invalida_no_cambia_estado(self):
-        """Transición inválida detectada por scheduler → no modifica estado."""
+    async def test_scheduler_ignora_matriz_transiciones(self):
+        """El scheduler aplica el estado correcto sin validar la matriz de transiciones.
+
+        Caso real: loanbook en Current con mora acumulada de semanas anteriores
+        → debe pasar directo a Late Delinquency o Charge-Off sin bloquearse.
+        """
         from services.loanbook.dpd_scheduler import procesar_un_loanbook
         from bson import ObjectId
 
         hoy = date(2026, 4, 22)
-        # DPD=60 → Charge-Off, pero estado_actual="Aprobado" → transición inválida
+        # DPD=60 → Charge-Off. Antes esto se bloqueaba por la matriz.
         lb = {
             "_id": ObjectId(),
             "loanbook_id": "LB-2026-0004",
-            "estado": "Aprobado",
+            "estado": "Current",
             "saldo_capital": 1_000_000,
             "plan_codigo": "P52S",
             "cuotas": [
@@ -342,9 +346,9 @@ class TestProcesarUnLoanbook:
         db = self._make_db()
         resultado = await procesar_un_loanbook(db, lb, hoy)
 
-        # Estado no debe cambiar
-        assert resultado["estado_nuevo"] == "Aprobado"
-        assert resultado["cambio"] is False
-        assert "error" in resultado
-        # Debe registrar la transición inválida
+        # El scheduler debe aplicar el estado calculado, no bloquearse
+        assert resultado["cambio"] is True
+        assert resultado["estado_nuevo"] != "Current"
+        assert "error" not in resultado
+        # Audit log debe registrar el cambio
         db.loanbook_modificaciones.insert_one.assert_called()

@@ -26,7 +26,6 @@ from services.loanbook.estados_service import (
     calcular_mora_acumulada,
     clasificar_estado,
     clasificar_sub_bucket,
-    validar_transicion,
 )
 
 if TYPE_CHECKING:
@@ -166,33 +165,9 @@ async def procesar_un_loanbook(
     cambio_estado = estado_nuevo != estado_anterior
 
     if cambio_estado:
-        # Validar transición; si es inválida → no cambiar, registrar alerta
-        try:
-            validar_transicion(estado_anterior, estado_nuevo)
-        except Exception as exc:
-            # Log de transición inválida detectada por scheduler
-            await db.loanbook_modificaciones.insert_one({
-                "loanbook_id": lb_id,
-                "loanbook_codigo": codigo,
-                "tipo": "transicion_invalida",
-                "detalle": str(exc),
-                "estado_anterior": estado_anterior,
-                "estado_nuevo_propuesto": estado_nuevo,
-                "dpd": dpd_nuevo,
-                "ts": ts.isoformat(),
-                "user_id": "scheduler_dpd",
-            })
-            # Aún actualizar DPD/sub_bucket/mora, pero no el estado
-            await db.loanbook.update_one({"_id": lb_id}, {"$set": updates})
-            return {
-                "codigo": codigo,
-                "cambio": False,
-                "estado_anterior": estado_anterior,
-                "estado_nuevo": estado_anterior,
-                "dpd_nuevo": dpd_nuevo,
-                "error": f"Transición inválida: {exc}",
-            }
-
+        # El scheduler es determinístico — siempre aplica el estado que corresponde
+        # al DPD calculado, sin pasar por la matriz de transiciones.
+        # La matriz aplica solo a cambios manuales (actores humanos).
         updates["estado"] = estado_nuevo
 
         # Audit log en loanbook_modificaciones
