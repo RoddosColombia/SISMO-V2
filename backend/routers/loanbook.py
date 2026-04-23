@@ -50,6 +50,30 @@ def _clean_doc(doc: dict) -> dict:
     return doc
 
 
+def _serialize_value(v):
+    """Recursively convert a MongoDB value to a JSON-safe Python type.
+
+    Handles: datetime → ISO string, date → ISO string, ObjectId → str,
+    nested dicts (strips _id), nested lists.
+    """
+    if isinstance(v, dict):
+        return {k2: _serialize_value(v2) for k2, v2 in v.items() if k2 != "_id"}
+    if isinstance(v, list):
+        return [_serialize_value(i) for i in v]
+    if isinstance(v, datetime):
+        return v.isoformat()
+    # date check after datetime (datetime subclasses date)
+    if isinstance(v, date):
+        return v.isoformat()
+    try:
+        from bson import ObjectId
+        if isinstance(v, ObjectId):
+            return str(v)
+    except ImportError:
+        pass
+    return v
+
+
 @router.get("/stats")
 async def loanbook_stats(db: AsyncIOMotorDatabase = Depends(get_db)):
     """Portfolio summary stats."""
@@ -252,7 +276,7 @@ async def generar_cronogramas_todos(
             )
             await db.loanbook.update_one(
                 {"_id": lb["_id"]},
-                {"$set": {"cuotas": nuevas_cuotas, "updated_at": datetime.utcnow()}},
+                {"$set": {"cuotas": nuevas_cuotas, "updated_at": datetime.utcnow().isoformat()}},
             )
             procesados += 1
         except Exception as e:
@@ -355,7 +379,7 @@ async def listar_loanbooks(
         lb["proxima_cuota"] = proxima
         # Strip full cuotas array from list view
         lb.pop("cuotas", None)
-        result.append(lb)
+        result.append(_serialize_lb(lb))
 
     # Sort by DPD descending (morosos first)
     result.sort(key=lambda x: x.get("dpd", 0), reverse=True)
@@ -426,7 +450,7 @@ async def get_loanbook(
     lb["dpd"] = dpd
     lb["proxima_cuota"] = proxima
 
-    return lb
+    return _serialize_lb(lb)
 
 
 @router.post("/{identifier}/reparar")
@@ -1205,8 +1229,7 @@ async def put_loanbook(
     )
 
     lb_updated = await db.loanbook.find_one({"loanbook_id": lb["loanbook_id"]})
-    lb_updated.pop("_id", None)
-    return {"success": True, "loanbook_id": lb["loanbook_id"], "loanbook": lb_updated}
+    return {"success": True, "loanbook_id": lb["loanbook_id"], "loanbook": _serialize_lb(lb_updated)}
 
 
 class PutEntregaBody(BaseModel):
@@ -1594,7 +1617,7 @@ async def generar_cronograma_endpoint(
 
     await db.loanbook.update_one(
         {"_id": lb["_id"]},
-        {"$set": {"cuotas": nuevas_cuotas, "updated_at": datetime.utcnow()}},
+        {"$set": {"cuotas": nuevas_cuotas, "updated_at": datetime.utcnow().isoformat()}},
     )
 
     return {"ok": True, "loanbook_id": lb["loanbook_id"], "cuotas_generadas": len(nuevas_cuotas)}
@@ -1606,11 +1629,14 @@ _CAMPOS_PROTEGIDOS = frozenset({"_id", "loanbook_id", "loanbook_codigo", "cuotas
 
 
 def _serialize_lb(lb: dict) -> dict:
-    """Serializa loanbook removiendo _id."""
-    if lb:
-        lb = dict(lb)
-        lb.pop("_id", None)
-    return lb or {}
+    """Serializa loanbook convirtiendo datetime/ObjectId a tipos JSON-safe.
+
+    Equivalente a _clean_doc pero recursivo: maneja campos anidados (cuotas,
+    comprobantes, fechas) que Motor puede retornar como datetime nativo.
+    """
+    if not lb:
+        return {}
+    return {k: _serialize_value(v) for k, v in lb.items() if k != "_id"}
 
 
 @router.patch("/{codigo}/editar")
@@ -1640,7 +1666,7 @@ async def editar_loanbook(
     if not lb:
         raise HTTPException(status_code=404, detail=f"Loanbook '{codigo}' no encontrado")
 
-    campos_filtrados["updated_at"] = datetime.utcnow()
+    campos_filtrados["updated_at"] = datetime.utcnow().isoformat()
 
     result = await db.loanbook.update_one(
         {"_id": lb["_id"]},
@@ -1742,11 +1768,11 @@ async def subir_comprobante(
                     "filename": file.filename,
                     "content_type": file.content_type,
                     "data_b64": comprobante_b64,
-                    "uploaded_at": datetime.utcnow(),
+                    "uploaded_at": datetime.utcnow().isoformat(),
                     "uploaded_by": user_id,
                     "size_bytes": len(contenido),
                 },
-                "updated_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow().isoformat(),
             }
         },
     )
