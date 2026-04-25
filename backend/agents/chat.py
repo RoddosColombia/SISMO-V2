@@ -276,6 +276,49 @@ async def execute_approved_action(
     return result
 
 
+async def process_system_event(
+    message: str,
+    db: AsyncIOMotorDatabase,
+    agent_type: str,
+    auto_approve: bool = True,
+    correlation_id: str | None = None,
+) -> dict:
+    """
+    Llama al agente Claude con un mensaje construido por el sistema (no por el humano).
+    Si auto_approve=True, los write tools se ejecutan sin ExecutionCard.
+    Retorna dict con resultado de la ejecución.
+    Usado por: alegra_sync, dpd_scheduler, cualquier trigger automático.
+    """
+    if not correlation_id:
+        correlation_id = str(uuid.uuid4())
+
+    system_prompt = SYSTEM_PROMPTS.get(agent_type, SYSTEM_PROMPTS['contador'])
+    tools = get_tools_for_agent(agent_type)
+
+    client = anthropic.AsyncAnthropic()
+    response = await client.messages.create(
+        model=ANTHROPIC_MODEL,
+        max_tokens=1024,
+        system=system_prompt,
+        messages=[{"role": "user", "content": message}],
+        tools=tools,
+    )
+
+    results = []
+    for block in response.content:
+        if block.type == 'tool_use':
+            if auto_approve:
+                dispatcher = ToolDispatcher(db)
+                result = await dispatcher.dispatch(block.name, block.input, correlation_id)
+                results.append({"tool": block.name, "result": result})
+            else:
+                results.append({"tool": block.name, "pending": True, "input": block.input})
+        elif block.type == 'text':
+            results.append({"text": block.text})
+
+    return {"correlation_id": correlation_id, "results": results}
+
+
 def _format_tool_proposal(tool_name: str, tool_input: dict) -> str:
     """Format a human-readable proposal string for ExecutionCard display."""
     if tool_name == 'crear_causacion' and 'entries' in tool_input:

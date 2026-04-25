@@ -100,10 +100,77 @@ async def sync_alegra_invoice_stats(db: AsyncIOMotorDatabase) -> dict:
         return prev or {}
 
 
+async def detect_and_sync_new_invoices(db: AsyncIOMotorDatabase) -> None:
+    """
+    Detecta facturas nuevas en Alegra que no tienen loanbook asociado.
+    Para cada una, llama al agente Loanbook via process_system_event()
+    para que Claude cree el loanbook. Idempotente.
+    """
+    from services.alegra.client import AlegraClient
+    from agents.chat import process_system_event
+    from core.datetime_utils import today_bogota
+
+    mes_prefix = today_bogota().strftime("%Y-%m")
+
+    try:
+        alegra = AlegraClient(db=db)
+        invoices = await alegra.get(
+            "invoices",
+            params={"limit": 100, "start": 0, "order_direction": "DESC"},
+        )
+        if not isinstance(invoices, list):
+            return
+
+        for inv in invoices:
+            if not inv.get("date", "").startswith(mes_prefix):
+                continue
+            if inv.get("status") == "draft":
+                continue
+
+            alegra_id = str(inv.get("id", ""))
+            number = inv.get("numberTemplate", {}).get("number") or inv.get("number", "")
+
+            existing = await db.loanbook.find_one({"factura_alegra_id": number})
+            if existing:
+                continue
+
+            client_data = inv.get("client", {})
+            items = inv.get("items", [])
+            notes = inv.get("observations") or inv.get("notes") or ""
+            total = inv.get("total", 0)
+
+            mensaje = (
+                f"Factura {number} de Alegra recien detectada. "
+                f"Cliente: {client_data.get('name', 'desconocido')}, "
+                f"Cedula: {client_data.get('identification', '')}, "
+                f"Telefono: {client_data.get('mobile') or client_data.get('phone', '')}, "
+                f"Total: ${total:,.0f}. "
+                f"Notas: {notes}. "
+                f"Items: {', '.join(i.get('name', '') for i in items[:3])}. "
+                f"Registrar el loanbook en estado pendiente_entrega con esta informacion. "
+                f"Usar factura_alegra_id={number}."
+            )
+
+            result = await process_system_event(
+                message=mensaje,
+                db=db,
+                agent_type="loanbook",
+                auto_approve=True,
+                correlation_id=f"alegra-sync-{alegra_id}",
+            )
+
+            logger.info(f"Alegra sync loanbook: factura {number} -> {result}")
+
+    except Exception as exc:
+        logger.error(f"detect_and_sync_new_invoices error: {exc}")
+
+
 async def run_sync_loop(db: AsyncIOMotorDatabase) -> None:
     """Loop infinito que sincroniza Alegra cada SYNC_INTERVAL_MINUTES."""
     await asyncio.sleep(5)  # espera arranque del servidor
     await sync_alegra_invoice_stats(db)
+    await detect_and_sync_new_invoices(db)
     while True:
         await asyncio.sleep(SYNC_INTERVAL_MINUTES * 60)
         await sync_alegra_invoice_stats(db)
+        await detect_and_sync_new_invoices(db)
