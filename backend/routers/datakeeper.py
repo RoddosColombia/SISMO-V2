@@ -27,7 +27,7 @@ async def datakeeper_status(db: AsyncIOMotorDatabase = Depends(get_db)):
         }
 
     dlq_count = await db.dead_letter.count_documents({})
-    retry_count = await db._datakeeper_retries.count_documents({})
+    retry_count = await db["datakeeper_retries"].count_documents({})
 
     return {
         "running": processor._running,

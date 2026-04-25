@@ -17,27 +17,45 @@ from datetime import datetime, timezone
 
 
 def _make_db():
-    """Create a mock db with all DataKeeper collections."""
+    """Create a mock db with all DataKeeper collections.
+
+    Production code now uses bracket notation db["collection_name"] for
+    underscore-prefixed collections (Motor does not support dot-access for them).
+    We wire __getitem__ to return the same mock objects so both access patterns work.
+    """
     db = MagicMock()
 
     # _datakeeper_cursor
-    db._datakeeper_cursor = MagicMock()
-    db._datakeeper_cursor.find_one = AsyncMock(return_value=None)
-    db._datakeeper_cursor.update_one = AsyncMock()
+    mock_cursor = MagicMock()
+    mock_cursor.find_one = AsyncMock(return_value=None)
+    mock_cursor.update_one = AsyncMock()
 
     # _datakeeper_processed
-    db._datakeeper_processed = MagicMock()
-    db._datakeeper_processed.find_one = AsyncMock(return_value=None)
-    db._datakeeper_processed.insert_one = AsyncMock()
-    db._datakeeper_processed.create_index = AsyncMock()
+    mock_processed = MagicMock()
+    mock_processed.find_one = AsyncMock(return_value=None)
+    mock_processed.insert_one = AsyncMock()
+    mock_processed.create_index = AsyncMock()
 
     # _datakeeper_retries
-    db._datakeeper_retries = MagicMock()
-    db._datakeeper_retries.find_one = AsyncMock(return_value=None)
-    db._datakeeper_retries.update_one = AsyncMock()
-    db._datakeeper_retries.delete_one = AsyncMock()
-    db._datakeeper_retries.find = MagicMock(return_value=MagicMock(to_list=AsyncMock(return_value=[])))
-    db._datakeeper_retries.create_index = AsyncMock()
+    mock_retries = MagicMock()
+    mock_retries.find_one = AsyncMock(return_value=None)
+    mock_retries.update_one = AsyncMock()
+    mock_retries.delete_one = AsyncMock()
+    mock_retries.find = MagicMock(return_value=MagicMock(to_list=AsyncMock(return_value=[])))
+    mock_retries.create_index = AsyncMock()
+
+    # Route db["name"] → same mock objects (production uses bracket access)
+    _col_map = {
+        "datakeeper_cursor": mock_cursor,
+        "datakeeper_processed": mock_processed,
+        "datakeeper_retries": mock_retries,
+    }
+    db.__getitem__ = MagicMock(side_effect=lambda name: _col_map.get(name, MagicMock()))
+
+    # Keep dot-access aliases so existing test assertions still work
+    db._datakeeper_cursor = mock_cursor
+    db._datakeeper_processed = mock_processed
+    db._datakeeper_retries = mock_retries
 
     # dead_letter
     db.dead_letter = MagicMock()

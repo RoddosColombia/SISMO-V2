@@ -65,14 +65,14 @@ class EventProcessor:
 
     async def _get_cursor_position(self) -> str:
         """Get last processed event timestamp from bookmark."""
-        doc = await self.db._datakeeper_cursor.find_one({"_id": "position"})
+        doc = await self.db["datakeeper_cursor"].find_one({"_id": "position"})
         if doc:
             return doc["last_timestamp"]
         return "2024-01-01T00:00:00+00:00"
 
     async def _set_cursor_position(self, timestamp: str):
         """Update bookmark to latest processed timestamp."""
-        await self.db._datakeeper_cursor.update_one(
+        await self.db["datakeeper_cursor"].update_one(
             {"_id": "position"},
             {"$set": {
                 "last_timestamp": timestamp,
@@ -85,7 +85,7 @@ class EventProcessor:
 
     async def _is_processed(self, event_id: str, handler_name: str) -> bool:
         """Check if this event was already processed by this handler."""
-        doc = await self.db._datakeeper_processed.find_one({
+        doc = await self.db["datakeeper_processed"].find_one({
             "event_id": event_id,
             "handler": handler_name,
         })
@@ -93,7 +93,7 @@ class EventProcessor:
 
     async def _mark_processed(self, event_id: str, handler_name: str):
         """Record that this handler processed this event."""
-        await self.db._datakeeper_processed.insert_one({
+        await self.db["datakeeper_processed"].insert_one({
             "event_id": event_id,
             "handler": handler_name,
             "processed_at": datetime.now(timezone.utc).isoformat(),
@@ -163,7 +163,7 @@ class EventProcessor:
     async def _send_to_dlq(self, event: dict, error: str = ""):
         """Retry or dead-letter a failed event."""
         event_id = event.get("event_id", "")
-        retry_doc = await self.db._datakeeper_retries.find_one(
+        retry_doc = await self.db["datakeeper_retries"].find_one(
             {"event_id": event_id}
         )
         attempts = (retry_doc["attempts"] if retry_doc else 0) + 1
@@ -178,7 +178,7 @@ class EventProcessor:
                 "last_error": error,
                 "dead_at": datetime.now(timezone.utc).isoformat(),
             })
-            await self.db._datakeeper_retries.delete_one(
+            await self.db["datakeeper_retries"].delete_one(
                 {"event_id": event_id}
             )
             logger.error(
@@ -186,7 +186,7 @@ class EventProcessor:
             )
         else:
             # Schedule retry
-            await self.db._datakeeper_retries.update_one(
+            await self.db["datakeeper_retries"].update_one(
                 {"event_id": event_id},
                 {
                     "$set": {
@@ -237,7 +237,7 @@ class EventProcessor:
 
         # 2. Retryable events
         now = datetime.now(timezone.utc).isoformat()
-        retries = await self.db._datakeeper_retries.find(
+        retries = await self.db["datakeeper_retries"].find(
             {"retry_at": {"$lte": now}}
         ).to_list(length=10)
 
@@ -245,7 +245,7 @@ class EventProcessor:
             evt = retry.get("event", {})
             success = await self._process_event(evt)
             if success:
-                await self.db._datakeeper_retries.delete_one(
+                await self.db["datakeeper_retries"].delete_one(
                     {"_id": retry["_id"]}
                 )
             else:
@@ -262,9 +262,9 @@ class EventProcessor:
 async def ensure_datakeeper_indexes(db: AsyncIOMotorDatabase):
     """Create indexes needed by DataKeeper. Call once at startup."""
     await db.roddos_events.create_index("timestamp")
-    await db._datakeeper_processed.create_index(
+    await db["datakeeper_processed"].create_index(
         [("event_id", 1), ("handler", 1)],
         unique=True,
     )
-    await db._datakeeper_retries.create_index("retry_at")
+    await db["datakeeper_retries"].create_index("retry_at")
     await db.dead_letter.create_index("dead_at")

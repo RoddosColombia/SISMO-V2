@@ -186,6 +186,15 @@ async def export_excel(
     )
 
 
+@router.get("/excel")
+async def export_excel_alias(
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Alias de /export-excel para compatibilidad con el frontend."""
+    return await export_excel(db=db, current_user=current_user)
+
+
 # ─────────────────────── B3: Loan Tape Excel export ──────────────────────────
 
 @router.get("/export-loan-tape")

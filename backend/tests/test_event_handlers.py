@@ -13,11 +13,15 @@ import logging
 
 
 def _make_db():
-    """Create a mock db."""
+    """Create a mock db with bracket-access routing for DataKeeper collections."""
     db = MagicMock()
-    db._datakeeper_processed = MagicMock()
-    db._datakeeper_processed.find_one = AsyncMock(return_value=None)
-    db._datakeeper_processed.insert_one = AsyncMock()
+    mock_processed = MagicMock()
+    mock_processed.find_one = AsyncMock(return_value=None)
+    mock_processed.insert_one = AsyncMock()
+    # Route db["datakeeper_processed"] → mock (production uses bracket access)
+    db.__getitem__ = MagicMock(side_effect=lambda name: mock_processed if name == "datakeeper_processed" else MagicMock())
+    # Keep dot-access alias for test assertions
+    db._datakeeper_processed = mock_processed
     return db
 
 

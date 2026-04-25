@@ -151,15 +151,19 @@ async def detect_and_sync_new_invoices(db: AsyncIOMotorDatabase) -> None:
                 f"Usar factura_alegra_id={number}."
             )
 
-            result = await process_system_event(
-                message=mensaje,
-                db=db,
-                agent_type="loanbook",
-                auto_approve=True,
-                correlation_id=f"alegra-sync-{alegra_id}",
-            )
-
-            logger.info(f"Alegra sync loanbook: factura {number} -> {result}")
+            try:
+                result = await process_system_event(
+                    message=mensaje,
+                    db=db,
+                    agent_type="loanbook",
+                    auto_approve=True,
+                    correlation_id=f"alegra-sync-{alegra_id}",
+                )
+                logger.info(f"Alegra sync loanbook: factura {number} -> {result}")
+            except Exception as inv_exc:
+                logger.warning(
+                    f"detect_and_sync_new_invoices: factura {number} omitida: {inv_exc}"
+                )
 
     except Exception as exc:
         logger.error(f"detect_and_sync_new_invoices error: {exc}")
