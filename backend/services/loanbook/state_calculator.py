@@ -125,6 +125,23 @@ def _cuota_monto(lb: dict) -> float:
     )
 
 
+def _cuota_estandar(lb: dict) -> float:
+    """Cuota estándar del plan para calcular intereses.
+
+    Orden de lectura:
+      1. cuota_estandar_plan almacenado en el documento (créditos nuevos / cuotas especiales)
+      2. _cuota_monto(lb) como fallback (loanbooks legacy sin cuota_estandar_plan)
+
+    Para loanbooks legacy (LB-0001 a LB-0008) con estructura plan.cuota_valor,
+    esto retorna plan.cuota_valor — la cuota canónica del plan, correcta para
+    separar capital de intereses con calcular_saldos().
+    """
+    stored = lb.get("cuota_estandar_plan")
+    if stored:
+        return float(stored)
+    return _cuota_monto(lb)
+
+
 # ─────────────────────── Función principal ────────────────────────────────────
 
 def recalcular_loanbook(lb: dict, *, hoy: date | None = None) -> dict:
@@ -189,12 +206,15 @@ def recalcular_loanbook(lb: dict, *, hoy: date | None = None) -> dict:
     # calcular_saldos() para separar capital de intereses con la fórmula canónica.
     # Sin capital_plan (loanbooks legacy): fallback a la suma de cuotas.
     capital_plan = lb.get("capital_plan")
-    if capital_plan and num_cuotas_efectivo and cuota_monto:
+    # Fallback plan.total_cuotas para loanbooks legacy donde num_cuotas puede ser 0
+    # porque plan_codigo no matcheó en PLANES_RODDOS (catálogo no calentado o plan viejo).
+    num_cuotas_calc = num_cuotas_efectivo or lb.get("plan", {}).get("total_cuotas") or 0
+    if capital_plan and num_cuotas_calc and cuota_monto:
         from services.loanbook.reglas_negocio import calcular_saldos
-        cuota_std = lb.get("cuota_estandar_plan") or int(cuota_monto)
+        cuota_std = int(_cuota_estandar(lb))
         _s = calcular_saldos(
             int(capital_plan),
-            num_cuotas_efectivo,
+            num_cuotas_calc,
             int(cuota_monto),
             cuotas_pagadas,
             cuota_estandar_plan=cuota_std,
