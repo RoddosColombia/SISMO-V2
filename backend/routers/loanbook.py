@@ -282,7 +282,7 @@ async def generar_cronogramas_todos(
             )
             await db.loanbook.update_one(
                 {"_id": lb["_id"]},
-                {"$set": {"cuotas": nuevas_cuotas, "updated_at": now_iso_bogota().isoformat()}},
+                {"$set": {"cuotas": nuevas_cuotas, "updated_at": now_iso_bogota()}},
             )
             procesados += 1
         except Exception as e:
@@ -1677,7 +1677,7 @@ async def generar_cronograma_endpoint(
 
     await db.loanbook.update_one(
         {"_id": lb["_id"]},
-        {"$set": {"cuotas": nuevas_cuotas, "updated_at": now_iso_bogota().isoformat()}},
+        {"$set": {"cuotas": nuevas_cuotas, "updated_at": now_iso_bogota()}},
     )
 
     return {"ok": True, "loanbook_id": lb["loanbook_id"], "cuotas_generadas": len(nuevas_cuotas)}
@@ -1726,7 +1726,7 @@ async def editar_loanbook(
     if not lb:
         raise HTTPException(status_code=404, detail=f"Loanbook '{codigo}' no encontrado")
 
-    campos_filtrados["updated_at"] = now_iso_bogota().isoformat()
+    campos_filtrados["updated_at"] = now_iso_bogota()
 
     result = await db.loanbook.update_one(
         {"_id": lb["_id"]},
@@ -1828,11 +1828,11 @@ async def subir_comprobante(
                     "filename": file.filename,
                     "content_type": file.content_type,
                     "data_b64": comprobante_b64,
-                    "uploaded_at": now_iso_bogota().isoformat(),
+                    "uploaded_at": now_iso_bogota(),
                     "uploaded_by": user_id,
                     "size_bytes": len(contenido),
                 },
-                "updated_at": now_iso_bogota().isoformat(),
+                "updated_at": now_iso_bogota(),
             }
         },
     )
