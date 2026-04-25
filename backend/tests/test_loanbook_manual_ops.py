@@ -67,7 +67,8 @@ async def test_registrar_pago_marks_cuota_paid_and_publishes_event():
     assert result["success"] is True
     assert result["cuotas_pagadas"] == 2  # 1 previa + 1 nueva
     # Debe haber actualizado el loanbook Y publicado el evento
-    db.loanbook.update_one.assert_called_once()
+    # _recalcular_y_persistir añade una segunda llamada — verificamos que se llamó al menos una vez
+    assert db.loanbook.update_one.called
     db.roddos_events.insert_one.assert_called_once()
     event_doc = db.roddos_events.insert_one.call_args[0][0]
     assert event_doc["event_type"] == "pago.cuota.registrado"
@@ -132,8 +133,8 @@ async def test_registrar_entrega_activa_y_genera_cronograma():
     assert result["success"] is True
     assert result["estado"] == "activo"
     assert result["num_cuotas"] == 10
-    # Verificar que el cronograma se guardó
-    update = db.loanbook.update_one.call_args[0][1]["$set"]
+    # Verificar que el cronograma se guardó (primera llamada = entrega, segunda = recalculation)
+    update = db.loanbook.update_one.call_args_list[0][0][1]["$set"]
     assert update["estado"] == "activo"
     assert len(update["cuotas"]) == 10
 
@@ -151,7 +152,7 @@ async def test_registrar_entrega_con_dia_cobro_especial_jueves():
     result = await registrar_entrega("LB-2026-TEST", body, db=db)
     assert result["success"] is True
     assert result["fecha_primera_cuota"] == "2026-04-16"
-    update = db.loanbook.update_one.call_args[0][1]["$set"]
+    update = db.loanbook.update_one.call_args_list[0][0][1]["$set"]
     assert update["dia_cobro_especial"] == "jueves"
     # All cuota dates must be Thursdays
     for c in update["cuotas"]:

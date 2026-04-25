@@ -38,7 +38,7 @@ def test_classify_socio_routes_cxc():
 def test_classify_unknown_low_conf():
     r = _classify_movement("MOVIMIENTO DESCONOCIDO XYZ", 100000)
     assert r["confianza"] < CONFIDENCE_THRESHOLD
-    assert r["cuenta_id"] == 5493  # fallback
+    assert r["cuenta_id"] == 5494  # fallback correcto — 5493 es acumulativa no posteable
 
 
 def test_classify_servicios():

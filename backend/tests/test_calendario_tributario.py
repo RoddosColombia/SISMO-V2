@@ -47,10 +47,8 @@ async def test_calendario_semaforo_vencido_y_rojo(mock_alegra, mock_db):
     # To get a ROJO, use April 15 (5 days before April 20 deadline)
     fake_today = datetime.date(2026, 4, 15)
 
-    with patch("agents.contador.handlers.nomina.datetime") as mock_dt:
-        mock_dt.date.today.return_value = fake_today
-        mock_dt.date.side_effect = lambda *args, **kw: datetime.date(*args, **kw)
-
+    # handle_consultar_calendario_tributario usa today_bogota(), no datetime.date.today()
+    with patch("agents.contador.handlers.nomina.today_bogota", return_value=fake_today):
         result = await handle_consultar_calendario_tributario({}, mock_alegra, mock_db, mock_db, "u1")
 
     assert result["success"] is True
