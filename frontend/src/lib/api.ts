@@ -176,13 +176,19 @@ export function chatSSE(
   onDone: () => void,
   onError: (err: Error) => void,
   imagen?: string | null,
+  agentType?: string | null,
 ): AbortController {
   const controller = new AbortController()
 
   fetch(`${BASE}/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify({ message, session_id: sessionId, imagen: imagen || undefined }),
+    body: JSON.stringify({
+      message,
+      session_id: sessionId,
+      imagen: imagen || undefined,
+      agent_type: agentType || undefined,
+    }),
     signal: controller.signal,
   })
     .then(async (res) => {

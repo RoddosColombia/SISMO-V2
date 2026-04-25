@@ -5,8 +5,11 @@ Flow:
   1. route_with_sticky() -> agent_type
   2. Build Claude API call with system prompt + tools (if TOOL_USE_ENABLED)
   3. Stream text responses directly
-  4. For tool_use blocks: validate_write_permission, yield ExecutionCard SSE event
-  5. Tools are NOT executed here — approval via POST /api/chat/approve-plan
+  4. For tool_use blocks:
+     - Read-only: execute immediately, second Claude call for natural language response
+     - Write: validate_write_permission, yield ExecutionCard SSE event
+  5. Write tools are NOT executed here — approval via POST /api/chat/approve-plan
+  6. approve-plan executes the tool, then makes a second Claude call for confirmation text
 
 ExecutionCard SSE event format:
   event: tool_proposal
@@ -92,6 +95,25 @@ async def _save_messages(
     )
 
 
+def _check_read_only_for_agent(tool_name: str, agent_type: str) -> bool:
+    """Return True if tool_name is read-only for the given agent_type."""
+    if agent_type == "loanbook":
+        from agents.loanbook.handlers.dispatcher import is_read_only_tool as lb_iro
+        return lb_iro(tool_name)
+    return is_read_only_tool(tool_name)
+
+
+def _make_dispatcher(agent_type: str, db: AsyncIOMotorDatabase):
+    """Create the right dispatcher for the given agent_type."""
+    if agent_type == "loanbook":
+        from agents.loanbook.handlers.dispatcher import LoanToolDispatcher
+        return LoanToolDispatcher(db=db)
+    # Default: contador
+    from services.alegra.client import AlegraClient
+    alegra = AlegraClient(db=db)
+    return ToolDispatcher(alegra=alegra, db=db, event_bus=None)
+
+
 async def process_chat(
     message: str,
     db: AsyncIOMotorDatabase,
@@ -99,7 +121,7 @@ async def process_chat(
     session_id: str | None = None,
     current_agent: str | None = None,
     correlation_id: str | None = None,
-    dispatcher: ToolDispatcher | None = None,  # NEW — injected by router
+    dispatcher=None,  # Kept for backward compat — ignored, dispatcher built internally
     imagen: str | None = None,  # base64 data URI (data:image/jpeg;base64,...)
 ) -> AsyncGenerator[str, None]:
     """
@@ -131,6 +153,16 @@ async def process_chat(
     # Step 2: Build tools list (feature flag gated per D-04/FOUND-04)
     tool_use_enabled = os.environ.get("TOOL_USE_ENABLED", "true").lower() == "true"
     tools = get_tools_for_agent(agent_type) if tool_use_enabled else []
+
+    # Build agent-appropriate dispatcher and read-only checker.
+    # Use injected dispatcher when provided (backward compat for router + tests).
+    # Always derive check_read_only from agent_type so loanbook tools are classified correctly.
+    if tool_use_enabled:
+        active_dispatcher = dispatcher if dispatcher is not None else _make_dispatcher(agent_type, db)
+        check_read_only = lambda name: _check_read_only_for_agent(name, agent_type)
+    else:
+        active_dispatcher = None
+        check_read_only = lambda _: False
 
     # Step 2b: Load conversation history and build messages array
     await _ensure_chat_sessions_index(db)
@@ -183,10 +215,37 @@ async def process_chat(
             final_message = await stream.get_final_message()
             for block in final_message.content:
                 if block.type == 'tool_use':
-                    # Read-only tools execute immediately — no confirmation needed (per D-06)
-                    if is_read_only_tool(block.name) and dispatcher is not None:
-                        result = await dispatcher.dispatch(block.name, block.input, session_id or "anon")
-                        yield f"data: {json.dumps({'type': 'tool_result', 'tool_name': block.name, 'result': result})}\n\n"
+                    # Read-only tools: execute immediately, then second Claude call for natural language
+                    if check_read_only(block.name) and active_dispatcher is not None:
+                        result = await active_dispatcher.dispatch(block.name, block.input, session_id or "anon")
+
+                        # Second Claude call — feed tool_result back for a natural language response
+                        second_messages = messages + [
+                            {
+                                "role": "assistant",
+                                "content": [{"type": "tool_use", "id": block.id, "name": block.name, "input": block.input}],
+                            },
+                            {
+                                "role": "user",
+                                "content": [{"type": "tool_result", "tool_use_id": block.id, "content": json.dumps(result, ensure_ascii=False)}],
+                            },
+                        ]
+                        try:
+                            async with client.messages.stream(
+                                model=ANTHROPIC_MODEL,
+                                max_tokens=1024,
+                                system=system_prompt,
+                                messages=second_messages,
+                            ) as second_stream:
+                                async for evt in second_stream:
+                                    if hasattr(evt, 'type') and evt.type == 'content_block_delta':
+                                        if hasattr(evt, 'delta') and hasattr(evt.delta, 'text'):
+                                            assistant_text_parts.append(evt.delta.text)
+                                            yield f"data: {json.dumps({'type': 'text', 'content': evt.delta.text})}\n\n"
+                        except Exception:
+                            # Fallback: show raw result if second call fails
+                            raw = result.get("message") or json.dumps(result, ensure_ascii=False)
+                            yield f"data: {json.dumps({'type': 'tool_result', 'tool_name': block.name, 'result': result})}\n\n"
                         continue
 
                     # Conciliation tools return Phase 3 stub immediately (per D-07)
@@ -212,12 +271,16 @@ async def process_chat(
                         "requires_confirmation": True,
                     }
                     # Persist pending action to MongoDB for ExecutionCard approval (T-02-02)
+                    # Store tool_use_id and user_message so execute_approved_action
+                    # can build the correct tool_result message for Claude.
                     await db.agent_sessions.update_one(
                         {"session_id": session_id},
                         {"$set": {
                             "pending_action": {
                                 "tool_name": block.name,
                                 "tool_input": block.input,
+                                "tool_use_id": block.id,    # needed for second Claude call
+                                "user_message": message,    # needed to reconstruct context
                                 "correlation_id": correlation_id,
                             },
                             "agent_type": agent_type,
@@ -249,18 +312,21 @@ async def process_chat(
 async def execute_approved_action(
     session_id: str,
     db: AsyncIOMotorDatabase,
-    dispatcher: ToolDispatcher,
+    dispatcher,  # ToolDispatcher or LoanToolDispatcher — passed from router
 ) -> dict:
     """
     Called by POST /api/chat/approve-plan after user confirms ExecutionCard.
-    Retrieves pending_action from MongoDB session and dispatches it.
-    Returns result dict with alegra_id as evidence.
+    Retrieves pending_action from MongoDB session, dispatches it, then makes
+    a second Claude call to produce a natural language confirmation for the UI.
+    Returns {"status": "ejecutado", "final_response": "...", "tool_result": {...}}.
     """
     session = await db.agent_sessions.find_one({"session_id": session_id})
     if not session or not session.get("pending_action"):
         return {"success": False, "error": "No hay acción pendiente para esta sesión"}
 
     pending = session["pending_action"]
+    agent_type = session.get("agent_type", "contador")
+
     result = await dispatcher.dispatch(
         tool_name=pending["tool_name"],
         tool_input=pending["tool_input"],
@@ -273,7 +339,45 @@ async def execute_approved_action(
         {"$unset": {"pending_action": ""}}
     )
 
-    return result
+    # Second Claude call — use tool_use_id + tool_result to get natural language response
+    tool_use_id = pending.get("tool_use_id", str(uuid.uuid4()))
+    user_message = pending.get("user_message", "Ejecuta la acción contable solicitada")
+    system_prompt = SYSTEM_PROMPTS.get(agent_type, SYSTEM_PROMPTS['contador'])
+
+    summary_messages = [
+        {"role": "user", "content": user_message},
+        {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "id": tool_use_id, "name": pending["tool_name"], "input": pending["tool_input"]}],
+        },
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": tool_use_id, "content": json.dumps(result, ensure_ascii=False)}],
+        },
+    ]
+
+    client = anthropic.AsyncAnthropic()
+    try:
+        final_msg = await client.messages.create(
+            model=ANTHROPIC_MODEL,
+            max_tokens=512,
+            system=system_prompt,
+            messages=summary_messages,
+        )
+        final_text = "".join(b.text for b in final_msg.content if hasattr(b, 'text'))
+        if not final_text:
+            raise ValueError("empty response")
+    except Exception:
+        if result.get("success"):
+            final_text = f"Acción ejecutada: {pending['tool_name']}."
+        else:
+            final_text = f"Error: {result.get('error', 'Error desconocido')}"
+
+    return {
+        "status": "ejecutado",
+        "final_response": final_text,
+        "tool_result": result,
+    }
 
 
 async def process_system_event(
@@ -313,10 +417,10 @@ async def process_system_event(
                 # incluso para tools del agente Loanbook).
                 if agent_type == "loanbook":
                     from agents.loanbook.handlers import LoanToolDispatcher
-                    dispatcher = LoanToolDispatcher(db)
+                    sys_dispatcher = LoanToolDispatcher(db)
                 else:
-                    dispatcher = ToolDispatcher(db)
-                result = await dispatcher.dispatch(block.name, block.input, correlation_id)
+                    sys_dispatcher = ToolDispatcher(db)
+                result = await sys_dispatcher.dispatch(block.name, block.input, correlation_id)
                 results.append({"tool": block.name, "result": result})
             else:
                 results.append({"tool": block.name, "pending": True, "input": block.input})

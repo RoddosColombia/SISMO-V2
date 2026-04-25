@@ -8,9 +8,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from core.database import get_db
 from core.auth import get_current_user
-from services.alegra.client import AlegraClient
 from agents.chat import process_chat, execute_approved_action
-from agents.contador.handlers import ToolDispatcher
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -36,8 +34,6 @@ async def chat_endpoint(
     current_user: dict = Depends(get_current_user),
 ):
     """Stream agent response as Server-Sent Events."""
-    alegra = AlegraClient(db=db)
-    dispatcher = ToolDispatcher(alegra=alegra, db=db, event_bus=None)
     return StreamingResponse(
         process_chat(
             message=request.message,
@@ -46,7 +42,6 @@ async def chat_endpoint(
             session_id=request.session_id,
             current_agent=request.current_agent,
             correlation_id=request.correlation_id,
-            dispatcher=dispatcher,
             imagen=request.imagen,
         ),
         media_type="text/event-stream",
@@ -80,7 +75,16 @@ async def approve_plan(
         )
         return {"status": "cancelado", "message": "Accion cancelada por el usuario."}
 
-    alegra = AlegraClient(db=db)
-    dispatcher = ToolDispatcher(alegra=alegra, db=db, event_bus=None)
+    # Create agent-appropriate dispatcher based on the session's agent_type
+    agent_type = session.get("agent_type", "contador")
+    if agent_type == "loanbook":
+        from agents.loanbook.handlers.dispatcher import LoanToolDispatcher
+        dispatcher = LoanToolDispatcher(db=db)
+    else:
+        from services.alegra.client import AlegraClient
+        from agents.contador.handlers import ToolDispatcher
+        alegra = AlegraClient(db=db)
+        dispatcher = ToolDispatcher(alegra=alegra, db=db, event_bus=None)
+
     result = await execute_approved_action(request.session_id, db, dispatcher)
     return result

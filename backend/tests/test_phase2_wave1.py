@@ -167,10 +167,10 @@ class TestChatRouting:
             "consultar_plan_cuentas", {"tipo": "gastos"}, "test-session-7"
         )
 
-        # Verify tool_result SSE was yielded (not tool_proposal)
-        tool_result_events = [e for e in events if '"tool_result"' in e]
+        # Read-only tools must NOT produce an ExecutionCard.
+        # The result is fed back to Claude for a natural language response
+        # (second stream call) — no raw tool_result SSE expected.
         tool_proposal_events = [e for e in events if '"tool_proposal"' in e]
-        assert len(tool_result_events) >= 1
         assert len(tool_proposal_events) == 0
 
     @pytest.mark.asyncio
@@ -252,8 +252,13 @@ class TestChatRouting:
             tool_input={"descripcion": "arriendo", "monto": 3000000},
             user_id="test-session-9",
         )
-        assert result["success"] is True
-        assert result["alegra_id"] == "J-1234"
+        # execute_approved_action now returns a wrapper with status + tool_result.
+        # The second Claude call for natural language may fail in test env (no API key)
+        # and falls back gracefully — status is always "ejecutado" on dispatch success.
+        assert result["status"] == "ejecutado"
+        assert result["tool_result"]["success"] is True
+        assert result["tool_result"]["alegra_id"] == "J-1234"
+        assert "final_response" in result
 
     @pytest.mark.asyncio
     async def test_10_dispatcher_error_yields_sse_error(self):
@@ -292,8 +297,10 @@ class TestChatRouting:
             ):
                 events.append(event)
 
-        # Verify tool_result with success=False is in events (dispatcher error surfaced)
-        tool_result_events = [e for e in events if '"tool_result"' in e]
-        assert len(tool_result_events) >= 1
-        result_data = json.loads(tool_result_events[0].replace("data: ", "").strip())
-        assert result_data["result"]["success"] is False
+        # Dispatch was called (tool ran, even though it returned an error)
+        mock_dispatcher.dispatch.assert_called_once()
+
+        # Error result is fed to the second Claude call for natural language response.
+        # No raw tool_result SSE or ExecutionCard should be emitted.
+        tool_proposal_events = [e for e in events if '"tool_proposal"' in e]
+        assert len(tool_proposal_events) == 0

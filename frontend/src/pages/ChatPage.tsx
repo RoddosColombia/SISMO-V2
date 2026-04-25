@@ -12,12 +12,23 @@ interface Message {
   }
 }
 
+const AGENT_LABELS: Record<string, string> = {
+  contador: 'Contador',
+  loanbook: 'Loanbook',
+}
+
+const AGENT_PLACEHOLDERS: Record<string, string> = {
+  contador: 'Ej: Registrar arriendo $3.6M, ver balance...',
+  loanbook: 'Ej: Ver cartera, consultar mora VIN ABC123...',
+}
+
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [recoveredToast, setRecoveredToast] = useState(false)
   const [streaming, setStreaming] = useState(false)
   const [approving, setApproving] = useState(false)
+  const [agentType, setAgentType] = useState<'contador' | 'loanbook'>('contador')
   const [sessionId] = useState(() => crypto.randomUUID())
   const [imagePreview, setImagePreview] = useState<string | null>(null)
   const [imageData, setImageData] = useState<string | null>(null)
@@ -109,6 +120,7 @@ export default function ChatPage() {
             },
           ])
         } else if (event.type === 'tool_result') {
+          // Fallback for read-only tools that fail the second Claude call
           const result = event.result as Record<string, unknown>
           setMessages((prev) => [
             ...prev,
@@ -146,6 +158,7 @@ export default function ChatPage() {
         setStreaming(false)
       },
       attachedImage,
+      agentType,
     )
   }
 
@@ -153,14 +166,33 @@ export default function ChatPage() {
     if (approving) return
     setApproving(true)
     try {
-      const res = await apiPost<{ status: string; message: string }>('/chat/approve-plan', {
+      const res = await apiPost<{
+        status: string
+        final_response?: string
+        message?: string
+      }>('/chat/approve-plan', {
         session_id: sessionId,
         confirmed,
       })
-      setMessages((prev) => [
-        ...prev,
-        { role: 'system', content: res.message },
-      ])
+
+      // Clear the ExecutionCard buttons from the last proposal message
+      setMessages((prev) => {
+        const updated = [...prev]
+        for (let i = updated.length - 1; i >= 0; i--) {
+          if (updated[i].toolProposal) {
+            updated[i] = { ...updated[i], toolProposal: undefined }
+            break
+          }
+        }
+        return updated
+      })
+
+      if (confirmed) {
+        const content = res.final_response || res.message || 'Acción ejecutada exitosamente.'
+        setMessages((prev) => [...prev, { role: 'assistant', content }])
+      } else {
+        setMessages((prev) => [...prev, { role: 'system', content: 'Acción cancelada.' }])
+      }
     } catch (err) {
       setMessages((prev) => [
         ...prev,
@@ -177,7 +209,9 @@ export default function ChatPage() {
       <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
         {messages.length === 0 && (
           <div className="text-center mt-32">
-            <div className="text-on-surface-variant text-sm">Escribe un mensaje para hablar con el Agente Contador</div>
+            <div className="text-on-surface-variant text-sm">
+              Escribe un mensaje para hablar con el Agente {AGENT_LABELS[agentType]}
+            </div>
           </div>
         )}
 
@@ -259,6 +293,25 @@ export default function ChatPage() {
             Recuperamos tu último mensaje
           </div>
         )}
+
+        {/* Agent selector */}
+        <div className="flex gap-1 mb-2">
+          {(['contador', 'loanbook'] as const).map((agent) => (
+            <button
+              key={agent}
+              onClick={() => setAgentType(agent)}
+              disabled={streaming}
+              className={`px-3 py-1 text-xs rounded-full transition-colors disabled:opacity-40 ${
+                agentType === agent
+                  ? 'bg-primary text-white'
+                  : 'text-on-surface-variant bg-surface-container-low hover:bg-surface-container-lowest'
+              }`}
+            >
+              {AGENT_LABELS[agent]}
+            </button>
+          ))}
+        </div>
+
         <div className="flex gap-3 bg-surface-container-lowest shadow-ambient-1 rounded-lg p-2">
           <input
             type="file"
@@ -282,7 +335,7 @@ export default function ChatPage() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage()}
-            placeholder="Escribe un mensaje..."
+            placeholder={AGENT_PLACEHOLDERS[agentType]}
             disabled={streaming}
             className="flex-1 px-3 py-2 bg-transparent text-sm text-on-surface placeholder:text-on-surface-variant focus:outline-none disabled:opacity-50"
           />
