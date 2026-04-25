@@ -216,14 +216,15 @@ _ESCRITURA: list[dict] = [
         ),
         "input_schema": {
             "type": "object",
-            "required": ["vin", "monto", "fecha_pago", "banco"],
+            "required": ["monto", "fecha_pago", "banco"],
             "properties": {
-                "vin": {"type": "string", "description": "VIN de la moto del credito"},
+                "vin": {"type": "string", "description": "VIN de la moto del credito. Si no se tiene, usar cliente_nombre."},
+                "cliente_nombre": {"type": "string", "description": "Nombre del cliente (busqueda parcial). Alternativa al VIN para encontrar el credito activo."},
                 "monto": {"type": "number", "description": "Monto del pago en COP"},
                 "fecha_pago": {"type": "string", "description": "Fecha del pago yyyy-MM-dd"},
                 "banco": {
                     "type": "string",
-                    "description": "Banco donde se recibio el pago. ID Alegra: 5314=Bancolombia2029, 5315=Bancolombia2540, 5318=BBVA0210, 5319=BBVA0212, 5322=Davivienda482, 5321=BancoBogota, 5536=Global66",
+                    "description": "Banco donde se recibio el pago. Default: Bancolombia. IDs Alegra: 5314=Bancolombia2029, 5315=Bancolombia2540, 5318=BBVA0210, 5319=BBVA0212, 5322=Davivienda482, 5321=BancoBogota, 5536=Global66",
                 },
             },
         },

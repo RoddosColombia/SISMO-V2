@@ -351,7 +351,25 @@ class LoanToolDispatcher:
 
     async def _handle_registrar_pago_cuota(self, tool_input: dict, user_id: str) -> dict:
         """Apply waterfall payment, publish cuota.pagada event."""
-        vin = tool_input["vin"]
+        vin = tool_input.get("vin")
+        cliente_nombre = tool_input.get("cliente_nombre")
+
+        # Resolución de VIN por nombre de cliente cuando no se proporciona VIN directamente
+        if not vin and cliente_nombre:
+            lb_search = await self.db.loanbook.find_one(
+                {
+                    "cliente.nombre": {"$regex": cliente_nombre, "$options": "i"},
+                    "estado": {"$nin": ["saldado", "castigado", "pendiente_entrega"]},
+                }
+            )
+            if not lb_search:
+                return {
+                    "success": False,
+                    "error": f"No se encontro credito activo para cliente '{cliente_nombre}'.",
+                }
+            vin = lb_search["vin"]
+        elif not vin:
+            return {"success": False, "error": "Se requiere vin o cliente_nombre para registrar el pago."}
         monto_pago = tool_input["monto"]
         fecha_pago = date.fromisoformat(tool_input["fecha_pago"])
 
@@ -434,12 +452,25 @@ class LoanToolDispatcher:
         dpd = calcular_dpd(cuotas, fecha_pago)
         new_estado = estado_from_dpd(dpd)
 
+        # Recalcular saldo_intereses proporcional a cuotas pendientes
+        cuotas_pagadas_nuevas = sum(1 for c in cuotas if c.get("estado") == "pagada")
+        tc = lb.get("total_cuotas") or lb.get("num_cuotas") or len(cuotas)
+        cuota_std = lb.get("cuota_estandar_plan") or lb.get("cuota_monto") or lb.get("cuota_periodica") or 0
+        capital_plan = lb.get("capital_plan") or 0
+        pendientes_nuevos = tc - cuotas_pagadas_nuevas
+        if tc > 0 and capital_plan > 0 and cuota_std > 0:
+            interes_por_cuota = (cuota_std * tc - capital_plan) / tc
+            new_saldo_intereses = round(max(interes_por_cuota * pendientes_nuevos, 0))
+        else:
+            new_saldo_intereses = lb.get("saldo_intereses") or 0
+
         # Persist
         await self.db.loanbook.update_one(
             {"vin": vin},
             {"$set": {
                 "cuotas": cuotas,
                 "saldo_capital": max(new_saldo, 0),
+                "saldo_intereses": new_saldo_intereses,
                 "total_pagado": new_total_pagado,
                 "total_mora_pagada": lb["total_mora_pagada"] + allocation["mora"],
                 "total_anzi_pagado": lb["total_anzi_pagado"] + allocation["anzi"],
@@ -688,7 +719,7 @@ class LoanToolDispatcher:
 
             if estado not in ("saldado", "castigado", "pendiente_entrega"):
                 activos += 1
-                cartera_total += lb.get("saldo_capital", 0)
+                cartera_total += (lb.get("saldo_capital") or 0) + (lb.get("saldo_intereses") or 0)
 
                 cuotas = lb.get("cuotas", [])
                 dpd = calcular_dpd(cuotas, today)
