@@ -213,6 +213,65 @@ def validar_fecha_pago(fecha_pago: date, hoy: date | None = None) -> None:
         )
 
 
+def calcular_saldos(
+    capital_plan: int,
+    total_cuotas: int,
+    cuota_periodica: int,
+    cuotas_pagadas: int,
+) -> dict:
+    """Calcula saldo_capital, saldo_intereses, monto_original y ltv.
+
+    Fuente de verdad: Excel loanbook_roddos_2026-04-25.xlsx.
+
+    capital_plan: precio venta base de la moto, sin extras ni IVA.
+      - Raider 125      = 7_800_000
+      - TVS Sport 100   = 5_750_000
+      - RODANTE         = monto_original del repuesto/servicio
+
+    Fórmulas:
+      capital_por_cuota = capital_plan / total_cuotas
+      cuotas_pendientes = total_cuotas - cuotas_pagadas
+      saldo_capital     = round(capital_por_cuota × cuotas_pendientes)
+      saldo_intereses   = round(cuota_periodica × cuotas_pendientes) - saldo_capital
+      monto_original    = cuota_periodica × total_cuotas
+
+    Verificadas contra Excel (diff=0):
+      LB-0001 P52S Raider: 7_800_000/52 × 46 = 6_900_000 ✅
+      LB-0003 P78S Raider: 7_800_000/78 × 72 = 7_200_000 ✅
+      LB-0002 P78S Sport:  5_750_000/78 × 72 = 5_307_692 ✅
+
+    Args:
+        capital_plan:     precio de la moto (COP, sin IVA)
+        total_cuotas:     número total de cuotas del plan
+        cuota_periodica:  monto por cuota en la modalidad del crédito
+        cuotas_pagadas:   cuotas con estado="pagada" a la fecha de cálculo
+
+    Returns:
+        dict con: cuotas_pendientes, capital_por_cuota, saldo_capital,
+                  saldo_intereses, monto_original
+    """
+    if total_cuotas == 0:
+        return {
+            "cuotas_pendientes":  0,
+            "capital_por_cuota":  0,
+            "saldo_capital":      0,
+            "saldo_intereses":    0,
+            "monto_original":     0,
+        }
+    cuotas_pendientes = total_cuotas - cuotas_pagadas
+    capital_por_cuota = capital_plan / total_cuotas
+    saldo_capital     = round(capital_por_cuota * cuotas_pendientes)
+    saldo_intereses   = round(cuota_periodica * cuotas_pendientes) - saldo_capital
+    monto_original    = cuota_periodica * total_cuotas
+    return {
+        "cuotas_pendientes":  cuotas_pendientes,
+        "capital_por_cuota":  round(capital_por_cuota, 2),
+        "saldo_capital":      saldo_capital,
+        "saldo_intereses":    saldo_intereses,
+        "monto_original":     monto_original,
+    }
+
+
 def primer_miercoles_cobro(fecha_entrega: date) -> date:
     """Calcula la fecha de la primera cuota según la Regla del Miércoles RODDOS.
 

@@ -169,15 +169,30 @@ def recalcular_loanbook(lb: dict, *, hoy: date | None = None) -> dict:
 
     # ── 3. Recalcular financials desde lista de cuotas ───────────────────────
     if cuotas:
-        total_pagado = sum(c.get("monto", 0) for c in cuotas if c.get("estado") == "pagada")
-        saldo_capital = sum(c.get("monto", 0) for c in cuotas if c.get("estado") != "pagada")
+        total_pagado   = sum(c.get("monto", 0) for c in cuotas if c.get("estado") == "pagada")
+        cuotas_pagadas = sum(1 for c in cuotas if c.get("estado") == "pagada")
+        saldo_cuotas   = sum(c.get("monto", 0) for c in cuotas if c.get("estado") != "pagada")
     else:
         # Sin cuotas aún (crédito recién creado): saldo = total
-        total_pagado = lb.get("total_pagado", 0) or 0
-        saldo_capital = num_cuotas_efectivo * cuota_monto - total_pagado
+        total_pagado   = lb.get("total_pagado", 0) or 0
+        cuotas_pagadas = 0
+        saldo_cuotas   = num_cuotas_efectivo * cuota_monto - total_pagado
 
     lb["total_pagado"] = round(total_pagado)
-    lb["saldo_capital"] = round(max(0, saldo_capital))
+
+    # Si el loanbook tiene capital_plan (almacenado al registrar entrega), usar
+    # calcular_saldos() para separar capital de intereses con la fórmula canónica.
+    # Sin capital_plan (loanbooks legacy): fallback a la suma de cuotas.
+    capital_plan = lb.get("capital_plan")
+    if capital_plan and num_cuotas_efectivo and cuota_monto:
+        from services.loanbook.reglas_negocio import calcular_saldos
+        _s = calcular_saldos(
+            int(capital_plan), num_cuotas_efectivo, int(cuota_monto), cuotas_pagadas
+        )
+        lb["saldo_capital"]   = _s["saldo_capital"]
+        lb["saldo_intereses"] = _s["saldo_intereses"]
+    else:
+        lb["saldo_capital"] = round(max(0, saldo_cuotas))
 
     # ── 4. DPD y estado ──────────────────────────────────────────────────────
     estado_actual = lb.get("estado", "activo")
@@ -200,6 +215,7 @@ CAMPOS_RECALCULADOS = (
     "valor_total",
     "total_pagado",
     "saldo_capital",
+    "saldo_intereses",   # calculado por calcular_saldos() cuando capital_plan disponible
     "dpd",
     "estado",
     "plan",

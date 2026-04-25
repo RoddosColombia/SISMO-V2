@@ -1088,6 +1088,23 @@ async def registrar_entrega(
         for i, f in enumerate(fechas)
     ]
 
+    # Obtener capital_plan de catalogo_planes para calcular saldos correctamente
+    plan_codigo_lb = lb.get("plan_codigo") or (lb.get("plan") or {}).get("codigo")
+    capital_plan_val: int | None = None
+    if plan_codigo_lb:
+        cat_plan = await db.catalogo_planes.find_one({"codigo": plan_codigo_lb})
+        if cat_plan:
+            capital_plan_val = cat_plan.get("capital_plan")
+
+    from services.loanbook.reglas_negocio import calcular_saldos as _calcular_saldos
+    if capital_plan_val and num_cuotas:
+        _s = _calcular_saldos(int(capital_plan_val), num_cuotas, int(cuota_monto), 0)
+        saldo_capital_init  = _s["saldo_capital"]
+        saldo_intereses_init = _s["saldo_intereses"]
+    else:
+        saldo_capital_init   = num_cuotas * cuota_monto
+        saldo_intereses_init = 0
+
     update_fields = {
         "estado": "activo",
         "fecha_entrega": fecha_entrega_str,
@@ -1097,9 +1114,11 @@ async def registrar_entrega(
         "cuotas": cuotas,
         "cuotas_pagadas": 0,
         "cuotas_total": len(cuotas),
-        "saldo_capital": num_cuotas * cuota_monto,
-        "saldo_pendiente": num_cuotas * cuota_monto,
-        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "saldo_capital":   saldo_capital_init,
+        "saldo_pendiente": saldo_capital_init,
+        "saldo_intereses": saldo_intereses_init,
+        "capital_plan":    capital_plan_val or 0,
+        "updated_at": now_iso_bogota(),
     }
     if body.dia_cobro_especial:
         update_fields["dia_cobro_especial"] = body.dia_cobro_especial
@@ -1304,6 +1323,23 @@ async def put_entrega(
         for i, f in enumerate(fechas)
     ]
 
+    # Obtener capital_plan de catalogo_planes para calcular saldos correctamente
+    plan_codigo_lb2 = lb.get("plan_codigo") or (lb.get("plan") or {}).get("codigo")
+    capital_plan_val2: int | None = None
+    if plan_codigo_lb2:
+        cat_plan2 = await db.catalogo_planes.find_one({"codigo": plan_codigo_lb2})
+        if cat_plan2:
+            capital_plan_val2 = cat_plan2.get("capital_plan")
+
+    from services.loanbook.reglas_negocio import calcular_saldos as _calcular_saldos2
+    if capital_plan_val2 and num_cuotas:
+        _s2 = _calcular_saldos2(int(capital_plan_val2), num_cuotas, int(cuota_monto), 0)
+        saldo_capital_init2   = _s2["saldo_capital"]
+        saldo_intereses_init2 = _s2["saldo_intereses"]
+    else:
+        saldo_capital_init2   = num_cuotas * cuota_monto
+        saldo_intereses_init2 = 0
+
     await db.loanbook.update_one(
         {"loanbook_id": lb["loanbook_id"]},
         {"$set": {
@@ -1313,9 +1349,11 @@ async def put_entrega(
             "cuotas": cuotas,
             "cuotas_pagadas": 0,
             "cuotas_total": len(cuotas),
-            "saldo_capital": num_cuotas * cuota_monto,
-            "saldo_pendiente": num_cuotas * cuota_monto,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "saldo_capital":   saldo_capital_init2,
+            "saldo_pendiente": saldo_capital_init2,
+            "saldo_intereses": saldo_intereses_init2,
+            "capital_plan":    capital_plan_val2 or 0,
+            "updated_at": now_iso_bogota(),
         }},
     )
     await _recalcular_y_persistir(db, lb["loanbook_id"])
