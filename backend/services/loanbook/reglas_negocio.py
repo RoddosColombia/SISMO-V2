@@ -211,3 +211,33 @@ def validar_fecha_pago(fecha_pago: date, hoy: date | None = None) -> None:
             f"fecha_pago '{fecha_pago}' está en el futuro (hoy={hoy}). "
             "No se puede registrar un pago que aún no ocurrió."
         )
+
+
+def primer_miercoles_cobro(fecha_entrega: date) -> date:
+    """Calcula la fecha de la primera cuota según la Regla del Miércoles RODDOS.
+
+    Primera cuota = primer miércoles >= fecha_entrega + 7 días.
+
+    Si la entrega cae un miércoles, el primer pago es el miércoles SIGUIENTE
+    (mínimo 7 días después, nunca el mismo día).
+
+    Args:
+        fecha_entrega: fecha en que se entregó la moto al cliente
+
+    Returns:
+        date — fecha del primer miércoles de cobro
+
+    Casos verificados:
+        entrega 2026-03-05 (jue) → primera cuota 2026-03-18 (mié)
+        entrega 2026-03-10 (mar) → primera cuota 2026-03-18 (mié)
+        entrega 2026-03-24 (mar) → primera cuota 2026-04-01 (mié)
+        entrega 2026-03-25 (mié) → primera cuota 2026-04-01 (mié)
+        entrega 2026-03-27 (vie) → primera cuota 2026-04-08 (mié)
+        entrega 2026-03-28 (sáb) → primera cuota 2026-04-08 (mié)
+        entrega 2026-04-08 (mié) → primera cuota 2026-04-15 (mié)  ← entrega=mié
+        entrega 2026-04-10 (vie) → primera cuota 2026-04-22 (mié)
+    """
+    from datetime import timedelta
+    start = fecha_entrega + timedelta(days=7)
+    days_until_wed = (2 - start.weekday()) % 7
+    return start + timedelta(days=days_until_wed)
