@@ -308,7 +308,14 @@ async def process_system_event(
     for block in response.content:
         if block.type == 'tool_use':
             if auto_approve:
-                dispatcher = ToolDispatcher(db)
+                # Seleccionar dispatcher correcto según agent_type (CORRECCIÓN: bug original
+                # usaba siempre ToolDispatcher del Contador, enviando asientos a Alegra
+                # incluso para tools del agente Loanbook).
+                if agent_type == "loanbook":
+                    from agents.loanbook.handlers import LoanToolDispatcher
+                    dispatcher = LoanToolDispatcher(db)
+                else:
+                    dispatcher = ToolDispatcher(db)
                 result = await dispatcher.dispatch(block.name, block.input, correlation_id)
                 results.append({"tool": block.name, "result": result})
             else:
