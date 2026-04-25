@@ -26,29 +26,30 @@ from datetime import date, timedelta
 # Formato: { "loanbook_id": "YYYY-MM-DD" }
 # ─────────────────────────────────────────────────────────────────────────────
 FECHAS_CORRECTAS: dict[str, str] = {
-    "LB-2026-0001": "2026-01-10",
-    "LB-2026-0002": "2026-01-14",
-    "LB-2026-0003": "2026-01-17",
-    "LB-2026-0004": "2026-01-20",
-    "LB-2026-0005": "2026-01-22",
-    "LB-2026-0006": "2026-01-24",
-    "LB-2026-0007": "2026-01-28",
-    "LB-2026-0008": "2026-01-31",
-    "LB-2026-0009": "2026-02-03",
-    "LB-2026-0010": "2026-02-05",
-    "LB-2026-0011": "2026-02-08",
-    "LB-2026-0012": "2026-02-10",
-    "LB-2026-0013": "2026-02-12",
-    "LB-2026-0014": "2026-02-14",
-    "LB-2026-0015": "2026-02-18",
-    "LB-2026-0016": "2026-02-21",
-    "LB-2026-0017": "2026-02-24",
-    "LB-2026-0018": "2026-02-26",
-    "LB-2026-0019": "2026-03-03",
-    "LB-2026-0020": "2026-03-05",
-    "LB-2026-0021": "2026-03-10",
-    "LB-2026-0022": "2026-03-14",
-    "LB-2026-0023": "2026-03-18",
+    # Fuente: Excel V1 — fechas reales de entrega confirmadas
+    "LB-2026-0001": "2026-03-05",
+    "LB-2026-0002": "2026-03-05",
+    "LB-2026-0003": "2026-03-05",
+    "LB-2026-0004": "2026-03-05",
+    "LB-2026-0005": "2026-03-05",
+    "LB-2026-0006": "2026-03-10",
+    "LB-2026-0007": "2026-03-24",
+    "LB-2026-0008": "2026-03-24",
+    "LB-2026-0009": "2026-03-10",
+    "LB-2026-0010": "2026-03-19",
+    "LB-2026-0011": "2026-03-25",
+    "LB-2026-0012": "2026-03-21",
+    # LB-2026-0013 no está en Excel V1 — omitido intencionalmente
+    "LB-2026-0014": "2026-03-27",
+    "LB-2026-0015": "2026-03-27",
+    "LB-2026-0016": "2026-03-27",
+    "LB-2026-0017": "2026-03-28",
+    "LB-2026-0018": "2026-03-28",
+    "LB-2026-0019": "2026-04-08",
+    "LB-2026-0020": "2026-04-10",
+    "LB-2026-0021": "2026-04-10",
+    "LB-2026-0022": "2026-04-10",
+    "LB-2026-0023": "2026-04-10",
 }
 
 
@@ -90,8 +91,12 @@ async def _main(apply: bool) -> None:
     from core.datetime_utils import now_iso_bogota
     from services.loanbook.reglas_negocio import primer_miercoles_cobro
 
-    mongo_url = os.environ.get("MONGODB_URL", "mongodb://localhost:27017")
-    db_name = os.environ.get("MONGODB_DB", "sismo_v2")
+    mongo_url = os.environ.get("MONGO_URL") or os.environ.get("MONGODB_URL")
+    db_name = os.environ.get("DB_NAME") or os.environ.get("MONGODB_DB", "sismo_v2")
+    if not mongo_url:
+        print("ERROR: Variable de entorno MONGO_URL no definida.")
+        print("  Ejecutar con: MONGO_URL='mongodb+srv://...' DB_NAME='sismo_v2' python -m scripts.fix_fechas_entrega")
+        sys.exit(1)
     client = AsyncIOMotorClient(mongo_url)
     db = client[db_name]
 
