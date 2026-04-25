@@ -8,6 +8,7 @@ REGLAS:
 - Auteco NIT 860024781 = autoretenedor
 """
 import datetime
+from core.datetime_utils import now_bogota, today_bogota, now_iso_bogota
 from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from services.alegra.client import AlegraClient
@@ -179,8 +180,8 @@ async def handle_consultar_obligaciones_tributarias(
 ) -> dict:
     """IVA cuatrimestral + ReteFuente + ReteICA acumulados desde Alegra."""
     try:
-        mes = tool_input.get("mes") or datetime.date.today().month
-        anio = tool_input.get("anio") or datetime.date.today().year
+        mes = tool_input.get("mes") or today_bogota().month
+        anio = tool_input.get("anio") or today_bogota().year
         cuatrimestre = IVA_CUATRIMESTRES.get(mes, "ene-abr")
 
         # Determine period dates
@@ -437,7 +438,7 @@ async def handle_consultar_calendario_tributario(
     user_id: str,
 ) -> dict:
     """Calendario tributario RODDOS con semáforo por proximidad de vencimiento."""
-    hoy = datetime.date.today()
+    hoy = today_bogota()
 
     calculadores = [
         ("ReteFuente", _next_retefuente_vencimiento),

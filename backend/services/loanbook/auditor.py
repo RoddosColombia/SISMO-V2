@@ -13,6 +13,7 @@ Detecta 5 categorías de inconsistencia:
 """
 
 from datetime import date, datetime, timezone
+from core.datetime_utils import now_bogota, today_bogota, now_iso_bogota
 
 from services.loanbook.reglas_negocio import PLAN_CUOTAS, get_num_cuotas
 
@@ -63,7 +64,7 @@ def auditar_loanbooks(loanbooks: list[dict]) -> dict:
       4. combinacion_no_configurada     — plan × modalidad sin entrada en PLAN_CUOTAS
       5. cuotas_con_fecha_pago_futura   — cualquier cuota con fecha_pago > hoy
     """
-    hoy = date.today()
+    hoy = today_bogota()
     hoy_str = hoy.isoformat()
 
     casos_valor_total: list[dict] = []

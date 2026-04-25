@@ -7,6 +7,7 @@ When a loanbook is created (loanbook.creado), this handler:
 """
 import logging
 from datetime import date
+from core.datetime_utils import now_bogota, today_bogota, now_iso_bogota
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from core.event_handlers import on_event
@@ -35,7 +36,7 @@ async def handle_loanbook_creado(event: dict, db: AsyncIOMotorDatabase):
             {"cedula": cedula},
             {
                 "$addToSet": {"loanbooks": loanbook_id},
-                "$set": {"updated_at": date.today().isoformat()},
+                "$set": {"updated_at": today_bogota().isoformat()},
             },
         )
         logger.info(f"CRM: Added loanbook {loanbook_id} to client {cedula}")

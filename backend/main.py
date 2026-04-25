@@ -57,11 +57,13 @@ app.include_router(informes_router)
 @app.get("/health")
 async def health(db: AsyncIOMotorDatabase = Depends(get_db)):
     from services.alegra.client import get_circuit_breaker_estado
+    from core.datetime_utils import now_iso_bogota
     cb_estado = await get_circuit_breaker_estado(db)
     return {
         "status": "ok",
         "version": "0.1.0",
         "alegra_circuit_breaker": cb_estado,
+        "server_time_bogota": now_iso_bogota(),
     }
 
 

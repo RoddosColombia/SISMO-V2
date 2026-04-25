@@ -10,6 +10,7 @@ REGLAS:
 - CERO escrituras directas a inventario_motos o loanbook desde Contador
 """
 import datetime
+from core.datetime_utils import now_bogota, today_bogota, now_iso_bogota
 from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from services.alegra.client import AlegraClient
@@ -100,7 +101,7 @@ async def handle_crear_factura_venta_moto(
     modo_promocion = bool(tool_input.get("modo_promocion", False))
     precio_moto = tool_input.get("precio_moto")
     rubros = tool_input.get("rubros_adicionales") or {}
-    fecha = tool_input.get("fecha") or datetime.date.today().isoformat()
+    fecha = tool_input.get("fecha") or today_bogota().isoformat()
 
     if not moto_vin:
         return {"success": False, "error": "VIN (chasis) es OBLIGATORIO para facturar. No se puede crear factura sin VIN."}
@@ -315,7 +316,7 @@ async def handle_crear_nota_credito(
     validate_write_permission("contador", "POST /credit-notes", "alegra")
 
     payload = {
-        "date": tool_input.get("fecha") or datetime.date.today().isoformat(),
+        "date": tool_input.get("fecha") or today_bogota().isoformat(),
         "invoiceId": tool_input.get("invoice_id"),
         "observations": tool_input.get("motivo", "Nota crédito"),
         "items": tool_input.get("items", []),

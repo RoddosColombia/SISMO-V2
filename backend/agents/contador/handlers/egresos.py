@@ -12,6 +12,7 @@ REGLAS INAMOVIBLES:
 - Fechas: yyyy-MM-dd — NUNCA ISO-8601 con timezone
 """
 import datetime
+from core.datetime_utils import now_bogota, today_bogota, now_iso_bogota
 from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from services.alegra.client import AlegraClient
@@ -187,7 +188,7 @@ async def handle_registrar_gasto(
 
     monto = tool_input["monto"]
     banco_id = BANCO_CATEGORY_IDS.get(tool_input["banco"], "5314")
-    fecha = tool_input.get("fecha") or datetime.date.today().isoformat()
+    fecha = tool_input.get("fecha") or today_bogota().isoformat()
     descripcion = tool_input["descripcion"]
     nit = tool_input.get("proveedor_nit")
 
@@ -253,7 +254,7 @@ async def handle_registrar_gasto_recurrente(
     tipo, cuenta_gasto = TIPO_RECURRENTE_MAP.get(tipo_gasto, ("servicios", FALLBACK_GASTO_ID))
     monto = tool_input["monto"]
     banco_id = BANCO_CATEGORY_IDS.get(tool_input["banco"], "5314")
-    fecha = tool_input.get("fecha") or datetime.date.today().isoformat()
+    fecha = tool_input.get("fecha") or today_bogota().isoformat()
     nit = tool_input.get("proveedor_nit")
     periodo = tool_input.get("periodo", "")
 
@@ -337,7 +338,7 @@ async def handle_causar_movimiento_bancario(
     descripcion = tool_input["descripcion"]
     monto = tool_input["monto"]
     banco_id = BANCO_CATEGORY_IDS.get(tool_input.get("banco", ""), "5314")
-    fecha = tool_input.get("fecha") or datetime.date.today().isoformat()
+    fecha = tool_input.get("fecha") or today_bogota().isoformat()
     nit = tool_input.get("proveedor_nit")
 
     tipo, cuenta_gasto = _classify_gasto(descripcion)
@@ -378,7 +379,7 @@ async def handle_registrar_ajuste_contable(
     cuenta_destino = tool_input["cuenta_destino_id"]
     monto = tool_input["monto"]
     motivo = tool_input["motivo"]
-    fecha = tool_input.get("fecha") or datetime.date.today().isoformat()
+    fecha = tool_input.get("fecha") or today_bogota().isoformat()
 
     entries = [
         {"id": str(cuenta_destino), "debit": monto, "credit": 0},
@@ -435,7 +436,7 @@ async def handle_registrar_depreciacion(
     activo = tool_input["activo"]
     monto = tool_input["monto"]
     periodo = tool_input.get("periodo", "")
-    fecha = tool_input.get("fecha") or datetime.date.today().isoformat()
+    fecha = tool_input.get("fecha") or today_bogota().isoformat()
     tipo_activo = tool_input.get("tipo_activo", "equipo_computo")
 
     # Look up accounts for asset type, fall back to equipo_computo

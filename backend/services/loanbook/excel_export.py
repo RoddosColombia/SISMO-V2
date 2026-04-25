@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import io
 from datetime import date
+from core.datetime_utils import now_bogota, today_bogota, now_iso_bogota
 
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment
@@ -90,7 +91,7 @@ def generar_excel(loanbooks: list[dict]) -> bytes:
     Returns:
         bytes — contenido del archivo .xlsx listo para StreamingResponse.
     """
-    hoy     = date.today()
+    hoy     = today_bogota()
     hoy_str = hoy.isoformat()
 
     wb = openpyxl.Workbook()

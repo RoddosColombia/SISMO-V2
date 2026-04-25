@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import io
 from datetime import date, datetime, timedelta
+from core.datetime_utils import now_bogota, today_bogota, now_iso_bogota
 from typing import Any, Optional
 
 import openpyxl
@@ -354,7 +355,7 @@ def _hoja_cronograma(
     ws = wb.create_sheet("Cronograma")
     _header_row(ws, _COLS_CRONOGRAMA)
 
-    hoy = date.today()
+    hoy = today_bogota()
     prox_miercoles = _proximo_miercoles(hoy)
 
     row_idx = 2
@@ -570,7 +571,7 @@ def generar_loan_tape(
         bytes del archivo .xlsx listo para enviar como HTTP response.
     """
     if fecha_corte is None:
-        fecha_corte = date.today()
+        fecha_corte = today_bogota()
 
     rdx = [lb for lb in loanbooks if lb.get("producto") == "RDX"]
     rodante = [lb for lb in loanbooks if lb.get("producto") == "RODANTE"]

@@ -8,6 +8,7 @@ PUT  /api/crm/clientes/{cedula} — Update client data
 GET  /api/crm/stats             — Summary stats
 """
 from datetime import date
+from core.datetime_utils import now_bogota, today_bogota, now_iso_bogota
 from fastapi import APIRouter, Depends, HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -185,7 +186,7 @@ async def _actualizar_cliente(
     if not existing:
         return False
 
-    updates["updated_at"] = date.today().isoformat()
+    updates["updated_at"] = today_bogota().isoformat()
     await db.crm_clientes.update_one(
         {"cedula": cedula},
         {"$set": updates},

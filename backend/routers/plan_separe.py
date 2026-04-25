@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import date, datetime, timezone
+from core.datetime_utils import now_bogota, today_bogota, now_iso_bogota
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -154,7 +155,7 @@ def _compute_fields(doc: dict) -> dict:
 
 async def _next_separacion_id(db: AsyncIOMotorDatabase) -> str:
     """Generate PS-YYYY-NNN sequential id."""
-    year = date.today().year
+    year = today_bogota().year
     prefix = f"PS-{year}-"
     # Find last one
     last = await db.plan_separe_separaciones.find(
@@ -371,7 +372,7 @@ async def registrar_abono(
             detail=f"Monto excede saldo pendiente. Saldo: {cuota_inicial - total_actual:,.0f}",
         )
 
-    fecha_str = body.fecha or date.today().isoformat()
+    fecha_str = body.fecha or today_bogota().isoformat()
     try:
         date.fromisoformat(fecha_str)
     except ValueError:

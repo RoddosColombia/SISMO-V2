@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Any
+from core.datetime_utils import now_bogota, today_bogota, now_iso_bogota
 
 if TYPE_CHECKING:
     from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -174,7 +175,7 @@ async def handle_calcular_liquidacion(
     fecha = (
         date.fromisoformat(fecha_liquidacion[:10])
         if fecha_liquidacion
-        else date.today()
+        else today_bogota()
     )
     return calcular_liquidacion_anticipada(lb, fecha)
 
@@ -302,7 +303,7 @@ async def handle_registrar_pago_parcial(
     nuevo_total = pagado_previo + monto
     await db.loanbook.update_one(
         {"_id": lb["_id"]},
-        {"$set": {"cuota_inicial_pagada": nuevo_total, "updated_at": datetime.utcnow()}},
+        {"$set": {"cuota_inicial_pagada": nuevo_total, "updated_at": now_iso_bogota()}},
     )
     return {
         "ok": True,
@@ -356,7 +357,7 @@ async def handle_registrar_pago_cuota(
         return {"error": f"Loanbook para VIN {vin} no encontrado"}
 
     fecha = date.fromisoformat(fecha_pago[:10])
-    if fecha > date.today():
+    if fecha > today_bogota():
         return {"error": f"No se puede registrar pago con fecha futura: {fecha_pago}"}
 
     resultado = aplicar_waterfall(lb, monto, fecha)
@@ -371,7 +372,7 @@ async def handle_registrar_pago_cuota(
                 "saldo_capital": saldo_nuevo,
                 "saldo_pendiente": saldo_nuevo,
                 "fecha_ultimo_pago": fecha_pago,
-                "updated_at": datetime.utcnow(),
+                "updated_at": now_iso_bogota(),
             }
         },
     )

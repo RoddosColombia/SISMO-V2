@@ -9,6 +9,7 @@ REGLAS:
 - MongoDB writes ONLY to: backlog_movimientos, conciliacion_jobs, roddos_events
 """
 import datetime
+from core.datetime_utils import now_bogota, today_bogota, now_iso_bogota
 import uuid
 from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -302,7 +303,7 @@ async def handle_enviar_movimiento_backlog(
 ) -> dict:
     """Route movement to backlog. (BACK-01)"""
     await db.backlog_movimientos.insert_one({
-        "fecha": tool_input.get("fecha", datetime.date.today().isoformat()),
+        "fecha": tool_input.get("fecha", today_bogota().isoformat()),
         "banco": tool_input.get("banco", ""),
         "descripcion": tool_input.get("descripcion", ""),
         "monto": tool_input.get("monto", 0),

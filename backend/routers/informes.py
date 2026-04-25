@@ -11,6 +11,7 @@ Endpoints:
 """
 import logging
 from datetime import datetime
+from core.datetime_utils import now_bogota, today_bogota, now_iso_bogota
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -42,9 +43,8 @@ async def get_semana_actual(
 ):
     """Retorna el informe de la semana actual. Lo crea si no existe."""
     from services.loanbook.informes_service import generar_informe_semanal, _semana_id
-    from datetime import date
 
-    semana_id = _semana_id(date.today())
+    semana_id = _semana_id(today_bogota())
     informe = await db.informes_semanales.find_one({"semana_id": semana_id})
 
     # Detectar informe desactualizado: dpd=0 con cuotas vencidas > 0 indica
@@ -150,13 +150,13 @@ async def patch_credito_gestion(
         )
 
     user_id = current_user.get("id") or current_user.get("sub") or "admin"
-    update: dict = {"updated_at": datetime.utcnow()}
+    update: dict = {"updated_at": now_iso_bogota()}
     if estado_gestion is not None:
         update[f"sin_pago.{idx}.estado_gestion"] = estado_gestion
     if notas is not None:
         update[f"sin_pago.{idx}.notas"] = notas
     update[f"sin_pago.{idx}.actualizado_por"] = user_id
-    update[f"sin_pago.{idx}.actualizado_at"] = datetime.utcnow()
+    update[f"sin_pago.{idx}.actualizado_at"] = now_iso_bogota()
 
     await db.informes_semanales.update_one(
         {"semana_id": semana_id},
@@ -181,7 +181,7 @@ async def patch_notas_generales(
 
     result = await db.informes_semanales.update_one(
         {"semana_id": semana_id},
-        {"$set": {"notas_generales": notas, "updated_at": datetime.utcnow()}},
+        {"$set": {"notas_generales": notas, "updated_at": now_iso_bogota()}},
     )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail=f"Informe {semana_id} no encontrado")

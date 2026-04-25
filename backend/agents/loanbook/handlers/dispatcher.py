@@ -9,6 +9,7 @@ Write tools require user confirmation via ExecutionCard SSE event.
 import logging
 import uuid
 from datetime import date, datetime, timezone
+from core.datetime_utils import now_bogota, today_bogota, now_iso_bogota
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from core.loanbook_model import (
@@ -94,7 +95,7 @@ class LoanToolDispatcher:
         lb = await self.db.loanbook.find_one({"vin": busqueda})
         if lb:
             _clean_doc(lb)
-            today = date.today()
+            today = today_bogota()
             cuotas = lb.get("cuotas", [])
             lb["dpd"] = calcular_dpd(cuotas, today)
             lb["cuotas_pagadas"] = sum(1 for c in cuotas if c.get("estado") == "pagada")
@@ -125,7 +126,7 @@ class LoanToolDispatcher:
 
         cursor = self.db.loanbook.find(filtro).sort("fecha_creacion", -1)
         items = await cursor.to_list(length=500)
-        today = date.today()
+        today = today_bogota()
 
         result = []
         for lb in items:
@@ -237,7 +238,7 @@ class LoanToolDispatcher:
         pago = {
             "monto": monto,
             "referencia": referencia,
-            "fecha": date.today().isoformat(),
+            "fecha": today_bogota().isoformat(),
         }
 
         await self.db.apartados.update_one(
@@ -529,7 +530,7 @@ class LoanToolDispatcher:
     async def _handle_consultar_mora(self, tool_input: dict, user_id: str) -> dict:
         """Mora summary for one VIN or entire portfolio."""
         vin = tool_input.get("vin")
-        today = date.today()
+        today = today_bogota()
 
         if vin:
             lb = await self.db.loanbook.find_one({"vin": vin})
@@ -587,7 +588,7 @@ class LoanToolDispatcher:
     async def _handle_calcular_liquidacion(self, tool_input: dict, user_id: str) -> dict:
         """Calculate payoff amount for today."""
         vin = tool_input["vin"]
-        today = date.today()
+        today = today_bogota()
 
         lb = await self.db.loanbook.find_one({"vin": vin})
         if not lb:
@@ -670,7 +671,7 @@ class LoanToolDispatcher:
 
     async def _handle_resumen_cartera(self, tool_input: dict, user_id: str) -> dict:
         """Executive portfolio summary."""
-        today = date.today()
+        today = today_bogota()
 
         cursor = self.db.loanbook.find({})
         all_lbs = await cursor.to_list(length=1000)

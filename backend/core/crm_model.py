@@ -8,6 +8,7 @@ and managed via CRUD endpoints.
 from __future__ import annotations
 
 from datetime import date
+from core.datetime_utils import now_bogota, today_bogota, now_iso_bogota
 
 # Valid CRM client states
 ESTADOS_CRM = ["activo", "inactivo", "mora", "saldado"]
@@ -35,7 +36,7 @@ def crear_cliente_doc(
 
     Returns dict ready for MongoDB insert.
     """
-    today = date.today().isoformat()
+    today = today_bogota().isoformat()
     return {
         "cedula": cedula,
         "nombre": nombre,

@@ -8,6 +8,7 @@ REGLAS:
 - Catalogo: returns embedded catalog from tools.py description (no API call)
 """
 import datetime
+from core.datetime_utils import now_bogota, today_bogota, now_iso_bogota
 from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from services.alegra.client import AlegraClient
@@ -38,7 +39,7 @@ async def handle_registrar_pago_cuota(
     monto = tool_input["monto"]
     banco = tool_input["banco"]
     numero_cuota = tool_input.get("numero_cuota", "?")
-    fecha = tool_input.get("fecha") or datetime.date.today().isoformat()
+    fecha = tool_input.get("fecha") or today_bogota().isoformat()
     banco_id = BANCO_PAYMENT_IDS.get(banco, 5)
 
     # ROG-4 OK: lectura operativa Loanbook, no dato contable

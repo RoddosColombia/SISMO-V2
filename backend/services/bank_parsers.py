@@ -19,6 +19,7 @@ import re
 import shutil
 import tempfile
 from datetime import datetime
+from core.datetime_utils import now_bogota, today_bogota, now_iso_bogota
 
 import openpyxl
 import pandas as pd
@@ -148,7 +149,7 @@ def parse_bancolombia(file_path: str) -> list[dict]:
         fecha = _parse_date(str(fecha_raw), "%d/%m")
         # Bancolombia d/m format lacks year — assume current year
         if len(fecha) <= 5:
-            fecha = f"{datetime.now().year}-{fecha}"
+            fecha = f"{now_bogota().year}-{fecha}"
 
         monto, tipo = _parse_monto(valor_raw)
         if monto == 0:

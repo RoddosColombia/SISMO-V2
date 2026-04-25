@@ -22,6 +22,7 @@ import os
 import time
 import uuid
 from datetime import datetime, timezone, date
+from core.datetime_utils import now_bogota, today_bogota, now_iso_bogota
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -459,7 +460,7 @@ async def limpiar_cuotas_seed_corruptas(
 
     Acción: cuota.estado = 'pendiente', cuota.mora_acumulada = 0.
     """
-    hoy = date.today().isoformat()
+    hoy = today_bogota().isoformat()
 
     loanbooks = await db.loanbook.find(
         {"cuotas": {"$elemMatch": {"estado": "pagada", "fecha": {"$gt": hoy}}}}

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import copy
 from datetime import date
+from core.datetime_utils import now_bogota, today_bogota, now_iso_bogota
 
 from services.loanbook.state_calculator import recalcular_loanbook
 
@@ -65,7 +66,7 @@ def reparar_loanbook(
 
     Args:
         lb:       Documento loanbook sin _id.
-        hoy:      Fecha de referencia (default: date.today()). Inyectable para tests.
+        hoy:      Fecha de referencia (default: today_bogota()). Inyectable para tests.
         dry_run:  Si True, retorna el plan de reparación sin mutar nada.
                   Si False, retorna el documento reparado (no persiste — el caller lo hace).
 
@@ -78,7 +79,7 @@ def reparar_loanbook(
           - documento_reparado: dict | None — el doc corregido si dry_run=False
     """
     if hoy is None:
-        hoy = date.today()
+        hoy = today_bogota()
 
     hoy_str = hoy.isoformat()
     loanbook_id = lb.get("loanbook_id", "?")

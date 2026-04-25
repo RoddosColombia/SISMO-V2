@@ -19,6 +19,7 @@ CUENTAS ALEGRA:
 import logging
 import uuid
 from datetime import date, datetime, timezone
+from core.datetime_utils import now_bogota, today_bogota, now_iso_bogota
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from core.event_handlers import on_event
@@ -196,7 +197,7 @@ async def handle_loanbook_saldado(event: dict, db: AsyncIOMotorDatabase, alegra=
         {"cedula": cliente_cedula},
         {"$set": {
             "estado": "saldado",
-            "updated_at": date.today().isoformat(),
+            "updated_at": today_bogota().isoformat(),
         }},
     )
 

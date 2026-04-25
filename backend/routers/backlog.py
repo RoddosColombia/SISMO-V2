@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from core.database import get_db
 from core.auth import get_current_user
+from core.datetime_utils import now_bogota, today_bogota, now_iso_bogota
 
 router = APIRouter(prefix="/api/backlog", tags=["backlog"])
 
@@ -1063,7 +1064,7 @@ async def matchear_cartera(
 
     # ── 4. Save to cierre_q1_reporte ─────────────────────────────────────
     await db.cierre_q1_reporte.insert_one({
-        "fecha_ejecucion":    datetime.utcnow(),
+        "fecha_ejecucion":    now_iso_bogota(),
         "recaudo_q1_legacy":  monto_legacy,
         "recaudo_q1_v2":      monto_v2,
         "total_matcheados":   match_unico_v2 + match_unico_legacy,

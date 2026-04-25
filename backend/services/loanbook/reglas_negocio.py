@@ -20,6 +20,7 @@ Sin I/O propio — todas las funciones son síncronas y usan el cache en memoria
 """
 
 from datetime import date
+from core.datetime_utils import now_bogota, today_bogota, now_iso_bogota
 
 from services.loanbook import catalogo_service as _cs
 
@@ -198,13 +199,13 @@ def validar_fecha_pago(fecha_pago: date, hoy: date | None = None) -> None:
 
     Args:
         fecha_pago: fecha del pago a registrar
-        hoy:        fecha de referencia (default: date.today()). Inyectable en tests.
+        hoy:        fecha de referencia (default: today_bogota()). Inyectable en tests.
 
     Raises:
         ValueError: si fecha_pago > hoy, con mensaje descriptivo.
     """
     if hoy is None:
-        hoy = date.today()
+        hoy = today_bogota()
     if fecha_pago > hoy:
         raise ValueError(
             f"fecha_pago '{fecha_pago}' está en el futuro (hoy={hoy}). "

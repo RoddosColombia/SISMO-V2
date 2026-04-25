@@ -29,6 +29,7 @@ from services.loanbook.state_calculator import (
     patch_set_from_recalculo as _patch_set_recalculo,
     _derivar_total_cuotas,
 )
+from core.datetime_utils import now_bogota, today_bogota, now_iso_bogota
 from core.loanbook_model import (
     MORA_TASA_DIARIA,
     aplicar_waterfall,
@@ -77,7 +78,7 @@ def _serialize_value(v):
 @router.get("/stats")
 async def loanbook_stats(db: AsyncIOMotorDatabase = Depends(get_db)):
     """Portfolio summary stats."""
-    today = date.today()
+    today = today_bogota()
 
     all_lbs = await db.loanbook.find().to_list(length=1000)
     total = len(all_lbs)
@@ -170,7 +171,7 @@ async def export_excel(
 
     xlsx_bytes = _generar_excel(loanbooks)
 
-    fecha_str = _date.today().isoformat()
+    fecha_str = today_bogota().isoformat()
     filename  = f"portafolio_roddos_{fecha_str}.xlsx"
 
     return StreamingResponse(
@@ -205,7 +206,7 @@ async def export_loan_tape_excel(
     """
     from services.loanbook.loan_tape_service import generar_loan_tape
 
-    fecha = fecha_corte or date.today()
+    fecha = fecha_corte or today_bogota()
 
     loanbooks = await db.loanbook.find({}).to_list(length=5000)
 
@@ -276,7 +277,7 @@ async def generar_cronogramas_todos(
             )
             await db.loanbook.update_one(
                 {"_id": lb["_id"]},
-                {"$set": {"cuotas": nuevas_cuotas, "updated_at": datetime.utcnow().isoformat()}},
+                {"$set": {"cuotas": nuevas_cuotas, "updated_at": now_iso_bogota().isoformat()}},
             )
             procesados += 1
         except Exception as e:
@@ -343,7 +344,7 @@ async def listar_loanbooks(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """List all loanbooks with computed fields."""
-    today = date.today()
+    today = today_bogota()
     filtro: dict = {}
     if estado:
         filtro["estado"] = estado
@@ -399,7 +400,7 @@ async def get_loanbook(
       - loanbook_id (e.g. 'LB-2026-0026'), for any tipo_producto including
         comparendo/licencia which have no VIN.
     """
-    today = date.today()
+    today = today_bogota()
 
     # Try loanbook_id first (disambiguates when id looks like LB-XXXX)
     lb = None
@@ -805,7 +806,7 @@ async def registrar_pago_manual(
         raise HTTPException(status_code=400, detail=f"metodo_pago inválido. Use: {sorted(METODOS_PAGO)}")
 
     lb = await _find_lb_by_identifier(db, identifier)
-    today = date.today()
+    today = today_bogota()
     fecha_pago_str = body.fecha_pago or today.isoformat()
     try:
         fecha_pago = date.fromisoformat(fecha_pago_str)
@@ -988,7 +989,7 @@ async def registrar_pago_inicial(
     if metodo not in METODOS_PAGO:
         raise HTTPException(status_code=400, detail=f"metodo_pago inválido. Use: {sorted(METODOS_PAGO)}")
 
-    fecha_pago_str = body.fecha_pago or date.today().isoformat()
+    fecha_pago_str = body.fecha_pago or today_bogota().isoformat()
 
     await db.loanbook.update_one(
         {"loanbook_id": lb["loanbook_id"]},
@@ -1043,7 +1044,7 @@ async def registrar_entrega(
             detail=f"No aplicable en estado '{lb.get('estado')}'",
         )
 
-    today = date.today()
+    today = today_bogota()
     fecha_entrega_str = body.fecha_entrega or today.isoformat()
     try:
         fecha_entrega = date.fromisoformat(fecha_entrega_str)
@@ -1367,7 +1368,7 @@ async def put_pago(
             detail=f"No se puede registrar pago en estado '{lb.get('estado')}'",
         )
 
-    today = date.today()
+    today = today_bogota()
     fecha_pago_str = body.fecha_pago or today.isoformat()
     try:
         fecha_pago = date.fromisoformat(fecha_pago_str)
@@ -1617,7 +1618,7 @@ async def generar_cronograma_endpoint(
 
     await db.loanbook.update_one(
         {"_id": lb["_id"]},
-        {"$set": {"cuotas": nuevas_cuotas, "updated_at": datetime.utcnow().isoformat()}},
+        {"$set": {"cuotas": nuevas_cuotas, "updated_at": now_iso_bogota().isoformat()}},
     )
 
     return {"ok": True, "loanbook_id": lb["loanbook_id"], "cuotas_generadas": len(nuevas_cuotas)}
@@ -1666,7 +1667,7 @@ async def editar_loanbook(
     if not lb:
         raise HTTPException(status_code=404, detail=f"Loanbook '{codigo}' no encontrado")
 
-    campos_filtrados["updated_at"] = datetime.utcnow().isoformat()
+    campos_filtrados["updated_at"] = now_iso_bogota().isoformat()
 
     result = await db.loanbook.update_one(
         {"_id": lb["_id"]},
@@ -1768,11 +1769,11 @@ async def subir_comprobante(
                     "filename": file.filename,
                     "content_type": file.content_type,
                     "data_b64": comprobante_b64,
-                    "uploaded_at": datetime.utcnow().isoformat(),
+                    "uploaded_at": now_iso_bogota().isoformat(),
                     "uploaded_by": user_id,
                     "size_bytes": len(contenido),
                 },
-                "updated_at": datetime.utcnow().isoformat(),
+                "updated_at": now_iso_bogota().isoformat(),
             }
         },
     )

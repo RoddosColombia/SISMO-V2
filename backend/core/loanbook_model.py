@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, timedelta
+from core.datetime_utils import now_bogota, today_bogota, now_iso_bogota
 from typing import Any
 
 # ═══════════════════════════════════════════
@@ -328,7 +329,7 @@ def crear_loanbook(
         "anzi_pct": plan.get("anzi_pct", 0.02),
         "fecha_entrega": fecha_entrega.isoformat(),
         "fecha_primer_pago": fecha_primer_pago.isoformat() if fecha_primer_pago else None,
-        "fecha_creacion": date.today().isoformat(),
+        "fecha_creacion": today_bogota().isoformat(),
     }
 
 

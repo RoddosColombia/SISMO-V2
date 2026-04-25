@@ -20,6 +20,7 @@ se pueden unificar en un solo módulo de constantes de negocio.
 
 import copy
 from datetime import date
+from core.datetime_utils import now_bogota, today_bogota, now_iso_bogota
 
 from core.loanbook_model import calcular_dpd, estado_from_dpd
 from services.loanbook.reglas_negocio import get_num_cuotas
@@ -129,7 +130,7 @@ def recalcular_loanbook(lb: dict, *, hoy: date | None = None) -> dict:
 
     Parámetros:
         lb:   Documento loanbook (sin _id de MongoDB).
-        hoy:  Fecha de referencia (default: date.today()). Inyectable para tests.
+        hoy:  Fecha de referencia (default: today_bogota()). Inyectable para tests.
 
     Campos recalculados:
         num_cuotas     ← PLANES_RODDOS[plan_codigo] × MULTIPLICADOR_TOTAL_CUOTAS[modalidad]
@@ -141,7 +142,7 @@ def recalcular_loanbook(lb: dict, *, hoy: date | None = None) -> dict:
         plan.total_cuotas ← sincronizado con num_cuotas si existe subdoc plan
     """
     if hoy is None:
-        hoy = date.today()
+        hoy = today_bogota()
 
     lb = copy.deepcopy(lb)
 

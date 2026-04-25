@@ -13,6 +13,7 @@ They use pure domain logic from loanbook_model.py and write to MongoDB.
 import logging
 import uuid
 from datetime import date, datetime, timezone
+from core.datetime_utils import now_bogota, today_bogota, now_iso_bogota
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from core.event_handlers import on_event
@@ -38,7 +39,7 @@ logger = logging.getLogger("datakeeper.loanbook")
 
 async def _next_loanbook_id(db: AsyncIOMotorDatabase) -> str:
     """Generate LB-YYYY-NNN next sequential id."""
-    year = date.today().year
+    year = today_bogota().year
     prefix = f"LB-{year}-"
     last = await db.loanbook.find(
         {"loanbook_id": {"$regex": f"^{prefix}"}}
@@ -98,7 +99,7 @@ async def handle_factura_venta_creada(event: dict, db: AsyncIOMotorDatabase):
     modo_promocion = bool(datos.get("modo_promocion", False))
     alegra_factura_id = datos.get("alegra_id") or event.get("alegra_id")
     alegra_factura_number = datos.get("alegra_invoice_number")
-    fecha_factura = datos.get("fecha") or date.today().isoformat()
+    fecha_factura = datos.get("fecha") or today_bogota().isoformat()
     rubros = datos.get("rubros") or {}
     valor_factura = int(datos.get("valor_factura") or 0)
 
