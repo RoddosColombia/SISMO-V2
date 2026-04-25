@@ -22,6 +22,7 @@ from routers.cartera_legacy import router as cartera_legacy_router
 from routers.cierres import router as cierres_router
 from routers.it_sismo import router as it_sismo_router
 from routers.informes import router as informes_router
+from routers.radar import router as radar_router
 
 app = FastAPI(title="SISMO V2", version="0.1.0", lifespan=lifespan)
 
@@ -52,6 +53,7 @@ app.include_router(cartera_legacy_router)
 app.include_router(cierres_router)
 app.include_router(it_sismo_router, prefix="/api/it", tags=["it"])
 app.include_router(informes_router)
+app.include_router(radar_router)
 
 
 @app.get("/health")

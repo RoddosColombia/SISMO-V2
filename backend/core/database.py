@@ -14,6 +14,7 @@ _processor_task: asyncio.Task | None = None
 _alegra_sync_task: asyncio.Task | None = None
 _dpd_scheduler_task: asyncio.Task | None = None
 _informes_scheduler_task: asyncio.Task | None = None
+_radar_scheduler_task: asyncio.Task | None = None
 
 
 async def init_db() -> None:
@@ -41,7 +42,7 @@ def get_processor():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _processor, _processor_task, _alegra_sync_task, _informes_scheduler_task
+    global _processor, _processor_task, _alegra_sync_task, _informes_scheduler_task, _radar_scheduler_task
 
     await init_db()
     db = await get_db()
@@ -98,13 +99,21 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Informes scheduler failed to start: {e}")
 
+    # ── RADAR scheduler — miércoles 08:00 AM America/Bogotá ───────────
+    try:
+        from agents.radar.alertas import run_radar_scheduler
+        _radar_scheduler_task = asyncio.create_task(run_radar_scheduler(db))
+        logger.info("RADAR scheduler started (runs Wednesdays 08:00 AM Bogota)")
+    except Exception as e:
+        logger.error(f"RADAR scheduler failed to start: {e}")
+
     yield
 
     # ── Shutdown ───────────────────────────────────────────────────────
     if _processor:
         await _processor.stop()
 
-    for task in (_processor_task, _alegra_sync_task, _dpd_scheduler_task, _informes_scheduler_task):
+    for task in (_processor_task, _alegra_sync_task, _dpd_scheduler_task, _informes_scheduler_task, _radar_scheduler_task):
         if task:
             task.cancel()
             try:

@@ -89,6 +89,18 @@ SISMO-V2/
 └── CLAUDE.md                     <- este archivo
 ```
 
+## RADAR — Alertas de cobranza WhatsApp
+
+- **Proveedor:** Mercately (`services/mercately/client.py`)
+- **Scheduler:** miércoles 08:00 AM `America/Bogota` — ley colombiana Ley 2300/2023
+- **Templates Mercately:**
+  - `MERCATELY_TEMPLATE_COBRO_ID`: 3 params — `[nombre_corto, monto_formato, fecha_ddmmm]`
+  - `MERCATELY_TEMPLATE_MORA_ID`: 3 params — `[nombre_corto, dpd_str, mora_cop_formato]`
+- **dry_run=True** para testing/preview sin enviar mensajes reales
+- **Colección audit:** `radar_alertas` — un doc por envío con estado (enviado/error/skip_*)
+- **Endpoints:** `GET /api/radar/preview` (dry run) + `POST /api/radar/enviar` (real)
+- **Módulo:** `agents/radar/alertas.py` → función `enviar_alertas_cobro(db, dry_run)`
+
 ## Skill routing
 
 When the user's request matches an available skill, ALWAYS invoke it using the Skill
