@@ -99,7 +99,12 @@ async def loanbook_stats(db: AsyncIOMotorDatabase = Depends(get_db)):
         # Cartera viva: todo lo que no esté saldado/castigado, incluyendo
         # pendiente_entrega (son créditos reales esperando activación).
         activos += 1
-        cartera_total += lb.get("saldo_capital", 0) or lb.get("saldo_pendiente", 0)
+        if estado != "pendiente_entrega":
+            # cartera_total = saldo_capital + saldo_intereses (RDX y RODANTE)
+            cartera_total += (
+                (lb.get("saldo_capital", 0) or lb.get("saldo_pendiente", 0))
+                + (lb.get("saldo_intereses", 0) or 0)
+            )
 
         # Recaudo semanal: cuota_monto for semanal, cuota/2 for quincenal, cuota/4 for mensual
         # Solo considera créditos activados (pendiente_entrega aún no genera recaudo).
@@ -1095,11 +1100,18 @@ async def registrar_entrega(
         cat_plan = await db.catalogo_planes.find_one({"codigo": plan_codigo_lb})
         if cat_plan:
             capital_plan_val = cat_plan.get("capital_plan")
+    # Fallback RODANTE: capital_plan = monto_original del producto (repuesto/servicio)
+    if not capital_plan_val:
+        capital_plan_val = lb.get("monto_original") or (cuota_monto * num_cuotas) or 0
+
+    # cuota_estandar_plan: para RDX usa la del loanbook si existe; para RODANTE = cuota_periodica
+    cuota_std_val = lb.get("cuota_estandar_plan") or int(cuota_monto)
 
     from services.loanbook.reglas_negocio import calcular_saldos as _calcular_saldos
     if capital_plan_val and num_cuotas:
-        _s = _calcular_saldos(int(capital_plan_val), num_cuotas, int(cuota_monto), 0)
-        saldo_capital_init  = _s["saldo_capital"]
+        _s = _calcular_saldos(int(capital_plan_val), num_cuotas, int(cuota_monto), 0,
+                              cuota_estandar_plan=cuota_std_val)
+        saldo_capital_init   = _s["saldo_capital"]
         saldo_intereses_init = _s["saldo_intereses"]
     else:
         saldo_capital_init   = num_cuotas * cuota_monto
@@ -1114,10 +1126,11 @@ async def registrar_entrega(
         "cuotas": cuotas,
         "cuotas_pagadas": 0,
         "cuotas_total": len(cuotas),
-        "saldo_capital":   saldo_capital_init,
-        "saldo_pendiente": saldo_capital_init,
-        "saldo_intereses": saldo_intereses_init,
-        "capital_plan":    capital_plan_val or 0,
+        "saldo_capital":     saldo_capital_init,
+        "saldo_pendiente":   saldo_capital_init,
+        "saldo_intereses":   saldo_intereses_init,
+        "capital_plan":      capital_plan_val or 0,
+        "cuota_estandar_plan": cuota_std_val,
         "updated_at": now_iso_bogota(),
     }
     if body.dia_cobro_especial:
@@ -1330,10 +1343,17 @@ async def put_entrega(
         cat_plan2 = await db.catalogo_planes.find_one({"codigo": plan_codigo_lb2})
         if cat_plan2:
             capital_plan_val2 = cat_plan2.get("capital_plan")
+    # Fallback RODANTE: capital_plan = monto_original del producto (repuesto/servicio)
+    if not capital_plan_val2:
+        capital_plan_val2 = lb.get("monto_original") or (cuota_monto * num_cuotas) or 0
+
+    # cuota_estandar_plan: para RDX usa la del loanbook si existe; para RODANTE = cuota_periodica
+    cuota_std_val2 = lb.get("cuota_estandar_plan") or int(cuota_monto)
 
     from services.loanbook.reglas_negocio import calcular_saldos as _calcular_saldos2
     if capital_plan_val2 and num_cuotas:
-        _s2 = _calcular_saldos2(int(capital_plan_val2), num_cuotas, int(cuota_monto), 0)
+        _s2 = _calcular_saldos2(int(capital_plan_val2), num_cuotas, int(cuota_monto), 0,
+                                cuota_estandar_plan=cuota_std_val2)
         saldo_capital_init2   = _s2["saldo_capital"]
         saldo_intereses_init2 = _s2["saldo_intereses"]
     else:
@@ -1349,10 +1369,11 @@ async def put_entrega(
             "cuotas": cuotas,
             "cuotas_pagadas": 0,
             "cuotas_total": len(cuotas),
-            "saldo_capital":   saldo_capital_init2,
-            "saldo_pendiente": saldo_capital_init2,
-            "saldo_intereses": saldo_intereses_init2,
-            "capital_plan":    capital_plan_val2 or 0,
+            "saldo_capital":       saldo_capital_init2,
+            "saldo_pendiente":     saldo_capital_init2,
+            "saldo_intereses":     saldo_intereses_init2,
+            "capital_plan":        capital_plan_val2 or 0,
+            "cuota_estandar_plan": cuota_std_val2,
             "updated_at": now_iso_bogota(),
         }},
     )

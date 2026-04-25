@@ -117,7 +117,12 @@ def _cuota_inicial(lb: dict) -> float:
 
 def _cuota_monto(lb: dict) -> float:
     """Valor por cuota en la modalidad del crédito (ya escalado)."""
-    return lb.get("cuota_monto") or lb.get("plan", {}).get("cuota_valor") or 0.0
+    return (
+        lb.get("cuota_periodica")
+        or lb.get("cuota_monto")
+        or lb.get("plan", {}).get("cuota_valor")
+        or 0.0
+    )
 
 
 # ─────────────────────── Función principal ────────────────────────────────────
@@ -186,8 +191,13 @@ def recalcular_loanbook(lb: dict, *, hoy: date | None = None) -> dict:
     capital_plan = lb.get("capital_plan")
     if capital_plan and num_cuotas_efectivo and cuota_monto:
         from services.loanbook.reglas_negocio import calcular_saldos
+        cuota_std = lb.get("cuota_estandar_plan") or int(cuota_monto)
         _s = calcular_saldos(
-            int(capital_plan), num_cuotas_efectivo, int(cuota_monto), cuotas_pagadas
+            int(capital_plan),
+            num_cuotas_efectivo,
+            int(cuota_monto),
+            cuotas_pagadas,
+            cuota_estandar_plan=cuota_std,
         )
         lb["saldo_capital"]   = _s["saldo_capital"]
         lb["saldo_intereses"] = _s["saldo_intereses"]
