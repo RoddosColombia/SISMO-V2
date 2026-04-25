@@ -107,6 +107,43 @@ async def handle_consultar_cartera(
         return {"success": False, "error": f"Error consultando cartera: {str(e)}"}
 
 
+async def handle_resumen_cartera(
+    tool_input: dict,
+    alegra: AlegraClient,
+    db: AsyncIOMotorDatabase,
+    event_bus: Any,
+    user_id: str,
+) -> dict:
+    """Resumen ejecutivo de cartera — suma saldo_capital + saldo_intereses de loanbooks activos."""
+    try:
+        lbs = await db.loanbook.find(
+            {"estado": {"$nin": ["Pagado", "pagado", "saldado", "castigado", "pendiente_entrega"]}}
+        ).to_list(None)
+
+        cartera_total = sum(
+            (lb.get("saldo_capital") or 0) + (lb.get("saldo_intereses") or 0)
+            for lb in lbs
+        )
+        en_mora = [lb for lb in lbs if (lb.get("dpd") or 0) > 0]
+        al_dia = [lb for lb in lbs if (lb.get("dpd") or 0) == 0]
+        recaudo = sum(lb.get("cuota_periodica") or 0 for lb in lbs)
+
+        return {
+            "success": True,
+            "cartera_total_cop": cartera_total,
+            "total_creditos_activos": len(lbs),
+            "creditos_al_dia": len(al_dia),
+            "creditos_en_mora": len(en_mora),
+            "recaudo_semanal_proyectado_cop": recaudo,
+            "mensaje": (
+                f"Cartera total activa: ${cartera_total:,.0f} COP. "
+                f"{len(lbs)} créditos activos — {len(al_dia)} al día, {len(en_mora)} en mora."
+            ),
+        }
+    except Exception as e:
+        return {"success": False, "error": f"Error calculando cartera: {str(e)}"}
+
+
 async def handle_consultar_catalogo_roddos(
     tool_input: dict,
     alegra: AlegraClient,

@@ -1,8 +1,8 @@
 """
-Tests for Contador tool definitions — 40 tools after Phase 8.
+Tests for Contador tool definitions — 41 tools after adding resumen_cartera.
 
 Rules verified:
-- CONTADOR_TOOLS has exactly 40 tools (38 previous + 2 compras Phase 8)
+- CONTADOR_TOOLS has exactly 41 tools (40 previous + 1 resumen_cartera)
 - Each tool has required Anthropic format fields
 - CFO/RADAR return empty tool lists; Loanbook has 11
 - No /journal-entries in any tool description
@@ -30,8 +30,8 @@ from agents.contador.tools import (
 # --- Tool count ---
 
 def test_contador_has_exactly_40_tools():
-    # Phase 8 added 2 compras tools
-    assert len(CONTADOR_TOOLS) == 40
+    # Phase 8 added 2 compras tools; resumen_cartera added for cartera summary
+    assert len(CONTADOR_TOOLS) == 41
 
 
 def test_compras_has_2_tools():
@@ -59,7 +59,7 @@ def test_consultas_alegra_has_8_tools():
 
 
 def test_cartera_has_2_tools():
-    assert len(_CARTERA) == 2
+    assert len(_CARTERA) == 3  # resumen_cartera + consultar_cartera + consultar_recaudo_semanal
 
 
 def test_nomina_impuestos_has_5_tools():
@@ -94,7 +94,7 @@ def test_all_tool_names_are_unique():
 
 def test_get_tools_for_contador():
     tools = get_tools_for_agent('contador')
-    assert len(tools) == 40
+    assert len(tools) == 41
 
 
 def test_get_tools_for_cfo_returns_empty():

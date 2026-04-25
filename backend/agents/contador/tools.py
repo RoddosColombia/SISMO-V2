@@ -615,6 +615,20 @@ _CONSULTAS_ALEGRA: list[dict] = [
 
 _CARTERA: list[dict] = [
     {
+        "name": "resumen_cartera",
+        "description": (
+            "Consulta el resumen ejecutivo de cartera activa de RODDOS desde MongoDB. "
+            "Retorna: cartera_total (saldo_capital + saldo_intereses de todos los loanbooks activos), "
+            "total_creditos, creditos_al_dia, creditos_en_mora, recaudo_semanal_proyectado, dpd_promedio. "
+            "Usar para preguntas como: '¿cuál es la cartera total?', '¿cuánto se debe?', "
+            "'¿cuántos créditos hay activos?', 'resumen de cartera'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
         "name": "consultar_cartera",
         "description": "Consulta loanbooks operativos desde MongoDB (dato operativo, no contable).",
         "input_schema": {

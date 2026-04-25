@@ -20,6 +20,7 @@ READ_ONLY_TOOLS = frozenset({
     "consultar_saldo_cxc",
     "consultar_facturas",
     "consultar_cartera",
+    "resumen_cartera",
     "consultar_iva_cuatrimestral",
     "consultar_recaudo_semanal",
     "consultar_inventario",
@@ -154,6 +155,7 @@ class ToolDispatcher:
             )
             from agents.contador.handlers.cartera import (
                 handle_consultar_cartera,
+                handle_resumen_cartera,
                 handle_consultar_catalogo_roddos,
             )
             self._handlers.update({
@@ -161,6 +163,7 @@ class ToolDispatcher:
                 "consultar_iva_cuatrimestral": handle_consultar_obligaciones_tributarias,
                 "provisionar_prestaciones": handle_provisionar_prestaciones,
                 "consultar_cartera": handle_consultar_cartera,
+                "resumen_cartera": handle_resumen_cartera,
                 "catalogo_cuentas_roddos": handle_consultar_catalogo_roddos,
                 "consultar_calendario_tributario": handle_consultar_calendario_tributario,
             })
