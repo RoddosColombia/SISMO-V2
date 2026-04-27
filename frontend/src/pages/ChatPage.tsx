@@ -56,12 +56,25 @@ export default function ChatPage() {
   function handleImageSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
+
+    // PDF: route to PDF handler
+    if (file.type === 'application/pdf') {
+      if (file.size > 20 * 1024 * 1024) {
+        setMessages(prev => [...prev, { role: 'system', content: 'Error: PDF muy pesado, máximo 20MB' }])
+        e.target.value = ''
+        return
+      }
+      setAttachedPdf(file)
+      e.target.value = ''
+      return
+    }
+
     if (file.size > 5 * 1024 * 1024) {
       setMessages(prev => [...prev, { role: 'system', content: 'Error: Imagen muy pesada, maximo 5MB' }])
       return
     }
     if (!file.type.startsWith('image/')) {
-      setMessages(prev => [...prev, { role: 'system', content: 'Error: Solo se aceptan imagenes (JPEG, PNG, WebP)' }])
+      setMessages(prev => [...prev, { role: 'system', content: 'Error: Solo se aceptan imágenes (JPEG, PNG, WebP) o documentos PDF' }])
       return
     }
     const reader = new FileReader()
@@ -358,7 +371,7 @@ export default function ChatPage() {
             type="file"
             ref={fileInputRef}
             onChange={handleImageSelect}
-            accept="image/jpeg,image/png,image/webp"
+            accept="image/jpeg,image/png,image/webp,application/pdf"
             className="hidden"
           />
           <input
