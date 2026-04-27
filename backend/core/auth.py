@@ -135,6 +135,56 @@ def get_api_key_dep():
     return _dep
 
 
+# Top-level singleton — ready to use as Depends(get_api_key) in any router.
+# Equivalent to get_api_key_dep() but importable as a plain async function.
+from fastapi import Header as _HeaderTop
+
+async def get_api_key(
+    x_api_key: str | None = _HeaderTop(default=None),
+    db: "AsyncIOMotorDatabase" = Depends(get_db),
+) -> dict:
+    """FastAPI dependency — valida X-API-Key header contra colección api_keys.
+
+    Uso directo:
+        from core.auth import get_api_key
+
+        @router.get("/ruta")
+        async def mi_endpoint(api_key: dict = Depends(get_api_key)):
+            ...
+    """
+    from core.datetime_utils import now_iso_bogota as _now_iso
+
+    if not x_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Se requiere X-API-Key header",
+        )
+
+    key_doc = await db.api_keys.find_one({"key": x_api_key, "active": True})
+    if not key_doc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API key inválida o inactiva",
+        )
+
+    if key_doc.get("scope") != "read_only":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Esta API key no tiene permisos suficientes",
+        )
+
+    try:
+        await db.api_keys.update_one(
+            {"_id": key_doc["_id"]},
+            {"$set": {"last_used_at": _now_iso()}},
+        )
+    except Exception:
+        pass
+
+    key_doc.pop("_id", None)
+    return key_doc
+
+
 # ═══════════════════════════════════════════
 # Sliding session helpers (B7-UX)
 # ═══════════════════════════════════════════

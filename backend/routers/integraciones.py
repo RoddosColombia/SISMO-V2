@@ -5,9 +5,10 @@ Autenticación: X-API-Key header con key en colección api_keys (scope=read_only
 NO requiere JWT — diseñado para consumo server-to-server (ARGOS, etc.).
 
 Endpoints:
-  GET /api/integraciones/inventario        — Lista motos sin PII de clientes
-  GET /api/integraciones/cartera/resumen   — KPIs de cartera activa
-  GET /api/integraciones/loanbook/stats    — Alias público de /api/loanbook/stats
+  GET /api/integraciones/health               — health check público (sin API key)
+  GET /api/integraciones/repuestos            — catálogo de repuestos (EL MÁS CRÍTICO)
+  GET /api/integraciones/motos/inventario     — lista motos sin PII de clientes
+  GET /api/integraciones/cartera/resumen      — KPIs de cartera activa
 """
 
 import logging
@@ -15,28 +16,87 @@ import logging
 from fastapi import APIRouter, Depends
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from core.auth import get_api_key_dep
+from core.auth import get_api_key
 from core.database import get_db
-from core.datetime_utils import today_bogota
+from core.datetime_utils import today_bogota, now_iso_bogota
 
 logger = logging.getLogger("routers.integraciones")
 
 router = APIRouter(prefix="/api/integraciones", tags=["integraciones"])
 
-# Dependency singleton — creado una sola vez al importar el módulo
-_api_key_auth = get_api_key_dep()
+
+# ─────────────────────── Health (público, sin API key) ───────────────────────
+
+@router.get("/health")
+async def integraciones_health():
+    """Health check público — no requiere API key.
+
+    Permite a sistemas externos verificar que la API está viva antes de hacer
+    llamadas autenticadas.
+    """
+    return {
+        "status": "ok",
+        "fuente": "sismo_v2",
+        "timestamp": now_iso_bogota(),
+    }
 
 
-# ─────────────────────── Inventario ──────────────────────────────────────────
+# ─────────────────────── Repuestos (EL MÁS CRÍTICO) ─────────────────────────
 
-@router.get("/inventario")
-async def integraciones_inventario(
-    api_key: dict = Depends(_api_key_auth),
+@router.get("/repuestos")
+async def integraciones_repuestos(
+    api_key: dict = Depends(get_api_key),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Catálogo completo de repuestos con stock y precios.
+
+    Devuelve: sku, nombre, categoria, marca_compatible, precio_venta,
+              precio_costo, stock, estado, proveedor, ultima_actualizacion.
+    Sin PII. Requiere X-API-Key con scope=read_only.
+
+    ARGOS usa este endpoint para detectar qué repuestos necesita reponer
+    y comparar precios contra el mercado.
+    """
+    docs = await db.inventario_repuestos.find({}).to_list(length=5000)
+
+    repuestos = []
+    disponibles = 0
+    for d in docs:
+        estado = d.get("estado") or "desconocido"
+        if estado == "disponible":
+            disponibles += 1
+        repuestos.append({
+            "sku":                 d.get("sku") or "",
+            "nombre":              d.get("nombre") or "",
+            "categoria":           d.get("categoria") or "",
+            "marca_compatible":    d.get("marca_compatible") or "",
+            "precio_venta":        d.get("precio_venta") or 0,
+            "precio_costo":        d.get("precio_costo") or 0,
+            "stock":               d.get("stock") or 0,
+            "estado":              estado,
+            "proveedor":           d.get("proveedor") or "",
+            "ultima_actualizacion": d.get("ultima_actualizacion") or "",
+        })
+
+    return {
+        "total":       len(repuestos),
+        "disponibles": disponibles,
+        "repuestos":   repuestos,
+        "fuente":      "sismo_v2",
+        "timestamp":   now_iso_bogota(),
+    }
+
+
+# ─────────────────────── Motos — inventario ──────────────────────────────────
+
+@router.get("/motos/inventario")
+async def integraciones_motos_inventario(
+    api_key: dict = Depends(get_api_key),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Lista motos en inventario con estado.
 
-    Devuelve: vin, modelo, estado, color — sin PII de clientes.
+    Devuelve: vin, modelo, estado, color, placa — sin PII de clientes.
     Requiere X-API-Key con scope=read_only.
     """
     motos = await db.inventario_motos.find({}).to_list(length=2000)
@@ -52,10 +112,10 @@ async def integraciones_inventario(
         })
 
     return {
-        "total":     len(resultado),
+        "total":      len(resultado),
         "inventario": resultado,
-        "fuente":    "sismo_v2",
-        "fecha":     today_bogota().isoformat(),
+        "fuente":     "sismo_v2",
+        "fecha":      today_bogota().isoformat(),
     }
 
 
@@ -63,7 +123,7 @@ async def integraciones_inventario(
 
 @router.get("/cartera/resumen")
 async def integraciones_cartera_resumen(
-    api_key: dict = Depends(_api_key_auth),
+    api_key: dict = Depends(get_api_key),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Resumen ejecutivo de la cartera activa.
@@ -111,69 +171,4 @@ async def integraciones_cartera_resumen(
         "recaudo_semanal_proyectado_cop": round(recaudo_semanal),
         "fuente": "sismo_v2",
         "fecha":  today_bogota().isoformat(),
-    }
-
-
-# ─────────────────────── Loanbook stats ──────────────────────────────────────
-
-@router.get("/loanbook/stats")
-async def integraciones_loanbook_stats(
-    api_key: dict = Depends(_api_key_auth),
-    db: AsyncIOMotorDatabase = Depends(get_db),
-):
-    """Alias público de GET /api/loanbook/stats.
-
-    Devuelve KPIs del portafolio: total, activos, saldados, cartera, recaudo,
-    en_mora. Sin datos de clientes ni PII.
-    Requiere X-API-Key con scope=read_only.
-    """
-    hoy = today_bogota()
-
-    all_lbs = await db.loanbook.find().to_list(length=1000)
-    total           = len(all_lbs)
-    activos         = 0
-    saldados        = 0
-    pendiente_entrega = 0
-    cartera_total   = 0
-    recaudo_semanal = 0
-    en_mora         = 0
-
-    from core.loanbook_model import calcular_dpd
-
-    for lb in all_lbs:
-        estado = lb.get("estado", "")
-        if estado in ("saldado", "castigado"):
-            saldados += 1
-            continue
-        if estado == "pendiente_entrega":
-            pendiente_entrega += 1
-        activos += 1
-        if estado != "pendiente_entrega":
-            cartera_total += (
-                (lb.get("saldo_capital") or lb.get("saldo_pendiente") or 0)
-                + (lb.get("saldo_intereses") or 0)
-            )
-            modalidad = lb.get("modalidad", "semanal")
-            cuota     = lb.get("cuota_monto") or 0
-            if modalidad == "semanal":
-                recaudo_semanal += cuota
-            elif modalidad == "quincenal":
-                recaudo_semanal += cuota / 2
-            elif modalidad == "mensual":
-                recaudo_semanal += cuota / 4
-
-            cuotas = lb.get("cuotas", [])
-            if calcular_dpd(cuotas, hoy) > 0:
-                en_mora += 1
-
-    return {
-        "total":             total,
-        "activos":           activos,
-        "saldados":          saldados,
-        "pendiente_entrega": pendiente_entrega,
-        "cartera_total":     round(cartera_total),
-        "recaudo_semanal":   round(recaudo_semanal),
-        "en_mora":           en_mora,
-        "fuente":            "sismo_v2",
-        "fecha":             hoy.isoformat(),
     }
