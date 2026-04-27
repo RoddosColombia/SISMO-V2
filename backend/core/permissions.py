@@ -9,7 +9,9 @@ WRITE_PERMISSIONS: dict[str, dict[str, list[str]]] = {
         'mongodb': ['cartera_pagos', 'cxc_socios', 'cxc_clientes',
                     'plan_cuentas_roddos', 'inventario_motos', 'roddos_events'],
         'alegra': ['POST /journals', 'POST /invoices', 'POST /payments',
-                   'DELETE /journals', 'GET /categories', 'GET /journals'],
+                   'POST /items', 'POST /bills',
+                   'DELETE /journals', 'GET /categories', 'GET /journals',
+                   'GET /items', 'GET /bills'],
     },
     'cfo': {
         'mongodb': ['cfo_informes', 'cfo_alertas', 'roddos_events'],

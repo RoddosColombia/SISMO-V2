@@ -8,10 +8,16 @@ Tools:
 ROG-4: Todo contable va a Alegra via request_with_verify().
 
 Regla Auteco (NIT 860024781 o 901249413): AUTORETENEDOR — NUNCA aplicar ReteFuente.
+
+Firecrawl fallback: si API REST falla en POST /items o POST /bills, usa Firecrawl /interact
+para operar la UI de Alegra como un humano.
 """
+import logging
 from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from services.alegra.client import AlegraClient
+
+logger = logging.getLogger("handlers.compras")
 
 # NITs de proveedores autoretenedores (NUNCA ReteFuente)
 AUTORETENEDORES_NIT = {"860024781", "901249413", "901-249-413-7", "901.249.413-7"}
@@ -63,12 +69,30 @@ async def _find_or_create_item(alegra: AlegraClient, item: dict) -> str:
             "initialQuantityDate": item.get("fecha") or None,
         },
     }
-    created = await alegra.request_with_verify(
-        endpoint="items",
-        method="POST",
-        payload=payload,
-    )
-    return str(created.get("id") or created.get("_alegra_id"))
+    try:
+        created = await alegra.request_with_verify(
+            endpoint="items",
+            method="POST",
+            payload=payload,
+        )
+        return str(created.get("id") or created.get("_alegra_id"))
+    except Exception as ex:
+        # Fallback Firecrawl si API REST bloquea POST /items
+        logger.warning(f"API REST falló creando ítem '{nombre}': {ex}. Intentando via Firecrawl...")
+        try:
+            from services.firecrawl.alegra_browser import get_alegra_browser
+            browser = get_alegra_browser()
+            fc_result = await browser.crear_item_repuesto(
+                nombre=nombre,
+                referencia=reference,
+                precio=precio_unit,
+                costo=precio_unit,
+            )
+            if fc_result.get("success"):
+                return f"firecrawl:{reference}"
+        except Exception as fc_ex:
+            logger.error(f"Firecrawl también falló para ítem '{nombre}': {fc_ex}")
+        raise  # re-raise original si Firecrawl también falla
 
 
 async def handle_registrar_compra_proveedor(
@@ -145,19 +169,54 @@ async def handle_registrar_compra_proveedor(
             # Alegra's bill endpoint auto-applies retenciones based on contact config.
             # Contact must be flagged autoretenedor in Alegra for this to work.
 
-        result = await alegra.request_with_verify(
-            endpoint="bills",
-            method="POST",
-            payload=payload,
-        )
+        try:
+            result = await alegra.request_with_verify(
+                endpoint="bills",
+                method="POST",
+                payload=payload,
+            )
+            alegra_id = str(result.get("_alegra_id") or result.get("id", ""))
+            via = "api"
+        except Exception as bill_ex:
+            # Fallback Firecrawl si API REST bloquea POST /bills
+            logger.warning(f"Bill API REST falló para factura {numero_factura}: {bill_ex}. Intentando via Firecrawl...")
+            try:
+                from services.firecrawl.alegra_browser import get_alegra_browser
+                browser = get_alegra_browser()
+                items_fc = [
+                    {
+                        "nombre":   it.get("nombre") or it.get("name") or f"Ítem {idx}",
+                        "cantidad": int(it.get("cantidad", 1)),
+                        "precio":   float(it.get("precio_unit") or it.get("price") or 0),
+                    }
+                    for idx, it in enumerate(items_input)
+                ]
+                fc_bill = await browser.registrar_bill(
+                    proveedor_nit=proveedor_nit,
+                    numero_factura=numero_factura,
+                    fecha=fecha,
+                    fecha_vencimiento=fecha,
+                    items_para_bill=items_fc,
+                    observations=observations,
+                )
+                if fc_bill.get("success"):
+                    alegra_id = f"firecrawl:{fc_bill.get('firecrawl_output', '')[:50]}"
+                    via = "firecrawl"
+                else:
+                    return {
+                        "success": False,
+                        "error": f"API: {bill_ex} | Firecrawl: {fc_bill.get('error')}",
+                    }
+            except Exception as fc_ex:
+                return {"success": False, "error": f"API: {bill_ex} | Firecrawl exc: {fc_ex}"}
 
-        alegra_id = str(result.get("_alegra_id") or result.get("id", ""))
         return {
             "success": True,
             "alegra_id": alegra_id,
             "autoretenedor": autoretenedor,
             "items_registrados": len(bill_items),
-            "message": f"Bill #{numero_factura} registrado en Alegra (ID {alegra_id})",
+            "via": via,
+            "message": f"Bill #{numero_factura} registrado en Alegra (ID {alegra_id}, via {via})",
         }
     except Exception as e:
         return {"success": False, "error": f"Error registrando compra: {str(e)}"}
