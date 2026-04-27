@@ -372,6 +372,27 @@ _CONCILIACION: list[dict] = [
 
 _FACTURACION: list[dict] = [
     {
+        "name": "consultar_cuentas_inventario",
+        "description": (
+            "Retorna las cuentas contables REALES de RODDOS para registrar ítems en Alegra. "
+            "Usar SIEMPRE antes de crear cualquier ítem (moto o repuesto) para incluir "
+            "las cuentas correctas en el payload. Sin estas cuentas Alegra rechaza con code 1008. "
+            "Uso: cuando el agente va a crear un ítem en Alegra y necesita saber qué cuentas poner. "
+            "Retorna account, inventoryAccount y costsAccount según el tipo de ítem."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["tipo_item"],
+            "properties": {
+                "tipo_item": {
+                    "type": "string",
+                    "enum": ["motos", "repuestos"],
+                    "description": "Tipo de ítem: 'motos' para TVS Raider/Sport, 'repuestos' para partes y accesorios",
+                },
+            },
+        },
+    },
+    {
         "name": "crear_item_inventario",
         "description": (
             "Crea un ítem (moto o repuesto) en Alegra via POST /items para que pueda ser "
@@ -1008,7 +1029,7 @@ _COMPRAS: list[dict] = [
 ]
 
 # ---------------------------------------------------------------------------
-# LISTA COMPLETA: 42 herramientas (41 previas + 1 crear_item_inventario)
+# LISTA COMPLETA: 44 herramientas (43 previas + 1 consultar_cuentas_inventario)
 # ---------------------------------------------------------------------------
 
 CONTADOR_TOOLS: list[dict] = (

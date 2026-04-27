@@ -64,6 +64,21 @@ Valores FIJOS. NUNCA adivinar ni cambiar. Alegra recibe precio SIN IVA.
 Regla: `base_alegra = precio_con_iva / 1.19` (2 decimales)
 Fuente: Andrés Sanjuan CEO RODDOS, 27-abril-2026.
 
+## CUENTAS CONTABLES DE INVENTARIO (verificadas 27-abril-2026)
+
+Incluir SIEMPRE en payload POST /items para Alegra (campos `account`, `inventoryAccount`, `costsAccount`).
+Sin estas cuentas, Alegra rechaza con error code 1008 "cuenta contable no encontrada".
+
+MOTOS (category_id 1 y 2):
+  account.id          = "41350501"  → Ingresos ventas motos
+  inventoryAccount.id = "14350101"  → Inventario motos (activo)
+  costsAccount.id     = "61350501"  → Costo de ventas motos
+
+REPUESTOS (category_id 5):
+  account.id          = "41350601"  → Ingresos ventas repuestos
+  inventoryAccount.id = "14350102"  → Inventario repuestos (activo)
+  costsAccount.id     = "61350601"  → Costo de ventas repuestos
+
 ## Cálculos financieros — regla de oro
 
 Todos los cálculos de `saldo_capital` y `saldo_intereses` deben usar **ÚNICAMENTE** la función `calcular_saldos()` de `backend/services/loanbook/reglas_negocio.py`. Nunca calcular estos valores inline en routers ni en otros servicios.

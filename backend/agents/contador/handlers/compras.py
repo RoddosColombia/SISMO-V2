@@ -62,6 +62,10 @@ async def _find_or_create_item(alegra: AlegraClient, item: dict) -> str:
         "type": "product",
         "itemCategory": {"id": REPUESTOS_CATEGORY_ID},
         "price": [{"price": precio_unit, "idPriceList": None}] if precio_unit else [],
+        # Cuentas contables OBLIGATORIAS para repuestos — sin ellas Alegra rechaza code 1008
+        "account":          {"id": "41350601"},  # Ingresos ventas repuestos
+        "inventoryAccount": {"id": "14350102"},  # Inventario repuestos (activo)
+        "costsAccount":     {"id": "61350601"},  # Costo de ventas repuestos
         "inventory": {
             "unit": "unit",
             "unitCost": precio_unit,

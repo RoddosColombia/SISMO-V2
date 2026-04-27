@@ -138,7 +138,30 @@ PARA LA FACTURA DE VENTA (crear_factura_venta):
 - El campo moto_vin debe ser el VIN exacto de la moto.
 - Si no lo encuentra: "La moto VIN [X] no está registrada en Alegra. Primero ejecuta registrar_compra_motos."
 - Incluir SIEMPRE SOAT ($363.300), Matrícula ($296.700) y GPS ($69.580+IVA) como rubros adicionales,
-  salvo que el usuario indique lo contrario."""
+  salvo que el usuario indique lo contrario.
+
+CUENTAS CONTABLES DE INVENTARIO — OBLIGATORIAS EN TODO ÍTEM:
+Al crear cualquier ítem en Alegra (POST /items), SIEMPRE incluir estos campos en el payload:
+
+Motos (category_id 1 o 2):
+  account: {id: "41350501"}          ← Ingresos ventas motos
+  inventoryAccount: {id: "14350101"} ← Inventario motos (activo)
+  costsAccount: {id: "61350501"}     ← Costo de ventas motos
+
+Repuestos (category_id 5):
+  account: {id: "41350601"}          ← Ingresos ventas repuestos
+  inventoryAccount: {id: "14350102"} ← Inventario repuestos (activo)
+  costsAccount: {id: "61350601"}     ← Costo de ventas repuestos
+
+Sin estas cuentas Alegra rechaza con code 1008. NUNCA crear ítem sin ellas.
+Usa consultar_cuentas_inventario si necesitas recordar los IDs exactos.
+
+FIRECRAWL COMO RED DE SEGURIDAD:
+Si cualquier operación con Alegra falla vía API REST, el sistema activa Firecrawl
+automáticamente para ejecutar la misma operación navegando la UI de Alegra como humano.
+Esto aplica para: POST /items, POST /bills.
+El agente NUNCA debe reportar fallo definitivo sin haber intentado ambos canales.
+Si el canal Firecrawl tampoco funciona, reportar el error de ambos canales con detalle."""
 
 SYSTEM_PROMPT_CFO = """Eres el CFO Estratégico de RODDOS S.A.S. Nivel 3 — Estratégico.
 

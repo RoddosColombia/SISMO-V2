@@ -28,6 +28,7 @@ READ_ONLY_TOOLS = frozenset({
     "consultar_bills",
     "catalogo_cuentas_roddos",
     "consultar_calendario_tributario",
+    "consultar_cuentas_inventario",
 })
 
 # Conciliation tools — implemented in Phase 3
@@ -136,6 +137,7 @@ class ToolDispatcher:
                 handle_consultar_facturas,
                 handle_anular_factura,
                 handle_crear_nota_credito,
+                handle_consultar_cuentas_inventario,
             )
             self._handlers.update({
                 "registrar_compra_motos": handle_registrar_compra_motos,
@@ -144,6 +146,7 @@ class ToolDispatcher:
                 "consultar_facturas": handle_consultar_facturas,
                 "anular_factura": handle_anular_factura,
                 "crear_nota_credito": handle_crear_nota_credito,
+                "consultar_cuentas_inventario": handle_consultar_cuentas_inventario,
             })
         except ImportError:
             pass

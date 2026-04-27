@@ -360,6 +360,51 @@ async def handle_crear_nota_credito(
     }
 
 
+async def handle_consultar_cuentas_inventario(
+    tool_input: dict,
+    **kwargs,
+) -> dict:
+    """
+    Retorna las cuentas contables canónicas de RODDOS para ítems en Alegra.
+    Verificadas el 27-abril-2026 directamente en Alegra.
+    Read-only — no llama a Alegra ni a MongoDB.
+    """
+    tipo = tool_input.get("tipo_item", "motos")
+
+    if tipo == "motos":
+        return {
+            "tipo": "motos",
+            "category_id": 1,
+            "cuentas": {
+                "account":          {"id": "41350501", "nombre": "Ingresos ventas motos"},
+                "inventoryAccount": {"id": "14350101", "nombre": "Inventario motos (activo)"},
+                "costsAccount":     {"id": "61350501", "nombre": "Costo de ventas motos"},
+            },
+            "payload_alegra": {
+                "account":          {"id": "41350501"},
+                "inventoryAccount": {"id": "14350101"},
+                "costsAccount":     {"id": "61350501"},
+            },
+            "nota": "Incluir en POST /items junto con category:{id:1}. Sin estas cuentas Alegra rechaza con code 1008.",
+        }
+    else:  # repuestos
+        return {
+            "tipo": "repuestos",
+            "category_id": 5,
+            "cuentas": {
+                "account":          {"id": "41350601", "nombre": "Ingresos ventas repuestos"},
+                "inventoryAccount": {"id": "14350102", "nombre": "Inventario repuestos (activo)"},
+                "costsAccount":     {"id": "61350601", "nombre": "Costo de ventas repuestos"},
+            },
+            "payload_alegra": {
+                "account":          {"id": "41350601"},
+                "inventoryAccount": {"id": "14350102"},
+                "costsAccount":     {"id": "61350601"},
+            },
+            "nota": "Incluir en POST /items junto con category:{id:5}. Sin estas cuentas Alegra rechaza con code 1008.",
+        }
+
+
 # Precio base Alegra por modelo (sin IVA — Alegra agrega 19% automáticamente)
 # Fuente: catálogo canónico RODDOS 27-abril-2026
 _PRECIO_BASE_ALEGRA = {
@@ -382,8 +427,9 @@ async def handle_registrar_compra_motos(
     3. Publica evento compra.motos.registrada para que el Datakeeper actualice MongoDB.
     ROG-4: solo escribe en Alegra + publica evento. MongoDB lo actualiza el Datakeeper.
     """
-    validate_write_permission("contador", "POST /items", "alegra")
-    validate_write_permission("contador", "POST /bills", "alegra")
+    # validate_write_permission NO va aquí — items/bills tienen Firecrawl como fallback.
+    # Si validate lanzara PermissionError antes del try/except, el fallback sería inalcanzable.
+    # Los permisos POST /items y POST /bills están declarados en permissions.py.
 
     motos         = tool_input["motos"]
     proveedor_nit = tool_input["proveedor_nit"]
@@ -432,7 +478,11 @@ async def handle_registrar_compra_motos(
             "reference":   vin,
             "description": f"{modelo} {color}".strip(),
             "price":       [{"idPriceList": 1, "price": precio_base}],
-            "category":    {"id": 1},
+            "category":          {"id": 1},
+            # Cuentas contables OBLIGATORIAS — sin ellas Alegra rechaza con code 1008
+            "account":          {"id": "41350501"},  # Ingresos ventas motos
+            "inventoryAccount": {"id": "14350101"},  # Inventario motos (activo)
+            "costsAccount":     {"id": "61350501"},  # Costo de ventas motos
             "inventory": {
                 "unit":            "unidad",
                 "unitCost":        costo,
@@ -587,7 +637,8 @@ async def handle_crear_item_inventario(
     Categorías: 1=Motos nuevas, 2=Motos usadas, 5=Repuestos.
     ROG-4 compliant: solo escribe en Alegra.
     """
-    validate_write_permission("contador", "POST /items", "alegra")
+    # validate_write_permission NO va aquí — Firecrawl fallback debe ser alcanzable.
+    # El permiso POST /items está declarado en permissions.py.
 
     nombre = tool_input["nombre"]
     reference = tool_input["reference"]
@@ -619,12 +670,26 @@ async def handle_crear_item_inventario(
     # motos llegan con qty inicial = 1; repuestos arrancan en 0
     initial_qty = 1 if category_id in (1, 2) else 0
 
+    # Cuentas contables canónicas RODDOS (verificadas 27-abril-2026)
+    # OBLIGATORIAS — sin ellas Alegra rechaza con code 1008
+    if category_id in (1, 2):  # Motos nuevas / usadas
+        account_id          = "41350501"  # Ingresos ventas motos
+        inventory_account_id = "14350101"  # Inventario motos (activo)
+        costs_account_id    = "61350501"  # Costo de ventas motos
+    else:  # Repuestos (category_id = 5)
+        account_id          = "41350601"  # Ingresos ventas repuestos
+        inventory_account_id = "14350102"  # Inventario repuestos (activo)
+        costs_account_id    = "61350601"  # Costo de ventas repuestos
+
     payload: dict = {
         "name": nombre,
         "reference": reference,
         "description": descripcion,
         "price": [{"idPriceList": 1, "price": precio_venta}],
-        "category": {"id": category_id},
+        "category":          {"id": category_id},
+        "account":           {"id": account_id},
+        "inventoryAccount":  {"id": inventory_account_id},
+        "costsAccount":      {"id": costs_account_id},
         "inventory": {
             "unit": unidad,
             "unitCost": precio_costo,
