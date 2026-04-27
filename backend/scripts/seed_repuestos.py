@@ -148,7 +148,7 @@ async def run():
             omitidos += 1
             continue
 
-        doc = {**rep, "ultima_actualizacion": ahora, "creado_en": ahora}
+        doc = {**rep, "referencia_sku": rep["sku"], "ultima_actualizacion": ahora, "creado_en": ahora}
         await db.inventario_repuestos.insert_one(doc)
         print(f"  INSERTADO: {rep['sku']} — {rep['nombre']}")
         insertados += 1
