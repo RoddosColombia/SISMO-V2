@@ -32,9 +32,11 @@ export default function ChatPage() {
   const [sessionId] = useState(() => crypto.randomUUID())
   const [imagePreview, setImagePreview] = useState<string | null>(null)
   const [imageData, setImageData] = useState<string | null>(null)
+  const [attachedPdf, setAttachedPdf] = useState<File | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const controllerRef = useRef<AbortController | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const pdfInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -72,17 +74,43 @@ export default function ChatPage() {
     e.target.value = ''  // Reset so same file can be re-selected
   }
 
-  function sendMessage() {
+  function handlePdfSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (file.size > 20 * 1024 * 1024) {
+      setMessages(prev => [...prev, { role: 'system', content: 'Error: PDF muy pesado, máximo 20MB' }])
+      e.target.value = ''
+      return
+    }
+    setAttachedPdf(file)
+    e.target.value = ''
+  }
+
+  async function sendMessage() {
     const text = input.trim()
-    if ((!text && !imageData) || streaming) return
+    if ((!text && !imageData && !attachedPdf) || streaming) return
 
     setInput('')
     const attachedImage = imageData
+    const pdfFile = attachedPdf
     setImagePreview(null)
     setImageData(null)
+    setAttachedPdf(null)
+
+    // Leer PDF como base64 si hay uno adjunto
+    let pdfBase64: string | null = null
+    if (pdfFile) {
+      const buffer = await pdfFile.arrayBuffer()
+      const bytes = new Uint8Array(buffer)
+      let binary = ''
+      bytes.forEach(b => { binary += String.fromCharCode(b) })
+      pdfBase64 = btoa(binary)
+    }
 
     if (attachedImage) {
       setMessages((prev) => [...prev, { role: 'user', content: text || 'Procesar comprobante', imageUrl: attachedImage }])
+    } else if (pdfFile) {
+      setMessages((prev) => [...prev, { role: 'user', content: text || `📄 ${pdfFile.name}` }])
     } else {
       setMessages((prev) => [...prev, { role: 'user', content: text }])
     }
@@ -91,7 +119,7 @@ export default function ChatPage() {
     let assistantContent = ''
 
     controllerRef.current = chatSSE(
-      text || 'Procesar este comprobante',
+      text || (pdfFile ? `Analizar factura ${pdfFile.name}` : 'Procesar este comprobante'),
       sessionId,
       (event) => {
         if (event.type === 'text') {
@@ -159,6 +187,7 @@ export default function ChatPage() {
       },
       attachedImage,
       agentType,
+      pdfBase64,
     )
   }
 
@@ -288,6 +317,18 @@ export default function ChatPage() {
             </button>
           </div>
         )}
+        {attachedPdf && (
+          <div className="mb-2 flex items-center gap-2 px-3 py-1.5 bg-surface-container-low rounded-md w-fit">
+            <span className="text-xs text-on-surface-variant">📄</span>
+            <span className="text-xs text-on-surface truncate max-w-xs">{attachedPdf.name}</span>
+            <button
+              onClick={() => setAttachedPdf(null)}
+              className="text-xs text-on-surface-variant hover:text-error ml-1"
+            >
+              ×
+            </button>
+          </div>
+        )}
         {recoveredToast && (
           <div className="mb-2 p-2 text-xs bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-md">
             Recuperamos tu último mensaje
@@ -320,6 +361,13 @@ export default function ChatPage() {
             accept="image/jpeg,image/png,image/webp"
             className="hidden"
           />
+          <input
+            type="file"
+            ref={pdfInputRef}
+            onChange={handlePdfSelect}
+            accept="application/pdf"
+            className="hidden"
+          />
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={streaming}
@@ -328,6 +376,16 @@ export default function ChatPage() {
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13" />
+            </svg>
+          </button>
+          <button
+            onClick={() => pdfInputRef.current?.click()}
+            disabled={streaming}
+            className="px-3 py-2 text-on-surface-variant hover:text-on-surface disabled:opacity-30 transition-colors"
+            title="Adjuntar factura PDF"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
             </svg>
           </button>
           <input
@@ -341,7 +399,7 @@ export default function ChatPage() {
           />
           <button
             onClick={sendMessage}
-            disabled={streaming || (!input.trim() && !imageData)}
+            disabled={streaming || (!input.trim() && !imageData && !attachedPdf)}
             className="px-5 py-2 bg-primary text-white text-sm font-medium rounded-md hover:brightness-110 disabled:opacity-30 transition-all"
           >
             Enviar

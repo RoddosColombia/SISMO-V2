@@ -177,6 +177,7 @@ export function chatSSE(
   onError: (err: Error) => void,
   imagen?: string | null,
   agentType?: string | null,
+  pdfBase64?: string | null,
 ): AbortController {
   const controller = new AbortController()
 
@@ -188,6 +189,7 @@ export function chatSSE(
       session_id: sessionId,
       imagen: imagen || undefined,
       agent_type: agentType || undefined,
+      pdf_base64: pdfBase64 || undefined,
     }),
     signal: controller.signal,
   })

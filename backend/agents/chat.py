@@ -122,7 +122,8 @@ async def process_chat(
     current_agent: str | None = None,
     correlation_id: str | None = None,
     dispatcher=None,  # Kept for backward compat — ignored, dispatcher built internally
-    imagen: str | None = None,  # base64 data URI (data:image/jpeg;base64,...)
+    imagen: str | None = None,      # base64 data URI (data:image/jpeg;base64,...)
+    pdf_base64: str | None = None,  # base64-encoded PDF sin prefijo data URI
 ) -> AsyncGenerator[str, None]:
     """
     Async generator that yields SSE-formatted strings.
@@ -168,7 +169,7 @@ async def process_chat(
     await _ensure_chat_sessions_index(db)
     history = await _load_history(db, session_id)
 
-    # Build current message — multimodal if image attached
+    # Build current message — multimodal if image or PDF attached
     if imagen:
         # Extract base64 data and media type from data URI
         # Format: "data:image/jpeg;base64,/9j/4AAQ..."
@@ -183,6 +184,19 @@ async def process_chat(
         user_content = [
             {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": image_data}},
             {"type": "text", "text": message or "Procesa este comprobante y propone el asiento contable."},
+        ]
+    elif pdf_base64:
+        # PDF nativo Claude API — extrae datos estructurados automáticamente
+        user_content = [
+            {
+                "type": "document",
+                "source": {
+                    "type": "base64",
+                    "media_type": "application/pdf",
+                    "data": pdf_base64,
+                },
+            },
+            {"type": "text", "text": message or "Analiza este documento y extrae los datos relevantes."},
         ]
     else:
         user_content = message
@@ -295,10 +309,12 @@ async def process_chat(
         yield f"data: {json.dumps({'type': 'error', 'message': f'Error inesperado: {str(e)}'})}\n\n"
 
     # Save conversation history (user message + assistant response)
-    # Don't save base64 image data in history — save text description only
+    # Don't save base64 image/pdf data in history — save text description only
     save_message = message or "Procesa este comprobante"
     if imagen:
         save_message = f"[imagen adjunta] {save_message}"
+    elif pdf_base64:
+        save_message = f"[PDF adjunto] {save_message}"
     assistant_text = "".join(assistant_text_parts)
     if assistant_text:
         try:

@@ -19,7 +19,8 @@ class ChatRequest(BaseModel):
     session_id: str | None = None
     current_agent: str | None = None
     correlation_id: str | None = None
-    imagen: str | None = None  # base64 data URI (data:image/jpeg;base64,...)
+    imagen: str | None = None       # base64 data URI (data:image/jpeg;base64,...)
+    pdf_base64: str | None = None   # base64-encoded PDF (sin prefijo data URI)
 
 
 class ApproveRequest(BaseModel):
@@ -43,6 +44,7 @@ async def chat_endpoint(
             current_agent=request.current_agent,
             correlation_id=request.correlation_id,
             imagen=request.imagen,
+            pdf_base64=request.pdf_base64,
         ),
         media_type="text/event-stream",
         headers={
