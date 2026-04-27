@@ -137,11 +137,11 @@ def get_api_key_dep():
 
 # Top-level singleton — ready to use as Depends(get_api_key) in any router.
 # Equivalent to get_api_key_dep() but importable as a plain async function.
-from fastapi import Header as _HeaderTop
+from fastapi import Header as _HeaderTop  # noqa: E402
 
 async def get_api_key(
     x_api_key: str | None = _HeaderTop(default=None),
-    db: "AsyncIOMotorDatabase" = Depends(get_db),
+    db: AsyncIOMotorDatabase = Depends(get_db),
 ) -> dict:
     """FastAPI dependency — valida X-API-Key header contra colección api_keys.
 
