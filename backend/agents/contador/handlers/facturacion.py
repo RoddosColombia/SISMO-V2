@@ -357,6 +357,167 @@ async def handle_crear_nota_credito(
     }
 
 
+# Precio base Alegra por modelo (sin IVA — Alegra agrega 19% automáticamente)
+# Fuente: catálogo canónico RODDOS 27-abril-2026
+_PRECIO_BASE_ALEGRA = {
+    "TVS Raider 125": 6_554_622,
+    "TVS Sport 100":  4_831_933,
+}
+
+
+async def handle_registrar_compra_motos(
+    tool_input: dict,
+    alegra: AlegraClient,
+    db: AsyncIOMotorDatabase,
+    event_bus: Any,
+    user_id: str,
+) -> dict:
+    """Registra un lote de motos en Alegra.
+
+    1. Crea un ítem individual por VIN (idempotente — omite si ya existe).
+    2. Registra factura de compra (bill) al proveedor.
+    3. Publica evento compra.motos.registrada para que el Datakeeper actualice MongoDB.
+    ROG-4: solo escribe en Alegra + publica evento. MongoDB lo actualiza el Datakeeper.
+    """
+    validate_write_permission("contador", "POST /items + POST /bills", "alegra")
+
+    motos         = tool_input["motos"]
+    proveedor_nit = tool_input["proveedor_nit"]
+    proveedor_nom = tool_input.get("proveedor_nombre", "Auteco Mobility S.A.S.")
+    num_factura   = tool_input["numero_factura"]
+    fecha         = tool_input["fecha"]
+
+    creados:  list[dict] = []
+    omitidos: list[dict] = []
+    errores:  list[dict] = []
+
+    # ── 1. Crear ítem individual por VIN ─────────────────────────────────
+    for moto in motos:
+        vin    = (moto.get("vin") or "").strip().upper()
+        motor  = (moto.get("motor") or "").strip()
+        modelo = moto.get("modelo", "TVS Raider 125")
+        color  = moto.get("color", "")
+        costo  = moto.get("precio_costo") or _PRECIO_BASE_ALEGRA.get(modelo, 6_554_622)
+
+        if not vin or not motor:
+            errores.append({"vin": vin, "error": "VIN y motor son obligatorios"})
+            continue
+
+        # Idempotente: verificar si ya existe por reference=VIN
+        try:
+            existentes = await alegra.get("items", params={"reference": vin, "limit": 1})
+            if isinstance(existentes, list) and existentes:
+                omitidos.append({
+                    "vin":       vin,
+                    "alegra_id": str(existentes[0].get("id", "")),
+                    "razon":     "ya existía",
+                })
+                continue
+        except Exception:
+            pass  # Si el GET falla, intentar crear igual
+
+        nombre_item = (
+            f"{modelo} {color} - VIN: {vin} / Motor: {motor}".strip()
+            if color
+            else f"{modelo} - VIN: {vin} / Motor: {motor}"
+        )
+        precio_base = _PRECIO_BASE_ALEGRA.get(modelo, 6_554_622)
+
+        payload: dict = {
+            "name":        nombre_item,
+            "reference":   vin,
+            "description": f"{modelo} {color}".strip(),
+            "price":       [{"idPriceList": 1, "price": precio_base}],
+            "category":    {"id": 1},
+            "inventory": {
+                "unit":            "unidad",
+                "unitCost":        costo,
+                "negativeSale":    False,
+                "isInventoriable": True,
+                "initialQuantity": 1,
+                "minQuantity":     0,
+            },
+            "tax": [{"id": str(ALEGRA_IVA_TAX_ID)}],
+        }
+
+        try:
+            result    = await alegra.request_with_verify("items", "POST", payload=payload)
+            alegra_id = str(result.get("id") or result.get("_alegra_id") or "")
+            creados.append({
+                "vin":       vin,
+                "motor":     motor,
+                "modelo":    modelo,
+                "color":     color,
+                "alegra_id": alegra_id,
+                "nombre":    nombre_item,
+            })
+        except Exception as ex:
+            errores.append({"vin": vin, "error": str(ex)})
+
+    # ── 2. Registrar bill (factura de compra) al proveedor ───────────────
+    bill_id: str | None = None
+    if creados:
+        bill_items: list[dict] = []
+        for m in creados:
+            moto_src = next((x for x in motos if x.get("vin", "").upper() == m["vin"]), {})
+            precio_costo = moto_src.get("precio_costo") or _PRECIO_BASE_ALEGRA.get(m["modelo"], 6_554_622)
+            bill_items.append({
+                "id":       int(m["alegra_id"]) if m["alegra_id"].isdigit() else m["alegra_id"],
+                "quantity": 1,
+                "price":    precio_costo,
+            })
+
+        bill_payload: dict = {
+            "date":         fecha,
+            "dueDate":      fecha,
+            "provider":     {"identification": proveedor_nit},
+            "observations": f"Compra lote motos — Factura proveedor {num_factura}",
+            "items":        bill_items,
+        }
+        try:
+            bill_result = await alegra.request_with_verify("bills", "POST", payload=bill_payload)
+            bill_id     = str(bill_result.get("id") or bill_result.get("_alegra_id") or "")
+        except Exception as ex:
+            # Bill falla pero ítems ya están creados — no bloquear el flujo
+            bill_id = f"ERROR: {str(ex)}"
+
+    # ── 3. Publicar evento para que el Datakeeper actualice MongoDB ───────
+    await publish_event(
+        db=db,
+        event_type="compra.motos.registrada",
+        source="agente_contador",
+        datos={
+            "motos_creadas":  creados,
+            "motos_omitidas": omitidos,
+            "motos_error":    errores,
+            "proveedor_nit":  proveedor_nit,
+            "numero_factura": num_factura,
+            "fecha":          fecha,
+            "bill_alegra_id": bill_id,
+        },
+        alegra_id=bill_id,
+        accion_ejecutada=f"Lote {len(creados)} motos registradas — bill {bill_id}",
+    )
+
+    bill_ok = bill_id and "ERROR" not in str(bill_id)
+    return {
+        "success":          len(errores) == 0,
+        "creadas":          len(creados),
+        "omitidas":         len(omitidos),
+        "errores":          len(errores),
+        "bill_alegra_id":   bill_id,
+        "detalle_creadas":  creados,
+        "detalle_omitidas": omitidos,
+        "detalle_errores":  errores,
+        "mensaje": (
+            f"{len(creados)} motos registradas en Alegra. "
+            + (f"{len(omitidos)} ya existían (omitidas). " if omitidos else "")
+            + (f"Bill {bill_id} creado. " if bill_ok else "")
+            + (f"{len(errores)} errores." if errores else "Listas para facturar.")
+        ),
+    }
+
+
 async def handle_crear_item_inventario(
     tool_input: dict,
     alegra: AlegraClient,

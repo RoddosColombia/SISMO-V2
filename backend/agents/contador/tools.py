@@ -431,6 +431,53 @@ _FACTURACION: list[dict] = [
         },
     },
     {
+        "name": "registrar_compra_motos",
+        "description": (
+            "Registra un lote de motos recién llegadas en Alegra: "
+            "1) Crea un ítem individual por cada moto con su VIN como referencia (category_id=1, qty=1). "
+            "2) Registra la factura de compra (bill) al proveedor en Alegra. "
+            "3) Publica evento compra.motos.registrada para que el Datakeeper actualice MongoDB. "
+            "PREREQUISITO obligatorio antes de crear_factura_venta. "
+            "Sin ítem con VIN en Alegra = imposible facturar. "
+            "Es idempotente: VINs ya existentes se omiten sin error. "
+            "Usar cuando llega un lote de motos del proveedor (Auteco, TVS). "
+            "Ejemplos: 'llegaron 10 Raider', 'registrar lote de motos factura FV-123'. "
+            "El nombre del ítem en Alegra queda: 'TVS Raider 125 - VIN: ABC123 / Motor: XYZ789'. "
+            "Ejecuta via request_with_verify() — POST → HTTP 200 → GET verificación → retorna ID Alegra."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["motos", "proveedor_nit", "numero_factura", "fecha"],
+            "properties": {
+                "motos": {
+                    "type": "array",
+                    "description": "Lista de motos del lote. Una por VIN.",
+                    "items": {
+                        "type": "object",
+                        "required": ["vin", "motor", "modelo"],
+                        "properties": {
+                            "vin":    {"type": "string", "description": "Número de chasis (VIN). Identificador único de la moto."},
+                            "motor": {"type": "string", "description": "Número de motor. OBLIGATORIO para factura DIAN."},
+                            "modelo": {
+                                "type": "string",
+                                "enum": ["TVS Raider 125", "TVS Sport 100"],
+                                "description": "Modelo de la moto.",
+                            },
+                            "color":        {"type": "string", "description": "Color de la moto (opcional)."},
+                            "precio_costo": {"type": "number", "description": "Precio de costo de compra en COP (opcional, para margen)."},
+                        },
+                    },
+                },
+                "proveedor_nit":    {"type": "string", "description": "NIT del proveedor (ej: '901249413' para Auteco)."},
+                "proveedor_nombre": {"type": "string", "description": "Nombre del proveedor (ej: 'Auteco Mobility S.A.S.')."},
+                "numero_factura":   {"type": "string", "description": "Número de factura del proveedor."},
+                "fecha":            {"type": "string", "description": "Fecha de la factura yyyy-MM-dd."},
+                "precio_moto_raider": {"type": "number", "description": "Precio de compra Raider (costo, sin IVA). Opcional."},
+                "precio_moto_sport":  {"type": "number", "description": "Precio de compra Sport (costo, sin IVA). Opcional."},
+            },
+        },
+    },
+    {
         "name": "crear_factura_venta",
         "description": (
             "Crea una factura de venta de moto en Alegra via POST /invoices (status=open). "
