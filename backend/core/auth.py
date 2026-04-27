@@ -64,6 +64,78 @@ async def get_current_user(
 
 
 # ═══════════════════════════════════════════
+# API Key auth — integraciones externas read-only
+# ═══════════════════════════════════════════
+
+async def require_api_key(
+    x_api_key: str = Depends(lambda x_api_key: x_api_key),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+) -> dict:
+    """FastAPI dependency — valida X-API-Key header contra colección api_keys.
+
+    Acepta API keys con scope='read_only' y active=True.
+    Actualiza last_used_at en cada llamada.
+    Uso: en endpoints de integraciones externas (ARGOS, etc.).
+    """
+    from fastapi import Header as _Header
+    # Este import circular se evita: la función real está abajo como closure.
+    # Ver get_api_key_dep() para el dependency real con Header injection.
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Use get_api_key_dep")
+
+
+def get_api_key_dep():
+    """Retorna el FastAPI dependency correcto para X-API-Key.
+
+    Uso en routers:
+        from core.auth import get_api_key_dep
+        api_key_auth = get_api_key_dep()
+
+        @router.get("/ruta")
+        async def mi_endpoint(api_key: dict = Depends(api_key_auth)):
+            ...
+    """
+    from fastapi import Header as _Header
+    from core.datetime_utils import now_iso_bogota as _now_iso
+
+    async def _dep(
+        x_api_key: str | None = _Header(default=None),
+        db: AsyncIOMotorDatabase = Depends(get_db),
+    ) -> dict:
+        if not x_api_key:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Se requiere X-API-Key header",
+            )
+
+        key_doc = await db.api_keys.find_one({"key": x_api_key, "active": True})
+        if not key_doc:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="API key inválida o inactiva",
+            )
+
+        if key_doc.get("scope") != "read_only":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Esta API key no tiene permisos suficientes",
+            )
+
+        # Actualizar last_used_at (best-effort, no bloquea si falla)
+        try:
+            await db.api_keys.update_one(
+                {"_id": key_doc["_id"]},
+                {"$set": {"last_used_at": _now_iso()}},
+            )
+        except Exception:
+            pass
+
+        key_doc.pop("_id", None)
+        return key_doc
+
+    return _dep
+
+
+# ═══════════════════════════════════════════
 # Sliding session helpers (B7-UX)
 # ═══════════════════════════════════════════
 
