@@ -38,6 +38,17 @@ ALEGRA_ITEM_MATRICULA = 29  # category=5453 Matricula (exento)
 ALEGRA_ITEM_GPS = 28        # category=5448 Instalacion GPS (IVA 19%)
 ALEGRA_IVA_TAX_ID = 4       # IVA 19%
 
+# ── Catálogo de precios canónicos RODDOS (27-abril-2026) ──────────────────
+# Alegra recibe precio SIN IVA. Regla: base = precio_cliente / 1.19
+# NUNCA adivinar ni cambiar estos valores. Fuente: Andrés Sanjuan CEO.
+PRECIOS_MOTO_BASE_ALEGRA = {
+    "raider": 6_554_621.85,   # Raider 125: cliente $7.800.000
+    "sport":  4_831_932.77,   # Sport 100:  cliente $5.750.000
+}
+SOAT_PRECIO      = 363_300   # exento IVA — va tal cual a Alegra
+MATRICULA_PRECIO = 296_700   # exento IVA — va tal cual a Alegra
+GPS_BASE_ALEGRA  = 69_580    # sin IVA — Alegra agrega 19% → total cliente $82.800
+
 
 async def _resolve_alegra_contact(alegra: AlegraClient, cedula: str, nombre: str,
                                   telefono: str, direccion: str) -> str | int | None:
@@ -128,7 +139,14 @@ async def handle_crear_factura_venta_moto(
             return {"success": False, "error": f"Moto VIN {moto_vin} no está disponible (estado: {moto.get('estado')}). Solo se facturan motos disponibles."}
         moto_item_id = moto.get("alegra_item_id")
         if precio_moto is None:
-            precio_moto = moto.get("precio", 0)
+            precio_moto = moto.get("precio") if moto else None
+        if not precio_moto:
+            # Fallback catálogo canónico — NUNCA adivinar precios
+            modelo_lower = modelo.lower()
+            if "raider" in modelo_lower or "125" in modelo_lower:
+                precio_moto = 7_800_000
+            else:
+                precio_moto = 5_750_000
     else:
         # Fallback: inventario canónico es Alegra. Requerimos motor explícito en el input
         motor = (tool_input.get("moto_motor") or "").strip()
@@ -162,10 +180,10 @@ async def handle_crear_factura_venta_moto(
     if matricula_val and matricula_val > 0:
         items.append({"id": ALEGRA_ITEM_MATRICULA, "price": float(matricula_val), "quantity": 1})
     if gps_val and gps_val > 0:
-        # GPS viene con IVA incluido — base = valor / 1.19
+        # gps_val viene como precio SIN IVA ($69.580) — Alegra agrega el 19%
         items.append({
             "id": ALEGRA_ITEM_GPS,
-            "price": round(float(gps_val) / 1.19, 2),
+            "price": float(gps_val),
             "quantity": 1,
             "tax": [{"id": ALEGRA_IVA_TAX_ID}],
         })

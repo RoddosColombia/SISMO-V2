@@ -50,6 +50,20 @@ python3 scripts/nombre_script.py
 - **NUNCA usar `date.today()` ni `datetime.utcnow()`** — usar `today_bogota()` o `now_bogota()` de `core/datetime_utils.py`
 - Antes de merge a main correr `/ultrareview`
 
+## CATÁLOGO DE PRECIOS RODDOS (canónico)
+Valores FIJOS. NUNCA adivinar ni cambiar. Alegra recibe precio SIN IVA.
+
+| Concepto        | Precio cliente | Base Alegra (sin IVA) | Ítem Alegra |
+|-----------------|---------------|-----------------------|-------------|
+| TVS Raider 125  | $7.800.000    | $6.554.621,85         | —           |
+| TVS Sport 100   | $5.750.000    | $4.831.932,77         | —           |
+| SOAT            | $363.300      | $363.300 (exento)     | ID 30       |
+| Matrícula       | $296.700      | $296.700 (exento)     | ID 29       |
+| GPS             | $82.800       | $69.580               | ID 28       |
+
+Regla: `base_alegra = precio_con_iva / 1.19` (2 decimales)
+Fuente: Andrés Sanjuan CEO RODDOS, 27-abril-2026.
+
 ## Cálculos financieros — regla de oro
 
 Todos los cálculos de `saldo_capital` y `saldo_intereses` deben usar **ÚNICAMENTE** la función `calcular_saldos()` de `backend/services/loanbook/reglas_negocio.py`. Nunca calcular estos valores inline en routers ni en otros servicios.
