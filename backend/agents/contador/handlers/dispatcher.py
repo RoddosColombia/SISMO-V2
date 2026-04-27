@@ -130,12 +130,14 @@ class ToolDispatcher:
         # Wave 5: facturacion
         try:
             from agents.contador.handlers.facturacion import (
+                handle_crear_item_inventario,
                 handle_crear_factura_venta_moto,
                 handle_consultar_facturas,
                 handle_anular_factura,
                 handle_crear_nota_credito,
             )
             self._handlers.update({
+                "crear_item_inventario": handle_crear_item_inventario,
                 "crear_factura_venta": handle_crear_factura_venta_moto,
                 "consultar_facturas": handle_consultar_facturas,
                 "anular_factura": handle_anular_factura,

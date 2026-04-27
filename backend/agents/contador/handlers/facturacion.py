@@ -337,3 +337,86 @@ async def handle_crear_nota_credito(
         "alegra_id": result["_alegra_id"],
         "message": f"Nota crédito #{result['_alegra_id']} creada en Alegra.",
     }
+
+
+async def handle_crear_item_inventario(
+    tool_input: dict,
+    alegra: AlegraClient,
+    db: AsyncIOMotorDatabase,
+    event_bus: Any,
+    user_id: str,
+) -> dict:
+    """Crea un ítem (moto o repuesto) en Alegra via POST /items.
+
+    Si ya existe (mismo reference), retorna el existente sin duplicar.
+    Categorías: 1=Motos nuevas, 2=Motos usadas, 5=Repuestos.
+    ROG-4 compliant: solo escribe en Alegra.
+    """
+    validate_write_permission("contador", "POST /items", "alegra")
+
+    nombre = tool_input["nombre"]
+    reference = tool_input["reference"]
+    category_id = tool_input["category_id"]
+    precio_venta = tool_input["precio_venta"]
+    precio_costo = tool_input.get("precio_costo", 0)
+    descripcion = tool_input.get("descripcion", "")
+    unidad = tool_input.get("unidad", "unidad")
+    iva_pct = tool_input.get("iva_pct", 0)
+    inventariable = tool_input.get("inventariable", True)
+
+    # 1. Verificar si ya existe por reference — evita duplicados
+    try:
+        existentes = await alegra.get("items", params={"reference": reference, "limit": 1})
+        if isinstance(existentes, list) and existentes:
+            item = existentes[0]
+            return {
+                "success": True,
+                "ya_existia": True,
+                "alegra_id": str(item.get("id", "")),
+                "nombre": item.get("name", nombre),
+                "reference": reference,
+                "mensaje": f"Ítem '{nombre}' ya existe en Alegra con ID {item.get('id')}. Sin cambios.",
+            }
+    except Exception:
+        pass  # Si el GET falla, intentar crear igual
+
+    # 2. Construir payload Alegra
+    # motos llegan con qty inicial = 1; repuestos arrancan en 0
+    initial_qty = 1 if category_id in (1, 2) else 0
+
+    payload: dict = {
+        "name": nombre,
+        "reference": reference,
+        "description": descripcion,
+        "price": [{"idPriceList": 1, "price": precio_venta}],
+        "category": {"id": category_id},
+        "inventory": {
+            "unit": unidad,
+            "unitCost": precio_costo,
+            "negativeSale": False,
+            "isInventoriable": inventariable,
+            "initialQuantity": initial_qty,
+            "minQuantity": 0,
+        },
+        # IVA 19% tax ID en Alegra = 3; si iva_pct != 19 → sin impuesto
+        "tax": [{"id": "3"}] if iva_pct == 19 else [],
+    }
+
+    # 3. Crear en Alegra con verificación
+    result = await alegra.request_with_verify("items", "POST", payload=payload)
+    alegra_id = str(result.get("id") or result.get("_alegra_id") or "")
+
+    return {
+        "success": True,
+        "ya_existia": False,
+        "alegra_id": alegra_id,
+        "nombre": nombre,
+        "reference": reference,
+        "category_id": category_id,
+        "precio_venta": precio_venta,
+        "mensaje": (
+            f"Ítem '{nombre}' creado en Alegra con ID {alegra_id}. "
+            f"Reference: {reference}. "
+            f"{'Listo para facturar.' if category_id in (1, 2) else 'Disponible en inventario Alegra.'}"
+        ),
+    }

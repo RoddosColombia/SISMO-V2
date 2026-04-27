@@ -372,6 +372,65 @@ _CONCILIACION: list[dict] = [
 
 _FACTURACION: list[dict] = [
     {
+        "name": "crear_item_inventario",
+        "description": (
+            "Crea un ítem (moto o repuesto) en Alegra via POST /items para que pueda ser "
+            "facturado, vendido o comprado. PREREQUISITO obligatorio antes de crear_factura_venta. "
+            "Para motos: category_id=1 (nuevas) o 2 (usadas), reference=VIN (OBLIGATORIO). "
+            "Para repuestos: category_id=5, reference=SKU del repuesto. "
+            "Ejecuta via request_with_verify() — POST → HTTP 200 → GET verificación → retorna ID Alegra. "
+            "Si el ítem ya existe (mismo reference), retorna el existente sin duplicar. "
+            "Casos de uso: "
+            "'Registrar moto TVS Raider 125 VIN ABC123' → category_id=1, reference=ABC123. "
+            "'Registrar repuesto Filtro de aire TVS SKU REP-003' → category_id=5, reference=REP-003. "
+            "'Crear inventario de 10 motos' → llamar 10 veces, una por moto. "
+            "Después de crear motos, el usuario puede proceder con crear_factura_venta."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["nombre", "reference", "category_id", "precio_venta"],
+            "properties": {
+                "nombre": {
+                    "type": "string",
+                    "description": "Nombre del ítem (ej: 'TVS Raider 125 2026 - VIN ABC123', 'Filtro aire TVS Raider')",
+                },
+                "reference": {
+                    "type": "string",
+                    "description": "VIN para motos (OBLIGATORIO) o SKU para repuestos. Identificador único.",
+                },
+                "category_id": {
+                    "type": "integer",
+                    "enum": [1, 2, 5],
+                    "description": "Categoría Alegra: 1=Motos nuevas, 2=Motos usadas, 5=Repuestos",
+                },
+                "precio_venta": {
+                    "type": "number",
+                    "description": "Precio de venta en COP (con IVA incluido para motos, sin IVA para repuestos)",
+                },
+                "precio_costo": {
+                    "type": "number",
+                    "description": "Precio de costo/compra en COP (opcional pero recomendado para margen)",
+                },
+                "descripcion": {
+                    "type": "string",
+                    "description": "Descripción adicional del ítem (opcional)",
+                },
+                "unidad": {
+                    "type": "string",
+                    "description": "Unidad de medida (default: 'unidad')",
+                },
+                "iva_pct": {
+                    "type": "number",
+                    "description": "Porcentaje de IVA (default: 0 para motos — IVA excluido en financiación; 19 para repuestos gravados)",
+                },
+                "inventariable": {
+                    "type": "boolean",
+                    "description": "Si Alegra debe llevar stock de este ítem (default: true)",
+                },
+            },
+        },
+    },
+    {
         "name": "crear_factura_venta",
         "description": (
             "Crea una factura de venta de moto en Alegra via POST /invoices (status=open). "
@@ -902,7 +961,7 @@ _COMPRAS: list[dict] = [
 ]
 
 # ---------------------------------------------------------------------------
-# LISTA COMPLETA: 36 herramientas (34 + 2 compras Phase 8)
+# LISTA COMPLETA: 42 herramientas (41 previas + 1 crear_item_inventario)
 # ---------------------------------------------------------------------------
 
 CONTADOR_TOOLS: list[dict] = (
