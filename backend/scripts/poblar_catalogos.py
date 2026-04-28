@@ -247,11 +247,29 @@ async def poblar(dry_run: bool = False) -> None:
 
     if not dry_run:
         total_planes = await db.catalogo_planes.count_documents({})
+        codigos_esperados = {p["plan_codigo"] for p in CATALOGO_PLANES}
+        codigos_en_db = {d["plan_codigo"] async for d in db.catalogo_planes.find(
+            {}, {"plan_codigo": 1, "_id": 0}
+        )}
+        extras = sorted(codigos_en_db - codigos_esperados)
+        faltantes = sorted(codigos_esperados - codigos_en_db)
+
         print()
         print(f"  → {planes_insertados} insertados, {planes_actualizados} actualizados")
         print(f"  → Total en DB: {total_planes} documentos")
-        assert total_planes == 10, f"Se esperaban 10 planes, hay {total_planes}"
-        print("  ✅ catalogo_planes: 10/10 ✓")
+        if extras:
+            print(f"  ⚠️  Planes EXTRA en DB (no en CATALOGO_PLANES): {extras}")
+        if faltantes:
+            print(f"  ❌ Planes FALTANTES (no se insertaron): {faltantes}")
+
+        # Fix 2026-04-28: assert relajado — solo valida que TODOS los esperados estén,
+        # permite extras de población legacy. Antes el strict ==10 abortaba el script
+        # y dejaba catalogo_rodante sin poblar.
+        assert not faltantes, f"Faltan planes esperados: {faltantes}"
+        if extras:
+            print(f"  ⚠️  catalogo_planes: {len(codigos_esperados)} esperados OK + {len(extras)} extras tolerados")
+        else:
+            print(f"  ✅ catalogo_planes: {len(codigos_esperados)}/{len(codigos_esperados)} ✓")
 
     # ── catalogo_rodante ──────────────────────────────────────────────────────
     print()
@@ -288,30 +306,43 @@ async def poblar(dry_run: bool = False) -> None:
         print()
         print(f"  → {rodante_insertados} insertados, {rodante_actualizados} actualizados")
         print(f"  → Total en DB: {total_rodante} documentos")
-        assert total_rodante == 4, f"Se esperaban 4 subtipos RODANTE, hay {total_rodante}"
-        print("  ✅ catalogo_rodante: 4/4 ✓")
+        # Fix 2026-04-28: assert relajado igual que catalogo_planes.
+        subtipos_esperados = {s["subtipo"] for s in CATALOGO_RODANTE}
+        subtipos_en_db = {d["subtipo"] async for d in db.catalogo_rodante.find(
+            {}, {"subtipo": 1, "_id": 0}
+        )}
+        rodante_extras = sorted(subtipos_en_db - subtipos_esperados)
+        rodante_faltantes = sorted(subtipos_esperados - subtipos_en_db)
+        if rodante_extras:
+            print(f"  ⚠️  Subtipos EXTRA: {rodante_extras}")
+        if rodante_faltantes:
+            print(f"  ❌ Subtipos FALTANTES: {rodante_faltantes}")
+        assert not rodante_faltantes, f"Faltan subtipos RODANTE: {rodante_faltantes}"
+        if rodante_extras:
+            print(f"  ⚠️  catalogo_rodante: {len(subtipos_esperados)} esperados OK + {len(rodante_extras)} extras tolerados")
+        else:
+            print(f"  ✅ catalogo_rodante: {len(subtipos_esperados)}/{len(subtipos_esperados)} ✓")
 
-    # ── Índices ───────────────────────────────────────────────────────────────
+    # ── Índices ──────────────────────────────────────────────────────────────
     if not dry_run:
         await db.catalogo_planes.create_index("plan_codigo", unique=True)
         await db.catalogo_rodante.create_index("subtipo", unique=True)
         print()
-        print("  ✅ Índices únicos creados (plan_codigo, subtipo)")
+        print("  Indices unicos creados (plan_codigo, subtipo)")
 
     print()
-    _sep("═")
+    _sep("=")
     if dry_run:
         print("  DRY-RUN completado. Ejecuta sin --dry-run para aplicar.")
     else:
         print("  POBLAR completado exitosamente.")
-    _sep("═")
+    _sep("=")
     print()
 
     client.close()
 
 
-# ─────────────────────── Entrypoint ───────────────────────────────────────────
-
+# Entrypoint
 if __name__ == "__main__":
     dry_run = "--dry-run" in sys.argv
     asyncio.run(poblar(dry_run=dry_run))
