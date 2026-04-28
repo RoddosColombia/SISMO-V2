@@ -59,10 +59,12 @@ async def main(args):
             break
 
     if cuota_a_pagar:
+        # Si la cuota no tiene monto (bug data), usar cuota_periodica del doc raiz
+        monto_cuota = cuota_a_pagar.get("monto") or cuota_periodica or 0
         print(f"\nCUOTA A MARCAR PAGADA:")
         print(f"  numero:    {cuota_a_pagar.get('numero')}")
         print(f"  fecha:     {cuota_a_pagar.get('fecha')}")
-        print(f"  monto:     {cuota_a_pagar.get('monto'):,}")
+        print(f"  monto:     {monto_cuota:,}  {'(usado cuota_periodica)' if not cuota_a_pagar.get('monto') else ''}")
 
     nuevo_saldo_pendiente = max(0, lb.get("saldo_pendiente", 0) - cuota_periodica)
     nuevas_cuotas_pagadas = (lb.get("cuotas_pagadas", 0) or 0) + 1
