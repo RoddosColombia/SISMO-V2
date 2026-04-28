@@ -77,7 +77,9 @@ class TestToolDispatcher:
 
     @pytest.mark.asyncio
     async def test_3_generic_exception_caught_and_returned(self):
-        """Test 3: When handler raises generic Exception, dispatch returns error dict."""
+        """Test 3: When handler raises generic Exception, dispatch returns error dict.
+        Updated 2026-04-28: dispatch ahora incluye type(e).__name__ + exception_type
+        para que el front sepa qué error fue (P0 fix de logging silencioso)."""
         async def bad_handler(**kwargs):
             raise Exception("db error")
 
@@ -85,7 +87,10 @@ class TestToolDispatcher:
         dispatcher._handlers["tool_name"] = bad_handler
 
         result = await dispatcher.dispatch("tool_name", {}, "u1")
-        assert result == {"success": False, "error": "Error ejecutando tool_name: db error"}
+        assert result["success"] is False
+        assert "Error ejecutando tool_name" in result["error"]
+        assert "db error" in result["error"]
+        assert result.get("exception_type") == "Exception"
 
     def test_4_handlers_match_tools_py_names(self):
         """Test 4: dispatcher keys match tools.py tool names."""

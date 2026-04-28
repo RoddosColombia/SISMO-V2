@@ -1109,8 +1109,9 @@ _AGENTE_V2: list[dict] = [
             "USAR SIEMPRE para registrar la llegada de un lote de motos del proveedor. "
             "Reemplaza a registrar_compra_motos cuando Alegra bloquea POST /items via API. "
             "Esta tool usa el agente IA de Firecrawl: por cada moto crea un ítem inventariable "
-            "individual (reference=VIN exacto, categoría Motos nuevas id 1, cuentas 41350501/14350101/61350501) "
-            "y luego registra el bill al proveedor. Idempotente: VINs duplicados se omiten. "
+            "individual (reference=VIN exacto, categoría Motos nuevas id 1, cuentas Alegra ID "
+            "5442/5348/5520 — NIIF 41350501/14350101/61350501) y luego registra el bill al "
+            "proveedor. Idempotente: VINs duplicados se omiten. "
             "Devuelve el ID NUMÉRICO real del bill en Alegra. "
             "Cuándo: 'llegaron N motos', 'subir lote Auteco', PDF Auteco de motos."
         ),
@@ -1145,8 +1146,9 @@ _AGENTE_V2: list[dict] = [
         "description": (
             "USAR SIEMPRE para registrar compras de repuestos a proveedor (Auteco u otros). "
             "Crítico: garantiza que los ítems queden en la BODEGA 'Repuestos' para que las "
-            "cuentas contables 14350102 (inventario), 41350601 (ingreso) y 61350601 (costo) "
-            "NO sean sobreescritas por la bodega default de motos. "
+            "cuentas contables Alegra ID 5349 (inventario), 5444 (ingreso) y 5522 (costo) "
+            "— NIIF 14350102/41350601/61350601 — NO sean sobreescritas por la bodega "
+            "default de motos. "
             "Si la bodega 'Repuestos' no existe, esta tool la crea automáticamente. "
             "Luego crea los ítems (reference=referencia del proveedor, categoría Repuestos id 5) "
             "y registra el bill. Idempotente por reference. "

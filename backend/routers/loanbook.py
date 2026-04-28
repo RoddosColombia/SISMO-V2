@@ -890,7 +890,16 @@ async def registrar_pago_manual(
                 status_code=409,
                 detail=f"Cuota #{body.cuota_numero} ya está pagada — pago duplicado bloqueado",
             )
-        pago_parcial = body.monto_pago < target["monto"]
+        # Fix 2026-04-28: la cuota puede tener `monto`, `monto_total` o `valor_cuota`
+        # según versión del schema. Antes target["monto"] reventaba con KeyError → 500.
+        # Logs Render 2026-04-27T21:21 → 3 fallos seguidos sobre LB-2026-0014.
+        target_monto = (
+            target.get("monto")
+            or target.get("monto_total")
+            or target.get("valor_cuota")
+            or 0
+        )
+        pago_parcial = body.monto_pago < target_monto
         target["estado"] = "pagada"
         target["fecha_pago"] = fecha_pago_str
         target["mora_acumulada"] = 0

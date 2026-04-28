@@ -371,37 +371,40 @@ async def handle_consultar_cuentas_inventario(
     """
     tipo = tool_input.get("tipo_item", "motos")
 
+    # FIX 2026-04-28: Alegra requiere el ID INTERNO (5442/5348/...) NO el código NIIF (41350501/...).
+    # Antes se mandaba el NIIF y Alegra rechazaba con "No se encontró la cuenta contable asociada al ítem".
+    # Mapeo verificado en .planning/mapeo_alegra_ids.json (2026-04-10).
     if tipo == "motos":
         return {
             "tipo": "motos",
             "category_id": 1,
             "cuentas": {
-                "account":          {"id": "41350501", "nombre": "Ingresos ventas motos"},
-                "inventoryAccount": {"id": "14350101", "nombre": "Inventario motos (activo)"},
-                "costsAccount":     {"id": "61350501", "nombre": "Costo de ventas motos"},
+                "account":          {"id": "5442", "nombre": "Ingresos ventas motos",       "niif": "41350501"},
+                "inventoryAccount": {"id": "5348", "nombre": "Inventario motos (activo)",   "niif": "14350101"},
+                "costsAccount":     {"id": "5520", "nombre": "Costo de ventas motos",       "niif": "61350501"},
             },
             "payload_alegra": {
-                "account":          {"id": "41350501"},
-                "inventoryAccount": {"id": "14350101"},
-                "costsAccount":     {"id": "61350501"},
+                "account":          {"id": "5442"},
+                "inventoryAccount": {"id": "5348"},
+                "costsAccount":     {"id": "5520"},
             },
-            "nota": "Incluir en POST /items junto con category:{id:1}. Sin estas cuentas Alegra rechaza con code 1008.",
+            "nota": "Incluir en POST /items junto con category:{id:1}. Usar el ID interno Alegra (5442/5348/5520), NO el código NIIF.",
         }
     else:  # repuestos
         return {
             "tipo": "repuestos",
             "category_id": 5,
             "cuentas": {
-                "account":          {"id": "41350601", "nombre": "Ingresos ventas repuestos"},
-                "inventoryAccount": {"id": "14350102", "nombre": "Inventario repuestos (activo)"},
-                "costsAccount":     {"id": "61350601", "nombre": "Costo de ventas repuestos"},
+                "account":          {"id": "5444", "nombre": "Ingresos ventas repuestos",   "niif": "41350601"},
+                "inventoryAccount": {"id": "5349", "nombre": "Inventario repuestos (activo)", "niif": "14350102"},
+                "costsAccount":     {"id": "5522", "nombre": "Costo de ventas repuestos",   "niif": "61350601"},
             },
             "payload_alegra": {
-                "account":          {"id": "41350601"},
-                "inventoryAccount": {"id": "14350102"},
-                "costsAccount":     {"id": "61350601"},
+                "account":          {"id": "5444"},
+                "inventoryAccount": {"id": "5349"},
+                "costsAccount":     {"id": "5522"},
             },
-            "nota": "Incluir en POST /items junto con category:{id:5}. Sin estas cuentas Alegra rechaza con code 1008.",
+            "nota": "Incluir en POST /items junto con category:{id:5}. Usar el ID interno Alegra (5444/5349/5522), NO el código NIIF.",
         }
 
 
@@ -508,10 +511,10 @@ async def handle_registrar_compra_motos(
             "description": f"{modelo} {color}".strip(),
             "price":       [{"idPriceList": 1, "price": precio_base}],
             "category":          {"id": 1},
-            # Cuentas contables OBLIGATORIAS — sin ellas Alegra rechaza con code 1008
-            "account":          {"id": "41350501"},  # Ingresos ventas motos
-            "inventoryAccount": {"id": "14350101"},  # Inventario motos (activo)
-            "costsAccount":     {"id": "61350501"},  # Costo de ventas motos
+            # Cuentas OBLIGATORIAS — IDs INTERNOS Alegra (NO códigos NIIF). Fix 2026-04-28.
+            "account":          {"id": "5442"},   # 41350501 Ingresos ventas motos
+            "inventoryAccount": {"id": "5348"},   # 14350101 Inventario motos (activo)
+            "costsAccount":     {"id": "5520"},   # 61350501 Costo de ventas motos
             "inventory": {
                 "unit":            "unidad",
                 "unitCost":        costo,
@@ -842,16 +845,17 @@ async def handle_crear_item_inventario(
     # motos llegan con qty inicial = 1; repuestos arrancan en 0
     initial_qty = 1 if category_id in (1, 2) else 0
 
-    # Cuentas contables canónicas RODDOS (verificadas 27-abril-2026)
-    # OBLIGATORIAS — sin ellas Alegra rechaza con code 1008
+    # Cuentas contables RODDOS — IDs INTERNOS Alegra (NO códigos NIIF). Fix 2026-04-28.
+    # Mapeo verificado en .planning/mapeo_alegra_ids.json. Antes mandaban NIIF y Alegra
+    # rechazaba con "No se encontró la cuenta contable asociada al ítem" (~60 fallos en logs).
     if category_id in (1, 2):  # Motos nuevas / usadas
-        account_id          = "41350501"  # Ingresos ventas motos
-        inventory_account_id = "14350101"  # Inventario motos (activo)
-        costs_account_id    = "61350501"  # Costo de ventas motos
+        account_id          = "5442"   # NIIF 41350501 - Ingresos ventas motos
+        inventory_account_id = "5348"  # NIIF 14350101 - Inventario motos (activo)
+        costs_account_id    = "5520"   # NIIF 61350501 - Costo de ventas motos
     else:  # Repuestos (category_id = 5)
-        account_id          = "41350601"  # Ingresos ventas repuestos
-        inventory_account_id = "14350102"  # Inventario repuestos (activo)
-        costs_account_id    = "61350601"  # Costo de ventas repuestos
+        account_id          = "5444"   # NIIF 41350601 - Ingresos ventas repuestos
+        inventory_account_id = "5349"  # NIIF 14350102 - Inventario repuestos (activo)
+        costs_account_id    = "5522"   # NIIF 61350601 - Costo de ventas repuestos
 
     payload: dict = {
         "name": nombre,
@@ -919,7 +923,7 @@ async def handle_crear_item_inventario(
         "precio_venta": precio_venta,
         "via": via,
         "mensaje": (
-            f"Ítem '{nombre}' creado en Alegra (ID {alegra_id}, via {via}). "
+            f"Item '{nombre}' creado en Alegra (ID {alegra_id}, via {via}). "
             f"Reference: {reference}. "
             f"{'Listo para facturar.' if category_id in (1, 2) else 'Disponible en inventario Alegra.'}"
         ),

@@ -62,10 +62,11 @@ async def _find_or_create_item(alegra: AlegraClient, item: dict) -> str:
         "type": "product",
         "itemCategory": {"id": REPUESTOS_CATEGORY_ID},
         "price": [{"price": precio_unit, "idPriceList": None}] if precio_unit else [],
-        # Cuentas contables OBLIGATORIAS para repuestos — sin ellas Alegra rechaza code 1008
-        "account":          {"id": "41350601"},  # Ingresos ventas repuestos
-        "inventoryAccount": {"id": "14350102"},  # Inventario repuestos (activo)
-        "costsAccount":     {"id": "61350601"},  # Costo de ventas repuestos
+        # Cuentas repuestos — IDs INTERNOS Alegra (NO códigos NIIF). Fix 2026-04-28.
+        # Mapeo en .planning/mapeo_alegra_ids.json. Antes mandaban NIIF y Alegra rechazaba.
+        "account":          {"id": "5444"},   # NIIF 41350601 - Ingresos ventas repuestos
+        "inventoryAccount": {"id": "5349"},   # NIIF 14350102 - Inventario repuestos
+        "costsAccount":     {"id": "5522"},   # NIIF 61350601 - Costo de ventas repuestos
         "inventory": {
             "unit": "unit",
             "unitCost": precio_unit,
@@ -269,12 +270,14 @@ async def handle_registrar_compra_repuestos_agente(
     """V2 — Compra de repuestos vía fc.agent() de Firecrawl.
 
     Garantiza que la bodega "Repuestos" exista (la crea si falta) y crea los
-    ítems en esa bodega para que las cuentas contables 41350601/14350102/61350601
-    NO sean sobreescritas por la bodega default de motos.
+    ítems en esa bodega con cuentas Alegra ID 5444/5349/5522 (NIIF
+    41350601/14350102/61350601) para que NO sean sobreescritas por la bodega
+    default de motos.
 
     Diagnóstico raíz: el bug actual de "repuestos van a cuentas de motos" se
-    debe a que la bodega default de Alegra está atada a cuentas de motos.
-    Solución: bodega separada por categoría.
+    debe a (a) que el código mandaba el código NIIF en lugar del ID interno
+    Alegra (fix 2026-04-28) y (b) que la bodega default está atada a cuentas
+    de motos. Solución: IDs internos correctos + bodega separada por categoría.
     """
     from datetime import date as _date
     items_input = tool_input.get("items") or []

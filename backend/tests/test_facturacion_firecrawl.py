@@ -473,3 +473,56 @@ def test_dispatcher_resuelve_tools_v2():
     assert "crear_factura_venta_alegra_agente" in d._handlers
     assert "registrar_compra_motos_agente" in d._handlers
     assert "registrar_compra_repuestos_agente" in d._handlers
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# H. Fix NIIF → ID interno Alegra (2026-04-28)
+# Antes mandábamos código NIIF (41350501/...) en payload de items y Alegra
+# rechazaba con "No se encontró la cuenta contable asociada al ítem".
+# Mapeo verificado en .planning/mapeo_alegra_ids.json.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_consultar_cuentas_inventario_motos_devuelve_ids_internos():
+    """consultar_cuentas_inventario debe devolver ID interno Alegra (5442/5348/5520),
+    no el código NIIF (41350501/14350101/61350501). Fix 2026-04-28."""
+    from agents.contador.handlers.facturacion import handle_consultar_cuentas_inventario
+
+    result = await handle_consultar_cuentas_inventario(tool_input={"tipo_item": "motos"})
+    assert result["payload_alegra"]["account"]["id"] == "5442",  f"esperado 5442 (Ingresos motos), got {result['payload_alegra']['account']['id']}"
+    assert result["payload_alegra"]["inventoryAccount"]["id"] == "5348", f"esperado 5348 (Inventario motos)"
+    assert result["payload_alegra"]["costsAccount"]["id"] == "5520",     f"esperado 5520 (Costo motos)"
+    # NIIF debe quedar como referencia documental
+    assert result["cuentas"]["account"]["niif"] == "41350501"
+
+
+@pytest.mark.asyncio
+async def test_consultar_cuentas_inventario_repuestos_devuelve_ids_internos():
+    from agents.contador.handlers.facturacion import handle_consultar_cuentas_inventario
+
+    result = await handle_consultar_cuentas_inventario(tool_input={"tipo_item": "repuestos"})
+    assert result["payload_alegra"]["account"]["id"] == "5444",  f"esperado 5444 (Ingresos repuestos)"
+    assert result["payload_alegra"]["inventoryAccount"]["id"] == "5349", f"esperado 5349 (Inventario repuestos)"
+    assert result["payload_alegra"]["costsAccount"]["id"] == "5522",     f"esperado 5522 (Costo repuestos)"
+    assert result["cuentas"]["account"]["niif"] == "41350601"
+
+
+def test_payload_compra_motos_usa_ids_internos():
+    """Verifica que el payload de registrar_compra_motos use IDs internos."""
+    import inspect
+    from agents.contador.handlers import facturacion
+    src = inspect.getsource(facturacion.handle_registrar_compra_motos)
+    # Debe contener los IDs internos
+    assert '"5442"' in src, "Falta ID 5442 (Ingresos ventas motos)"
+    assert '"5348"' in src, "Falta ID 5348 (Inventario motos)"
+    assert '"5520"' in src, "Falta ID 5520 (Costo ventas motos)"
+
+
+def test_payload_crear_item_inventario_usa_ids_internos():
+    """Verifica que crear_item_inventario use IDs internos para motos y repuestos."""
+    import inspect
+    from agents.contador.handlers import facturacion
+    src = inspect.getsource(facturacion.handle_crear_item_inventario)
+    # Motos
+    assert '"5442"' in src, "Falta ID 5442 (Ingresos motos)"
+    

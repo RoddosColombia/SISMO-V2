@@ -59,9 +59,12 @@ async def sync_alegra_invoice_stats(db: AsyncIOMotorDatabase) -> dict:
 
         # Alegra ignora silenciosamente los params de fecha — filtramos en Python.
         # Traemos las últimas 100 facturas y filtramos por mes en el campo "date".
+        # Fix 2026-04-28: quitado order_direction — Alegra rechazaba con HTTP 400
+        # ("Datos invalidos enviados a Alegra"). Logs mostraban ~38 errores en 26h.
+        # Alegra ordena descendente por defecto, no necesita el param.
         invoices = await alegra.get(
             "invoices",
-            params={"limit": 100, "start": 0, "order_direction": "DESC"},
+            params={"limit": 100, "start": 0},
         )
 
         if not isinstance(invoices, list):
@@ -114,9 +117,10 @@ async def detect_and_sync_new_invoices(db: AsyncIOMotorDatabase) -> None:
 
     try:
         alegra = AlegraClient(db=db)
+        # Fix 2026-04-28: ver sync_alegra_invoice_stats — sin order_direction.
         invoices = await alegra.get(
             "invoices",
-            params={"limit": 100, "start": 0, "order_direction": "DESC"},
+            params={"limit": 100, "start": 0},
         )
         if not isinstance(invoices, list):
             return

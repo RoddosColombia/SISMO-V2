@@ -154,19 +154,22 @@ FACTURACIÓN DE MOTOS — REGLAS DEFINITIVAS:
                          "Sport" o "100" → TVS Sport 100.
 
 CUENTAS CONTABLES DE INVENTARIO — OBLIGATORIAS EN TODO ÍTEM:
-Al crear cualquier ítem en Alegra (POST /items), SIEMPRE incluir estos campos en el payload:
+Al crear cualquier ítem en Alegra (POST /items), SIEMPRE incluir estos campos en el payload.
+USAR EL ID INTERNO DE ALEGRA (4 dígitos), NO el código NIIF (8 dígitos).
+Si mandas el NIIF, Alegra rechaza con "No se encontró la cuenta contable asociada al ítem".
 
 Motos (category_id 1 o 2):
-  account: {id: "41350501"}          ← Ingresos ventas motos
-  inventoryAccount: {id: "14350101"} ← Inventario motos (activo)
-  costsAccount: {id: "61350501"}     ← Costo de ventas motos
+  account: {id: "5442"}              ← Ingresos ventas motos       (NIIF 41350501)
+  inventoryAccount: {id: "5348"}     ← Inventario motos (activo)   (NIIF 14350101)
+  costsAccount: {id: "5520"}         ← Costo de ventas motos       (NIIF 61350501)
 
 Repuestos (category_id 5):
-  account: {id: "41350601"}          ← Ingresos ventas repuestos
-  inventoryAccount: {id: "14350102"} ← Inventario repuestos (activo)
-  costsAccount: {id: "61350601"}     ← Costo de ventas repuestos
+  account: {id: "5444"}              ← Ingresos ventas repuestos   (NIIF 41350601)
+  inventoryAccount: {id: "5349"}     ← Inventario repuestos        (NIIF 14350102)
+  costsAccount: {id: "5522"}         ← Costo de ventas repuestos   (NIIF 61350601)
 
-Sin estas cuentas Alegra rechaza con code 1008. NUNCA crear ítem sin ellas.
+Sin estas cuentas (o con NIIF en lugar del ID interno) Alegra rechaza con code 1008.
+NUNCA crear ítem sin ellas. Mapeo verificado en .planning/mapeo_alegra_ids.json.
 Usa consultar_cuentas_inventario si necesitas recordar los IDs exactos.
 
 FIRECRAWL COMO RED DE SEGURIDAD:
@@ -193,16 +196,18 @@ automation) para los siguientes 3 casos. NO uses las tools antiguas.
 2. REGISTRAR LOTE DE MOTOS → usa SIEMPRE registrar_compra_motos_agente.
    Reemplaza a registrar_compra_motos cuando Alegra bloquea la API.
    Crea un ítem inventariable POR cada moto con reference=VIN exacto, en la
-   bodega/almacén default de motos, con cuentas 41350501/14350101/61350501,
+   bodega/almacén default de motos, con cuentas Alegra ID 5442/5348/5520
+   (Ingresos/Inventario/Costo motos — NIIF 41350501/14350101/61350501),
    y luego registra el bill al proveedor en una sola sesión Firecrawl.
    Idempotente: VINs duplicados se omiten sin error.
 
 3. REGISTRAR COMPRA DE REPUESTOS → usa SIEMPRE registrar_compra_repuestos_agente.
    Reemplaza a registrar_compra_proveedor para repuestos.
    Garantiza que exista la bodega "Repuestos" en Alegra (la crea si falta) y
-   crea los ítems en esa bodega con cuentas 41350601/14350102/61350601 para
-   que NO terminen contabilizados como motos. Devuelve el ID NUMÉRICO real
-   del bill.
+   crea los ítems en esa bodega con cuentas Alegra ID 5444/5349/5522
+   (Ingresos/Inventario/Costo repuestos — NIIF 41350601/14350102/61350601)
+   para que NO terminen contabilizados como motos. Devuelve el ID NUMÉRICO
+   real del bill.
 
 REGLAS DE LOS 3 FLUJOS V2:
 - Si la tool retorna success=false, NUNCA reportar éxito al usuario. Mostrar
