@@ -405,6 +405,35 @@ async def handle_consultar_cuentas_inventario(
         }
 
 
+async def handle_crear_factura_venta_via_firecrawl(
+    tool_input: dict,
+    alegra: AlegraClient,
+    db: AsyncIOMotorDatabase,
+    event_bus: Any,
+    user_id: str,
+) -> dict:
+    """
+    Crea factura de venta de moto en Alegra via Firecrawl + Playwright.
+    Canal principal — no depende de API REST.
+    ROG-4: publica evento factura.venta.creada si Firecrawl tiene éxito.
+    """
+    from services.firecrawl.alegra_browser import get_alegra_browser
+    browser = get_alegra_browser()
+    result = await browser.crear_factura_venta(tool_input)
+    if result.get("success"):
+        await publish_event(
+            db=db,
+            event_type="factura.venta.creada",
+            source="agente_contador",
+            datos={
+                **tool_input,
+                "via": "firecrawl",
+            },
+            accion_ejecutada=f"Factura VIN {tool_input.get('moto_vin')} via Firecrawl",
+        )
+    return result
+
+
 # Precio base Alegra por modelo (sin IVA — Alegra agrega 19% automáticamente)
 # Fuente: catálogo canónico RODDOS 27-abril-2026
 _PRECIO_BASE_ALEGRA = {

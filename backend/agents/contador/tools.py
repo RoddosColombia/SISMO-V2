@@ -499,6 +499,37 @@ _FACTURACION: list[dict] = [
         },
     },
     {
+        "name": "crear_factura_venta_via_firecrawl",
+        "description": (
+            "Crea factura de venta de moto en Alegra via Firecrawl. "
+            "Usar SIEMPRE para facturar motos. "
+            "No depende de API REST — va directo a la UI de Alegra. "
+            "Motor lo da el operador manualmente. "
+            "Incluye SOAT $363.300 + Matrícula $296.700 + GPS $82.800 por defecto."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["cliente_nombre", "cliente_cedula", "moto_vin", "moto_motor", "moto_modelo", "plan", "modo_pago", "cuota_inicial"],
+            "properties": {
+                "cliente_nombre":    {"type": "string"},
+                "cliente_cedula":    {"type": "string"},
+                "cliente_telefono":  {"type": "string"},
+                "cliente_direccion": {"type": "string"},
+                "cliente_email":     {"type": "string"},
+                "moto_vin":          {"type": "string"},
+                "moto_motor":        {"type": "string", "description": "Número de motor — el operador lo proporciona"},
+                "moto_modelo":       {"type": "string", "enum": ["TVS Raider 125", "TVS Sport 100"]},
+                "moto_color":        {"type": "string"},
+                "plan":              {"type": "string", "enum": ["P15S", "P26S", "P39S", "P52S", "P78S"]},
+                "modo_pago":         {"type": "string", "enum": ["semanal", "quincenal", "mensual"]},
+                "cuota_inicial":     {"type": "number"},
+                "incluir_soat":      {"type": "boolean"},
+                "incluir_matricula": {"type": "boolean"},
+                "incluir_gps":       {"type": "boolean"},
+            },
+        },
+    },
+    {
         "name": "crear_factura_venta",
         "description": (
             "Crea una factura de venta de moto en Alegra via POST /invoices (status=open). "

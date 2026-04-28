@@ -295,6 +295,183 @@ print(json.dumps({{"url": page.url, "title": await page.title()}}))
                     pass
 
 
+    async def crear_factura_venta(self, datos: dict) -> dict:
+        """
+        Crea factura de venta de moto en Alegra via Playwright.
+        datos = {
+            cliente_nombre, cliente_cedula, cliente_telefono,
+            cliente_direccion, cliente_email,
+            moto_vin, moto_motor, moto_modelo, moto_color,
+            plan, modo_pago, cuota_inicial,
+            incluir_soat=True, incluir_matricula=True, incluir_gps=True
+        }
+        """
+        if not FIRECRAWL_KEY:
+            return {"success": False, "error": "FIRECRAWL_API_KEY no configurada"}
+        fc = _get_fc()
+        scrape_id = None
+        try:
+            scrape_id = await _start_session(fc, f"{ALEGRA_BASE}/income/invoices/add")
+            cliente = datos.get("cliente_nombre", "")
+            vin     = datos.get("moto_vin", "")
+            motor   = datos.get("moto_motor", "")
+            modelo  = datos.get("moto_modelo", "TVS Raider 125")
+            color   = datos.get("moto_color", "")
+            plan    = datos.get("plan", "P52S")
+            modo    = datos.get("modo_pago", "semanal")
+            cuota   = datos.get("cuota_inicial", 0)
+            obs     = f"Plan:{plan} | Pago:{modo} | Cuota:${cuota:,} | VIN:{vin} | Motor:{motor}"
+
+            code = f"""
+import asyncio, json
+await page.wait_for_load_state('networkidle', timeout=20000)
+# Cliente
+try:
+    ci = await page.query_selector_all('input[placeholder*="liente"], input[placeholder*="ontacto"], input[id*="client"]')
+    if ci:
+        await ci[0].fill('{cliente}')
+        await page.wait_for_timeout(1500)
+        op = await page.query_selector('[role="option"],[class*="option"],[class*="item"]')
+        if op: await op.click()
+except: pass
+# Moto por VIN
+try:
+    ii = await page.query_selector_all('input[placeholder*="tem"],input[placeholder*="roducto"],input[id*="item"]')
+    if ii:
+        await ii[0].fill('{vin}')
+        await page.wait_for_timeout(2000)
+        op = await page.query_selector('[role="option"],[class*="option"]')
+        if op: await op.click()
+except: pass
+# Observaciones
+try:
+    ob = await page.query_selector('textarea,input[placeholder*="bs"],input[placeholder*="ota"]')
+    if ob: await ob.fill('{obs}')
+except: pass
+# Guardar
+await page.click('button:has-text("Guardar"),button:has-text("Crear"),button[type="submit"]')
+await page.wait_for_load_state('networkidle', timeout=15000)
+print(json.dumps({{"url": page.url, "title": await page.title()}}))
+"""
+            out = _interact(fc, scrape_id, code=code, language="python")
+            logger.info(f"crear_factura_venta output: {out[:200]}")
+            ok = any(k in (out or "").lower() for k in ["invoice", "factura", "view", "/income/", "guardado"])
+            return {"success": ok, "output": (out or "")[:400]}
+        except Exception as ex:
+            logger.error(f"crear_factura_venta error: {ex}")
+            return {"success": False, "error": str(ex)}
+        finally:
+            if scrape_id:
+                try:
+                    fc.stop_interaction(scrape_id)
+                except Exception:
+                    pass
+
+    async def registrar_journal(self, datos: dict) -> dict:
+        """
+        Registra un asiento contable (journal) en Alegra via Playwright.
+        datos = {
+            descripcion, fecha,
+            entries: [{"cuenta_nombre": str, "debito": float, "credito": float}]
+        }
+        """
+        if not FIRECRAWL_KEY:
+            return {"success": False, "error": "FIRECRAWL_API_KEY no configurada"}
+        fc = _get_fc()
+        scrape_id = None
+        try:
+            scrape_id = await _start_session(fc, f"{ALEGRA_BASE}/accounting/journals/add")
+            descripcion = datos.get("descripcion", "")
+            fecha = datos.get("fecha", "")
+
+            code = f"""
+import asyncio, json
+await page.wait_for_load_state('networkidle', timeout=20000)
+try:
+    desc = await page.query_selector('input[placeholder*="escripcion"],textarea[placeholder*="escripcion"],input[id*="desc"]')
+    if desc: await desc.fill('{descripcion}')
+except: pass
+try:
+    di = await page.query_selector_all('input[type="date"],input[id*="date"]')
+    if di: await di[0].fill('{fecha}')
+except: pass
+await page.click('button:has-text("Guardar"),button[type="submit"]')
+await page.wait_for_load_state('networkidle', timeout=15000)
+print(json.dumps({{"url": page.url, "title": await page.title()}}))
+"""
+            out = _interact(fc, scrape_id, code=code, language="python")
+            ok = any(k in (out or "").lower() for k in ["journal", "asiento", "view", "guardado"])
+            return {"success": ok, "output": (out or "")[:400]}
+        except Exception as ex:
+            logger.error(f"registrar_journal error: {ex}")
+            return {"success": False, "error": str(ex)}
+        finally:
+            if scrape_id:
+                try:
+                    fc.stop_interaction(scrape_id)
+                except Exception:
+                    pass
+
+    async def registrar_pago(self, datos: dict) -> dict:
+        """
+        Registra un pago recibido en Alegra via Playwright.
+        datos = {
+            cliente_nombre, monto, fecha, banco_nombre,
+            concepto, factura_numero (opcional)
+        }
+        """
+        if not FIRECRAWL_KEY:
+            return {"success": False, "error": "FIRECRAWL_API_KEY no configurada"}
+        fc = _get_fc()
+        scrape_id = None
+        try:
+            scrape_id = await _start_session(fc, f"{ALEGRA_BASE}/income/payments/add")
+            cliente  = datos.get("cliente_nombre", "")
+            monto    = datos.get("monto", 0)
+            fecha    = datos.get("fecha", "")
+            concepto = datos.get("concepto", "")
+
+            code = f"""
+import asyncio, json
+await page.wait_for_load_state('networkidle', timeout=20000)
+try:
+    ci = await page.query_selector_all('input[placeholder*="liente"],input[id*="client"]')
+    if ci:
+        await ci[0].fill('{cliente}')
+        await page.wait_for_timeout(1500)
+        op = await page.query_selector('[role="option"]')
+        if op: await op.click()
+except: pass
+try:
+    mi = await page.query_selector_all('input[placeholder*="onto"],input[id*="amount"],input[id*="value"]')
+    if mi: await mi[0].fill(str({monto}))
+except: pass
+try:
+    di = await page.query_selector_all('input[type="date"],input[id*="date"]')
+    if di: await di[0].fill('{fecha}')
+except: pass
+try:
+    ob = await page.query_selector('textarea,input[placeholder*="obs"],input[placeholder*="nota"]')
+    if ob: await ob.fill('{concepto}')
+except: pass
+await page.click('button:has-text("Guardar"),button:has-text("Registrar"),button[type="submit"]')
+await page.wait_for_load_state('networkidle', timeout=15000)
+print(json.dumps({{"url": page.url, "title": await page.title()}}))
+"""
+            out = _interact(fc, scrape_id, code=code, language="python")
+            ok = any(k in (out or "").lower() for k in ["payment", "pago", "view", "guardado"])
+            return {"success": ok, "output": (out or "")[:400]}
+        except Exception as ex:
+            logger.error(f"registrar_pago error: {ex}")
+            return {"success": False, "error": str(ex)}
+        finally:
+            if scrape_id:
+                try:
+                    fc.stop_interaction(scrape_id)
+                except Exception:
+                    pass
+
+
 # ── Singleton ─────────────────────────────────────────────────────────────────
 _alegra_browser: AlegraFirecrawlClient | None = None
 
