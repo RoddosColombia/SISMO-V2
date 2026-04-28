@@ -10,6 +10,7 @@ import logging
 import uuid
 from datetime import date, datetime, timezone
 from core.datetime_utils import now_bogota, today_bogota, now_iso_bogota
+from core.events import publish_event
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from core.loanbook_model import (
@@ -192,14 +193,12 @@ class LoanToolDispatcher:
             {"$set": {"estado": "apartada"}},
         )
 
-        # Publish event
-        await self.db.roddos_events.insert_one({  # ROG-4 OK: legacy — migrar a publish_event() en Sprint S1.5 DataKeeper
-            "event_id": str(uuid.uuid4()),
-            "event_type": "apartado.completo",
-            "source": "agent.loanbook",
-            "correlation_id": str(uuid.uuid4()),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "datos": {
+        # Publish event via publish_event helper (DataKeeper consume desde aqui)
+        await publish_event(
+            db=self.db,
+            event_type="apartado.completo",
+            source="agent.loanbook",
+            datos={
                 "loanbook_id": lb["loanbook_id"],
                 "vin": vin,
                 "cliente": cliente,
@@ -207,9 +206,9 @@ class LoanToolDispatcher:
                 "modelo": modelo,
                 "modalidad": modalidad,
             },
-            "alegra_id": None,
-            "accion_ejecutada": f"Apartado VIN {vin} para {cliente.get('nombre', '')}",
-        })
+            alegra_id=None,
+            accion_ejecutada=f"Apartado VIN {vin} para {cliente.get('nombre', '')}",
+        )
 
         logger.info(f"Apartado creado: VIN {vin}, plan {plan_codigo}, modalidad {modalidad}")
         return {
@@ -319,22 +318,20 @@ class LoanToolDispatcher:
             {"$set": {"estado": "vendida", "fecha_venta": now}},
         )
 
-        # Publish event
-        await self.db.roddos_events.insert_one({  # ROG-4 OK: legacy — migrar a publish_event() en Sprint S1.5 DataKeeper
-            "event_id": str(uuid.uuid4()),
-            "event_type": "entrega.realizada",
-            "source": "agent.loanbook",
-            "correlation_id": str(uuid.uuid4()),
-            "timestamp": now,
-            "datos": {
+        # Publish event via publish_event helper
+        await publish_event(
+            db=self.db,
+            event_type="entrega.realizada",
+            source="agent.loanbook",
+            datos={
                 "vin": vin,
                 "fecha_entrega": fecha_entrega.isoformat(),
                 "primera_cuota": resultado["fecha_primera_cuota"],
                 "ultima_cuota": resultado["fecha_ultima_cuota"],
             },
-            "alegra_id": None,
-            "accion_ejecutada": f"Entrega VIN {vin} — cronograma {resultado['fecha_primera_cuota']} a {resultado['fecha_ultima_cuota']}",
-        })
+            alegra_id=None,
+            accion_ejecutada=f"Entrega VIN {vin} — cronograma {resultado['fecha_primera_cuota']} a {resultado['fecha_ultima_cuota']}",
+        )
 
         logger.info(f"Entrega registrada: VIN {vin}, cronograma generado")
         return {
@@ -487,13 +484,11 @@ class LoanToolDispatcher:
 
         # Publish cuota.pagada event — enriched payload for contabilidad handler
         banco_recibo = tool_input.get("banco", "5314")  # default Bancolombia 2029
-        await self.db.roddos_events.insert_one({  # ROG-4 OK: legacy — migrar a publish_event() en Sprint S1.5 DataKeeper
-            "event_id": str(uuid.uuid4()),
-            "event_type": "cuota.pagada",
-            "source": "agent.loanbook",
-            "correlation_id": str(uuid.uuid4()),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "datos": {
+        await publish_event(
+            db=self.db,
+            event_type="cuota.pagada",
+            source="agent.loanbook",
+            datos={
                 "loanbook_id": lb.get("loanbook_id", ""),
                 "vin": vin,
                 "cliente_nombre": lb.get("cliente", {}).get("nombre", ""),
@@ -515,28 +510,26 @@ class LoanToolDispatcher:
                 "nuevo_estado": new_estado,
                 "dpd": dpd,
             },
-            "alegra_id": None,
-            "accion_ejecutada": f"Pago ${monto_pago:,.0f} en VIN {vin}",
-        })
+            alegra_id=None,
+            accion_ejecutada=f"Pago ${monto_pago:,.0f} en VIN {vin}",
+        )
 
         # If all cuotas are paid → publish loanbook.saldado
         cuotas_pendientes = sum(1 for c in cuotas if c["estado"] != "pagada")
         if cuotas_pendientes == 0 and max(new_saldo, 0) == 0:
-            await self.db.roddos_events.insert_one({  # ROG-4 OK: legacy — migrar a publish_event() en Sprint S1.5 DataKeeper
-                "event_id": str(uuid.uuid4()),
-                "event_type": "loanbook.saldado",
-                "source": "agent.loanbook",
-                "correlation_id": str(uuid.uuid4()),
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "datos": {
+            await publish_event(
+                db=self.db,
+                event_type="loanbook.saldado",
+                source="agent.loanbook",
+                datos={
                     "loanbook_id": lb.get("loanbook_id", ""),
                     "vin": vin,
                     "cliente_nombre": lb.get("cliente", {}).get("nombre", ""),
                     "cliente_cedula": lb.get("cliente", {}).get("cedula", ""),
                 },
-                "alegra_id": None,
-                "accion_ejecutada": f"Credito saldado VIN {vin}",
-            })
+                alegra_id=None,
+                accion_ejecutada=f"Credito saldado VIN {vin}",
+            )
             # Update loanbook state to saldado
             await self.db.loanbook.update_one(
                 {"vin": vin},

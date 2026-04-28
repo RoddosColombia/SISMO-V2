@@ -65,6 +65,9 @@ async def lifespan(app: FastAPI):
         import core.loanbook_handlers      # noqa: F401
         import core.contabilidad_handlers  # noqa: F401
         import core.crm_handlers           # noqa: F401
+        # Sprint S1.5 (2026-04-28) — DataKeeper handlers nuevos
+        import core.datakeeper_handlers_loanbook  # noqa: F401
+        import core.datakeeper_handlers_crm       # noqa: F401
 
         await ensure_datakeeper_indexes(db)
 
