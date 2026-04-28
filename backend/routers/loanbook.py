@@ -96,15 +96,20 @@ async def loanbook_stats(db: AsyncIOMotorDatabase = Depends(get_db)):
             continue
         if estado == "pendiente_entrega":
             pendiente_entrega += 1
-        # Cartera viva: todo lo que no esté saldado/castigado, incluyendo
-        # pendiente_entrega (son créditos reales esperando activación).
+        # Cartera viva: todo lo que no esté saldado/castigado, INCLUYENDO
+        # pendiente_entrega (son créditos reales con factura emitida que ya
+        # son cartera comprometida — solo falta entregar la moto).
         activos += 1
-        if estado != "pendiente_entrega":
-            # cartera_total = saldo_capital + saldo_intereses (RDX y RODANTE)
-            cartera_total += (
-                (lb.get("saldo_capital", 0) or lb.get("saldo_pendiente", 0))
+        # cartera_total = saldo_pendiente del Excel oficial (= monto_original).
+        # Si no existe saldo_pendiente, fallback a saldo_capital + saldo_intereses.
+        saldo_pend = lb.get("saldo_pendiente")
+        if saldo_pend is None or saldo_pend == 0:
+            saldo_pend = (
+                (lb.get("saldo_capital", 0) or 0)
                 + (lb.get("saldo_intereses", 0) or 0)
             )
+        # Nunca sumar negativos (caso bug datos como Richard LB-0017)
+        cartera_total += max(0, saldo_pend)
 
         # Recaudo semanal: cuota_monto for semanal, cuota/2 for quincenal, cuota/4 for mensual
         # Solo considera créditos activados (pendiente_entrega aún no genera recaudo).
@@ -1881,6 +1886,16 @@ async def obtener_comprobante(
     comp = cuota["comprobante"]
     uploaded_at = comp.get("uploaded_at")
     if hasattr(uploaded_at, "isoformat"):
+        uploaded_at = uploaded_at.isoformat()
+
+    return {
+        "filename": comp["filename"],
+        "content_type": comp["content_type"],
+        "data_b64": comp["data_b64"],
+        "uploaded_at": uploaded_at,
+        "size_kb": round(comp.get("size_bytes", 0) / 1024, 1),
+    }
+ormat"):
         uploaded_at = uploaded_at.isoformat()
 
     return {
