@@ -26,20 +26,40 @@ class AlegraFirecrawlClient:
             self._fc = FirecrawlApp(api_key=FIRECRAWL_KEY)
         return self._fc
 
+    def _extract_scrape_id(self, result) -> str:
+        """Extrae scrape_id del resultado de fc.scrape() — soporta snake_case y camelCase."""
+        # Objeto con atributo metadata
+        if hasattr(result, "metadata") and result.metadata:
+            meta = result.metadata
+            sid = getattr(meta, "scrape_id", None) or getattr(meta, "scrapeId", None)
+            if sid:
+                return str(sid)
+        # Dict plano
+        if isinstance(result, dict):
+            meta = result.get("metadata") or {}
+            sid = (
+                meta.get("scrape_id")
+                or meta.get("scrapeId")
+                or result.get("scrape_id")
+                or result.get("scrapeId")
+            )
+            if sid:
+                return str(sid)
+        return ""
+
     async def _start_session(self, url: str | None = None) -> str:
         """Navega a url (o /inventory/items/add) y hace login si es necesario. Retorna scrapeId."""
         target = url or f"{ALEGRA_BASE}/inventory/items/add"
         fc = self._get_fc()
-        result = fc.scrape_url(target, params={"formats": ["markdown"]})
+        result = fc.scrape(target)
 
         # Normalizar resultado (SDK puede devolver dict o objeto)
         if isinstance(result, dict):
-            scrape_id = (result.get("metadata") or {}).get("scrapeId") or result.get("scrapeId", "")
             content = result.get("markdown", "") or ""
         else:
-            scrape_id = getattr(getattr(result, "metadata", None), "scrapeId", "") or ""
             content = getattr(result, "markdown", "") or ""
 
+        scrape_id = self._extract_scrape_id(result)
         self._scrape_id = scrape_id
 
         # Detectar página de login y autenticar
@@ -67,9 +87,9 @@ class AlegraFirecrawlClient:
         try:
             response = fc.interact(scrape_id, prompt=prompt)
         except AttributeError:
-            # Versión SDK sin método interact — intentar vía scrape_url con actions
+            # Versión SDK sin método interact — intentar vía scrape con actions
             try:
-                response = fc.scrape_url(
+                response = fc.scrape(
                     f"{ALEGRA_BASE}/",
                     params={"actions": [{"type": "prompt", "prompt": prompt}]},
                 )
