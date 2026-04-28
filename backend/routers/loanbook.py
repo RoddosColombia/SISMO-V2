@@ -1895,13 +1895,3 @@ async def obtener_comprobante(
         "uploaded_at": uploaded_at,
         "size_kb": round(comp.get("size_bytes", 0) / 1024, 1),
     }
-ormat"):
-        uploaded_at = uploaded_at.isoformat()
-
-    return {
-        "filename": comp["filename"],
-        "content_type": comp["content_type"],
-        "data_b64": comp["data_b64"],
-        "uploaded_at": uploaded_at,
-        "size_kb": round(comp.get("size_bytes", 0) / 1024, 1),
-    }
