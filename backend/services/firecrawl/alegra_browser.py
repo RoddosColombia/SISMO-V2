@@ -10,7 +10,7 @@ logger = logging.getLogger("firecrawl.alegra")
 
 ALEGRA_BASE = "https://app.alegra.com"
 ALEGRA_EMAIL = os.getenv("ALEGRA_EMAIL", "")
-ALEGRA_PASSWORD = os.getenv("ALEGRA_PASSWORD", "")  # contraseña UI (distinta del token API)
+ALEGRA_PASSWORD = os.getenv("ALEGRA_TOKEN", "")  # en Render, ALEGRA_TOKEN ES la contraseña de usuario
 FIRECRAWL_KEY = os.getenv("FIRECRAWL_API_KEY", "")
 
 
@@ -26,30 +26,38 @@ class AlegraFirecrawlClient:
             self._fc = FirecrawlApp(api_key=FIRECRAWL_KEY)
         return self._fc
 
-    async def _start_session(self) -> str:
-        """Inicia sesión en Alegra vía Firecrawl y retorna scrapeId."""
+    async def _start_session(self, url: str | None = None) -> str:
+        """Navega a url (o /inventory/items/add) y hace login si es necesario. Retorna scrapeId."""
+        target = url or f"{ALEGRA_BASE}/inventory/items/add"
         fc = self._get_fc()
-        result = fc.scrape_url(
-            f"{ALEGRA_BASE}/inventory/items",
-            params={"formats": ["markdown"]},
-        )
-        # SDK puede devolver dict o objeto — normalizar
+        result = fc.scrape_url(target, params={"formats": ["markdown"]})
+
+        # Normalizar resultado (SDK puede devolver dict o objeto)
         if isinstance(result, dict):
             scrape_id = (result.get("metadata") or {}).get("scrapeId") or result.get("scrapeId", "")
-            markdown = result.get("markdown", "")
+            content = result.get("markdown", "") or ""
         else:
             scrape_id = getattr(getattr(result, "metadata", None), "scrapeId", "") or ""
-            markdown = getattr(result, "markdown", "") or ""
+            content = getattr(result, "markdown", "") or ""
 
         self._scrape_id = scrape_id
 
-        # Verificar si está logueado
-        if "login" in markdown.lower() or "contraseña" in markdown.lower() or "sign in" in markdown.lower():
+        # Detectar página de login y autenticar
+        login_keywords = ["ingresar", "contraseña", "login", "sign in", "iniciar sesión", "password"]
+        if any(k in content.lower() for k in login_keywords):
             logger.info("Alegra requiere login — autenticando con Firecrawl")
-            self._interact(
-                scrape_id,
-                f"Login con email {ALEGRA_EMAIL} y contraseña. Espera a que cargue el inventario.",
+            login_prompt = (
+                f"Estoy en la página de login de Alegra. "
+                f"Ingresa el email '{ALEGRA_EMAIL}' en el campo de email. "
+                f"Ingresa la contraseña '{ALEGRA_PASSWORD}' en el campo de contraseña. "
+                f"Haz clic en el botón de ingresar/login. "
+                f"Espera a que cargue el dashboard de Alegra."
             )
+            login_output = self._interact(scrape_id, login_prompt)
+            if any(k in login_output.lower() for k in ["error", "incorrecto", "invalid", "failed"]):
+                logger.error(f"Firecrawl login Alegra falló: {login_output[:200]}")
+            else:
+                logger.info("Firecrawl login Alegra exitoso")
 
         return scrape_id
 
@@ -98,20 +106,24 @@ class AlegraFirecrawlClient:
             return {"success": False, "error": "FIRECRAWL_API_KEY no configurada"}
 
         try:
-            scrape_id = await self._start_session()
+            scrape_id = await self._start_session(f"{ALEGRA_BASE}/item/add")
 
             prompt = (
-                f"Crea un nuevo producto de venta con estos datos exactos:\n"
-                f"- Tipo: Producto\n"
-                f"- Nombre: {nombre}\n"
-                f"- Referencia: {vin}\n"
-                f"- Categoría: {categoria}\n"
-                f"- Precio base (sin IVA): {precio_base}\n"
-                f"- Impuesto: IVA 19%\n"
-                f"- Costo: {precio_costo}\n"
-                f"- Inventariable: activado\n"
-                f"- Cantidad inicial: 1\n"
-                f"Haz clic en Guardar y confirma que el ítem fue creado."
+                f"Rellena el formulario de nuevo producto con estos datos exactos:\n"
+                f"1. Campo 'Nombre': escribe '{nombre}'\n"
+                f"2. Campo 'Referencia': escribe '{vin}'\n"
+                f"3. Campo 'Categoría': selecciona 'Motos nuevas'\n"
+                f"4. Campo 'Precio base': escribe '{precio_base}'\n"
+                f"5. Campo 'Impuesto': selecciona 'IVA - (19%)'\n"
+                f"6. Campo 'Costo': escribe '{precio_costo}'\n"
+                f"7. Activa el toggle 'Inventariable' si no está activado\n"
+                f"8. Campo 'Cantidad inicial': escribe '1'\n"
+                f"9. En 'Configuración contable':\n"
+                f"   - 'Cuenta Contable': selecciona '41350501 - Motos'\n"
+                f"   - 'Cuenta de inventario': selecciona '14350101 - Motos'\n"
+                f"   - 'Cuenta de costo de venta': selecciona '61350501 - Motos'\n"
+                f"10. Haz clic en el botón 'Guardar'\n"
+                f"11. Confirma que el ítem fue creado exitosamente"
             )
 
             output = self._interact(scrape_id, prompt)
@@ -144,18 +156,23 @@ class AlegraFirecrawlClient:
             return {"success": False, "error": "FIRECRAWL_API_KEY no configurada"}
 
         try:
-            scrape_id = await self._start_session()
+            scrape_id = await self._start_session(f"{ALEGRA_BASE}/item/add")
 
             prompt = (
-                f"Crea un nuevo producto de venta con estos datos:\n"
-                f"- Nombre: {nombre}\n"
-                f"- Referencia: {referencia}\n"
-                f"- Categoría: Repuestos\n"
-                f"- Precio base (sin IVA): {precio}\n"
-                f"- Impuesto: IVA 19%\n"
-                f"- Costo: {costo}\n"
-                f"- Inventariable: activado\n"
-                f"Haz clic en Guardar."
+                f"Rellena el formulario de nuevo producto con estos datos:\n"
+                f"1. Campo 'Nombre': escribe '{nombre}'\n"
+                f"2. Campo 'Referencia': escribe '{referencia}'\n"
+                f"3. Campo 'Categoría': selecciona 'Repuestos'\n"
+                f"4. Campo 'Precio base': escribe '{precio}'\n"
+                f"5. Campo 'Impuesto': selecciona 'IVA - (19%)'\n"
+                f"6. Campo 'Costo': escribe '{costo}'\n"
+                f"7. Activa el toggle 'Inventariable' si no está activado\n"
+                f"8. En 'Configuración contable':\n"
+                f"   - 'Cuenta Contable': selecciona '41350601 - Repuestos'\n"
+                f"   - 'Cuenta de inventario': selecciona '14350102 - Repuestos'\n"
+                f"   - 'Cuenta de costo de venta': selecciona '61350601 - Repuestos'\n"
+                f"9. Haz clic en el botón 'Guardar'\n"
+                f"10. Confirma que el ítem fue creado exitosamente"
             )
 
             output = self._interact(scrape_id, prompt)
@@ -192,17 +209,7 @@ class AlegraFirecrawlClient:
             return {"success": False, "error": "FIRECRAWL_API_KEY no configurada"}
 
         try:
-            fc = self._get_fc()
-            # Navegar directo a crear bill
-            result = fc.scrape_url(
-                f"{ALEGRA_BASE}/bills/add",
-                params={"formats": ["markdown"]},
-            )
-            if isinstance(result, dict):
-                scrape_id = (result.get("metadata") or {}).get("scrapeId") or result.get("scrapeId", "")
-            else:
-                scrape_id = getattr(getattr(result, "metadata", None), "scrapeId", "") or ""
-            self._scrape_id = scrape_id
+            scrape_id = await self._start_session(f"{ALEGRA_BASE}/bills/add")
 
             items_str = "\n".join(
                 f"  - {it['nombre']}: {it['cantidad']} unidades a ${it['precio']:,.0f}"
