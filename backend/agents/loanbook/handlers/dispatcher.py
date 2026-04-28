@@ -193,7 +193,7 @@ class LoanToolDispatcher:
         )
 
         # Publish event
-        await self.db.roddos_events.insert_one({
+        await self.db.roddos_events.insert_one({  # ROG-4 OK: legacy — migrar a publish_event() en Sprint S1.5 DataKeeper
             "event_id": str(uuid.uuid4()),
             "event_type": "apartado.completo",
             "source": "agent.loanbook",
@@ -320,7 +320,7 @@ class LoanToolDispatcher:
         )
 
         # Publish event
-        await self.db.roddos_events.insert_one({
+        await self.db.roddos_events.insert_one({  # ROG-4 OK: legacy — migrar a publish_event() en Sprint S1.5 DataKeeper
             "event_id": str(uuid.uuid4()),
             "event_type": "entrega.realizada",
             "source": "agent.loanbook",
@@ -487,7 +487,7 @@ class LoanToolDispatcher:
 
         # Publish cuota.pagada event — enriched payload for contabilidad handler
         banco_recibo = tool_input.get("banco", "5314")  # default Bancolombia 2029
-        await self.db.roddos_events.insert_one({
+        await self.db.roddos_events.insert_one({  # ROG-4 OK: legacy — migrar a publish_event() en Sprint S1.5 DataKeeper
             "event_id": str(uuid.uuid4()),
             "event_type": "cuota.pagada",
             "source": "agent.loanbook",
@@ -522,7 +522,7 @@ class LoanToolDispatcher:
         # If all cuotas are paid → publish loanbook.saldado
         cuotas_pendientes = sum(1 for c in cuotas if c["estado"] != "pagada")
         if cuotas_pendientes == 0 and max(new_saldo, 0) == 0:
-            await self.db.roddos_events.insert_one({
+            await self.db.roddos_events.insert_one({  # ROG-4 OK: legacy — migrar a publish_event() en Sprint S1.5 DataKeeper
                 "event_id": str(uuid.uuid4()),
                 "event_type": "loanbook.saldado",
                 "source": "agent.loanbook",
