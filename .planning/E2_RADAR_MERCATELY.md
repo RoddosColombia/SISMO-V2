@@ -32,6 +32,44 @@ Helper `get_mercately_client()` singleton para usar desde handlers sin reinstanc
 - Publica `cliente.respondio.whatsapp` para que RADAR decida siguiente acción
 - Endpoint `GET /api/webhooks/mercately/health` para validar conectividad
 
+> **NOTA 2026-04-28 (E2.5b):** Mercately **no expone webhooks** (verificado en
+> `https://mercately.redocly.app/apis` y centro de soporte). El endpoint queda
+> disponible por si Mercately publica webhooks en el futuro o para integración
+> con un middleware (Zapier/n8n). El flujo bidireccional real corre vía
+> **polling** — ver sección 5b.
+
+### 5b. Inbound poller — `services/mercately/inbound_poller.py` (E2.5b)
+
+Polling de 2 niveles cada 60 s que **simula el webhook que no existe**:
+
+1. `GET /retailers/api/v1/whatsapp_conversations?page=1&results_per_page=100`
+   → lista global con `last_interaction` por conversación.
+2. Filtra conversaciones con `last_interaction > last_global_check`.
+3. Para cada candidata: `GET /customers/{id}/whatsapp_conversations`
+   → mensajes con `direction`, `content_text`, `created_time`.
+4. Por cada mensaje `direction=inbound` con `created_time > last_seen`:
+   - Append `crm_clientes.gestiones[]` (igual que el webhook).
+   - Publica `cliente.respondio.whatsapp` con `via=polling`.
+   - Audit en `mercately_inbound_audit`.
+5. Persiste estado en `mercately_polling_state`:
+   - `_id="global"` con `last_global_check_iso`
+   - `_id="customer:{id}"` con `last_seen_msg_id` y `last_seen_iso`
+
+Ventajas vs polling ingenuo (N queries por cliente):
+- 1 sola request global por ciclo.
+- Solo profundiza en conversaciones con actividad nueva.
+- Idempotente — si SISMO se reinicia, no reprocesa mensajes ya vistos.
+- Latencia inbound: máx 60 s (configurable con `MERCATELY_POLL_INTERVAL_S`).
+
+Wiring en `core/database.py` lifespan:
+```python
+from services.mercately.inbound_poller import run_inbound_poller_loop
+interval_s = int(os.getenv("MERCATELY_POLL_INTERVAL_S", "60"))
+_mercately_inbound_poller_task = asyncio.create_task(
+    run_inbound_poller_loop(get_db_sync, interval_s=interval_s)
+)
+```
+
 ### 3. Agente RADAR — 5 tools
 
 `agents/radar/tools.py`:
@@ -202,11 +240,11 @@ Si no se configuran T1-T5 individualmente, el código usa fallbacks legacy (`MER
    - **T3 — Mora corta:** `{{1}}, tu cuota se venció hace {{2}} días. Mora acumulada: {{3}}. Te ayudamos a ponerte al día.`
    - **T4 — Mora media:** `{{1}}, tu crédito está en mora. {{2}} días de atraso, mora total {{3}}. Llámanos para acordar.`
    - **T5 — Último aviso:** `{{1}}, último aviso. Si no acuerdas pago en 48h iniciamos cobro jurídico. Mora: {{3}}.`
-2. Configurar webhook entrante:
-   - URL: `https://sismo.roddos.com/api/webhooks/mercately/inbound`
-   - Eventos: `incoming_message`
-   - Secret: el valor que pusiste en Render `MERCATELY_WEBHOOK_SECRET`
-3. Probar enviando un WhatsApp manual al sistema desde tu propio número.
+2. **NO HAY que configurar webhook entrante** — Mercately no los expone.
+   El flujo inbound corre via polling automático cada 60s desde el backend
+   (E2.5b). Solo necesitamos `MERCATELY_API_KEY` válida.
+3. Probar enviando un WhatsApp manual al sistema desde tu propio número y
+   esperar máx 60s. Verificar en logs Render: `Mercately inbound poller`.
 
 ### Verificación con curl
 

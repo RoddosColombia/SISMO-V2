@@ -17,6 +17,7 @@ _informes_scheduler_task: asyncio.Task | None = None
 _radar_scheduler_task: asyncio.Task | None = None
 _radar_scheduler_martes_task: asyncio.Task | None = None  # Sprint S2
 _radar_scheduler_jueves_task: asyncio.Task | None = None  # Sprint S2
+_mercately_inbound_poller_task: asyncio.Task | None = None  # Sprint S2.5
 
 
 async def init_db() -> None:
@@ -32,6 +33,13 @@ async def close_db() -> None:
 
 
 async def get_db() -> AsyncIOMotorDatabase:
+    if _db is None:
+        raise RuntimeError("Database not initialized. Call init_db() first.")
+    return _db
+
+
+def get_db_sync() -> AsyncIOMotorDatabase:
+    """Sync accessor para schedulers/loops. _db ya esta inicializado en lifespan."""
     if _db is None:
         raise RuntimeError("Database not initialized. Call init_db() first.")
     return _db
@@ -132,13 +140,29 @@ async def lifespan(app: FastAPI):
         logger.error(f"RADAR scheduler jueves failed to start: {e}")
         _radar_scheduler_jueves_task = None
 
+    # ── Mercately inbound poller — cada 60s (Sprint S2.5) ─────────────
+    # Mercately no expone webhooks. Polling /whatsapp_conversations.
+    global _mercately_inbound_poller_task
+    try:
+        from services.mercately.inbound_poller import run_inbound_poller_loop
+        interval_s = int(os.getenv("MERCATELY_POLL_INTERVAL_S", "60"))
+        _mercately_inbound_poller_task = asyncio.create_task(
+            run_inbound_poller_loop(get_db_sync, interval_s=interval_s)
+        )
+        logger.info(
+            "Mercately inbound poller started (interval=%ds)", interval_s
+        )
+    except Exception as e:
+        logger.error(f"Mercately inbound poller failed to start: {e}")
+        _mercately_inbound_poller_task = None
+
     yield
 
     # ── Shutdown ───────────────────────────────────────────────────────
     if _processor:
         await _processor.stop()
 
-    for task in (_processor_task, _alegra_sync_task, _dpd_scheduler_task, _informes_scheduler_task, _radar_scheduler_task, _radar_scheduler_martes_task, _radar_scheduler_jueves_task):
+    for task in (_processor_task, _alegra_sync_task, _dpd_scheduler_task, _informes_scheduler_task, _radar_scheduler_task, _radar_scheduler_martes_task, _radar_scheduler_jueves_task, _mercately_inbound_poller_task):
         if task:
             task.cancel()
             try:

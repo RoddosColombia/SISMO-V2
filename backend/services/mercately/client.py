@@ -241,6 +241,73 @@ class MercatelyClient:
             logger.error("Mercately update_customer_tags %s: %s", phone, exc)
             return {"success": False, "error": str(exc)}
 
+    async def list_whatsapp_conversations(
+        self, page: int = 1, results_per_page: int = 100,
+    ) -> dict:
+        """GET /whatsapp_conversations — lista conversaciones WA con last_interaction.
+
+        Returns:
+            {"success": True, "conversations": [...], "total_pages": int, "raw": {...}}
+            Cada conversation tiene: customer_id, phone, first_name, last_name,
+            message_count, last_interaction (ISO8601 UTC), agent_id.
+        """
+        if not self.api_key:
+            return {"success": False, "conversations": [], "error": "MERCATELY_API_KEY no configurada"}
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(
+                    f"{self.base_url}/whatsapp_conversations",
+                    params={"page": page, "results_per_page": results_per_page},
+                    headers={"api-key": self.api_key},
+                )
+            if resp.status_code == 200:
+                raw = resp.json()
+                return {
+                    "success": True,
+                    "conversations": raw.get("whatsapp_conversations", []),
+                    "total_pages": raw.get("total_pages", 1),
+                    "results": raw.get("results", 0),
+                    "raw": raw,
+                }
+            return {"success": False, "conversations": [],
+                    "error": f"HTTP {resp.status_code}", "raw": resp.text[:500]}
+        except Exception as exc:
+            logger.error("Mercately list_whatsapp_conversations: %s", exc)
+            return {"success": False, "conversations": [], "error": str(exc)}
+
+    async def get_customer_messages(
+        self, customer_id: str, page: int = 1,
+    ) -> dict:
+        """GET /customers/{id}/whatsapp_conversations — mensajes de la conversacion.
+
+        Returns:
+            {"success": True, "messages": [...], "total_pages": int, "raw": {...}}
+            Cada message tiene: id, direction (inbound/outbound), content_type,
+            content_text, created_time (ISO8601 UTC), status, message_identifier.
+        """
+        if not self.api_key:
+            return {"success": False, "messages": [], "error": "MERCATELY_API_KEY no configurada"}
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(
+                    f"{self.base_url}/customers/{customer_id}/whatsapp_conversations",
+                    params={"page": page},
+                    headers={"api-key": self.api_key},
+                )
+            if resp.status_code == 200:
+                raw = resp.json()
+                return {
+                    "success": True,
+                    "messages": raw.get("whatsapp_conversations", []),
+                    "total_pages": raw.get("total_pages", 1),
+                    "raw": raw,
+                }
+            return {"success": False, "messages": [],
+                    "error": f"HTTP {resp.status_code}", "raw": resp.text[:500]}
+        except Exception as exc:
+            logger.error("Mercately get_customer_messages %s: %s", customer_id, exc)
+            return {"success": False, "messages": [], "error": str(exc)}
+
     async def send_text(self, phone_number: str, message: str) -> dict:
         """Envía mensaje de texto libre (no template) via Mercately.
         Solo funciona dentro de la ventana de 24h después de la última respuesta
