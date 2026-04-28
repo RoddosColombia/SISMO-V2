@@ -420,10 +420,13 @@ class LoanToolDispatcher:
             saldo_capital=saldo_capital,
         )
 
-        # Mark cuotas as paid
+        # Mark cuotas as paid (incluye trazabilidad: metodo, referencia, monto_pagado)
         remaining_for_vencidas = allocation["vencidas"]
         remaining_for_corriente = allocation["corriente"]
         fecha_pago_str = fecha_pago.isoformat()
+        metodo_pago = tool_input.get("metodo") or tool_input.get("metodo_pago") or "transferencia"
+        banco_input = tool_input.get("banco", "")
+        referencia_input = tool_input.get("referencia", "")
 
         for cuota in cuotas:
             if cuota["estado"] == "pagada":
@@ -433,12 +436,20 @@ class LoanToolDispatcher:
                 if fecha_cuota < fecha_pago and remaining_for_vencidas >= cuota["monto"]:
                     cuota["estado"] = "pagada"
                     cuota["fecha_pago"] = fecha_pago_str
+                    cuota["monto_pagado"] = cuota["monto"]
+                    cuota["metodo_pago"] = metodo_pago
+                    cuota["banco"] = banco_input
+                    cuota["referencia"] = referencia_input
                     cuota["mora_acumulada"] = 0
                     remaining_for_vencidas -= cuota["monto"]
                     continue
                 if fecha_cuota >= fecha_pago and remaining_for_corriente >= cuota["monto"]:
                     cuota["estado"] = "pagada"
                     cuota["fecha_pago"] = fecha_pago_str
+                    cuota["monto_pagado"] = cuota["monto"]
+                    cuota["metodo_pago"] = metodo_pago
+                    cuota["banco"] = banco_input
+                    cuota["referencia"] = referencia_input
                     cuota["mora_acumulada"] = 0
                     remaining_for_corriente -= cuota["monto"]
                     break
@@ -461,17 +472,39 @@ class LoanToolDispatcher:
         else:
             new_saldo_intereses = lb.get("saldo_intereses") or 0
 
-        # Persist
+        # Calcular cuotas_vencidas (las que tienen fecha < hoy y siguen pendiente)
+        from datetime import date as _date
+        hoy = _date.today()
+        cuotas_vencidas_nuevas = sum(
+            1 for c in cuotas
+            if c.get("estado") != "pagada"
+            and c.get("fecha")
+            and date.fromisoformat(c["fecha"]) < hoy
+        )
+
+        # saldo_pendiente = saldo_capital + saldo_intereses
+        saldo_pendiente_nuevo = max(new_saldo, 0) + new_saldo_intereses
+
+        # Persist (B0.3: agrega cuotas_pagadas, cuotas_vencidas, saldo_pendiente,
+        # fecha_ultimo_pago, dpd, mora_acumulada_cop para que las tarjetas
+        # del frontend reflejen el estado real tras el pago)
         await self.db.loanbook.update_one(
             {"vin": vin},
             {"$set": {
                 "cuotas": cuotas,
                 "saldo_capital": max(new_saldo, 0),
                 "saldo_intereses": new_saldo_intereses,
+                "saldo_pendiente": saldo_pendiente_nuevo,
                 "total_pagado": new_total_pagado,
                 "total_mora_pagada": lb["total_mora_pagada"] + allocation["mora"],
                 "total_anzi_pagado": lb["total_anzi_pagado"] + allocation["anzi"],
                 "estado": new_estado,
+                "cuotas_pagadas": cuotas_pagadas_nuevas,
+                "cuotas_vencidas": cuotas_vencidas_nuevas,
+                "dpd": dpd,
+                "fecha_ultimo_pago": fecha_pago_str,
+                "mora_acumulada_cop": 0 if dpd == 0 else lb.get("mora_acumulada_cop", 0),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
             }},
         )
 
@@ -679,6 +712,55 @@ class LoanToolDispatcher:
 
         # Try name search
         cursor = self.db.crm_clientes.find(
+            {"nombre": {"$regex": busqueda, "$options": "i"}}
+        )
+        results = await cursor.to_list(length=20)
+        if results:
+            for r in results:
+                _clean_doc(r)
+            return {"success": True, "clientes": results, "count": len(results)}
+
+        return {"success": False, "error": f"Cliente '{busqueda}' no encontrado."}
+
+    # ═══════════════════════════════════════════
+    # Tool 11: resumen_cartera
+    # ═══════════════════════════════════════════
+
+    async def _handle_resumen_cartera(self, tool_input: dict, user_id: str) -> dict:
+        """Executive portfolio summary."""
+        today = today_bogota()
+
+        cursor = self.db.loanbook.find({})
+        all_lbs = await cursor.to_list(length=1000)
+
+        total = len(all_lbs)
+        activos = 0
+        cartera_total = 0
+        en_mora = 0
+        por_estado = {}
+
+        for lb in all_lbs:
+            estado = lb.get("estado", "")
+            por_estado[estado] = por_estado.get(estado, 0) + 1
+
+            if estado not in ("saldado", "castigado", "pendiente_entrega"):
+                activos += 1
+                cartera_total += (lb.get("saldo_capital") or 0) + (lb.get("saldo_intereses") or 0)
+
+                cuotas = lb.get("cuotas", [])
+                dpd = calcular_dpd(cuotas, today)
+                if dpd > 0:
+                    en_mora += 1
+
+        return {
+            "success": True,
+            "total_creditos": total,
+            "activos": activos,
+            "cartera_total": round(cartera_total),
+            "en_mora": en_mora,
+            "por_estado": por_estado,
+        }
+ self.db.crm_clientes.find(
             {"nombre": {"$regex": busqueda, "$options": "i"}}
         )
         results = await cursor.to_list(length=20)
