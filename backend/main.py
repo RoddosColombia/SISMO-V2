@@ -1,4 +1,23 @@
 import os
+import logging
+import sys
+
+# ── Logging global (P0 fix 2026-04-27) ───────────────────────────────────────
+# Sin esto, los logger.error/info de firecrawl/handlers/dispatcher quedan
+# silenciados — la causa principal de "falla sin lograr ver el por qué".
+# Diagnóstico: .planning/DIAGNOSTICO_CONTADOR_FIRECRAWL.md (F-2).
+_LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, _LOG_LEVEL, logging.INFO),
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    stream=sys.stdout,
+    force=True,  # override uvicorn's default config so our handlers/firecrawl logs show up
+)
+# Silenciar httpx/httpcore (demasiado verbose en INFO)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles

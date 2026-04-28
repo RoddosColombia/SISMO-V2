@@ -4,9 +4,13 @@ ToolDispatcher — routes tool_name from LLM to the correct handler function.
 CRITICAL: Tool names here MUST match the "name" field in tools.py exactly.
 Claude emits tool names from tools.py; if the dispatcher key differs, the tool won't execute.
 """
+import logging
+import traceback as _tb
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from services.alegra.client import AlegraClient
 from core.events import publish_event
+
+logger = logging.getLogger("dispatcher.contador")
 
 # Read-only tools execute immediately without ExecutionCard confirmation
 # Names must match tools.py "name" fields exactly
@@ -211,9 +215,29 @@ class ToolDispatcher:
         except ImportError:
             pass
 
+        # Phase 9 (2026-04-27): Tools V2 vía Firecrawl Agent — reemplazo robusto
+        # de los flujos rotos de scrape+interact. Diagnóstico:
+        # .planning/DIAGNOSTICO_CONTADOR_FIRECRAWL.md
+        try:
+            from agents.contador.handlers.facturacion import (
+                handle_crear_factura_venta_alegra_agente,
+                handle_registrar_compra_motos_agente,
+            )
+            from agents.contador.handlers.compras import (
+                handle_registrar_compra_repuestos_agente,
+            )
+            self._handlers.update({
+                "crear_factura_venta_alegra_agente":   handle_crear_factura_venta_alegra_agente,
+                "registrar_compra_motos_agente":        handle_registrar_compra_motos_agente,
+                "registrar_compra_repuestos_agente":    handle_registrar_compra_repuestos_agente,
+            })
+        except ImportError as _imp_err:
+            logger.error("Phase 9 V2 handlers no se pudieron importar: %s", _imp_err)
+
     async def dispatch(self, tool_name: str, tool_input: dict, user_id: str) -> dict:
         handler = self._handlers.get(tool_name)
         if not handler:
+            logger.warning("dispatch — handler no registrado: %s", tool_name)
             return {"success": False, "error": f"Handler no encontrado: {tool_name}"}
 
         try:
@@ -225,6 +249,31 @@ class ToolDispatcher:
                 user_id=user_id,
             )
         except PermissionError as e:
+            logger.warning("dispatch — permiso denegado tool=%s: %s", tool_name, e)
             return {"success": False, "error": f"Sin permiso: {str(e)}"}
         except Exception as e:
-            return {"success": False, "error": f"Error ejecutando {tool_name}: {str(e)}"}
+            # logger.exception captura traceback completo (P0 fix — antes solo era str(e))
+            logger.exception("dispatch — excepción ejecutando tool=%s", tool_name)
+            tb_str = _tb.format_exc()
+            # Persistir tool.error en roddos_events para auditoría / debugging
+            try:
+                await publish_event(
+                    db=self.db,
+                    event_type="tool.error",
+                    source="agente_contador",
+                    datos={
+                        "tool_name":  tool_name,
+                        "tool_input": tool_input,
+                        "exception":  f"{type(e).__name__}: {e}",
+                        "traceback":  tb_str[-2000:],  # tail por si es enorme
+                        "user_id":    user_id,
+                    },
+                    accion_ejecutada=f"FALLO {tool_name}: {type(e).__name__}",
+                )
+            except Exception:
+                pass  # publicar evento no debe enmascarar el error original
+            return {
+                "success": False,
+                "error": f"Error ejecutando {tool_name}: {type(e).__name__}: {str(e)}",
+                "exception_type": type(e).__name__,
+            }

@@ -17,4 +17,4 @@ pdfplumber==0.11.4
 Pillow>=10.0.0
 rapidfuzz>=3.0.0
 tzdata>=2024.1
-firecrawl
+firecrawl==4.23.0

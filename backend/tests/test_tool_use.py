@@ -31,7 +31,7 @@ from agents.contador.tools import (
 
 def test_contador_has_exactly_40_tools():
     # crear_factura_venta_via_firecrawl added: canal Firecrawl principal para facturar motos
-    assert len(CONTADOR_TOOLS) == 45
+    assert len(CONTADOR_TOOLS) == 48
 
 
 def test_compras_has_2_tools():
@@ -94,7 +94,7 @@ def test_all_tool_names_are_unique():
 
 def test_get_tools_for_contador():
     tools = get_tools_for_agent('contador')
-    assert len(tools) == 45
+    assert len(tools) == 48
 
 
 def test_get_tools_for_cfo_returns_empty():

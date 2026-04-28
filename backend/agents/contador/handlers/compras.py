@@ -259,6 +259,98 @@ async def _resolve_contact_id(
     return str(created.get("id") or created.get("_alegra_id"))
 
 
+async def handle_registrar_compra_repuestos_agente(
+    tool_input: dict,
+    alegra: AlegraClient,
+    db: AsyncIOMotorDatabase,
+    event_bus: Any,
+    user_id: str,
+) -> dict:
+    """V2 — Compra de repuestos vía fc.agent() de Firecrawl.
+
+    Garantiza que la bodega "Repuestos" exista (la crea si falta) y crea los
+    ítems en esa bodega para que las cuentas contables 41350601/14350102/61350601
+    NO sean sobreescritas por la bodega default de motos.
+
+    Diagnóstico raíz: el bug actual de "repuestos van a cuentas de motos" se
+    debe a que la bodega default de Alegra está atada a cuentas de motos.
+    Solución: bodega separada por categoría.
+    """
+    from datetime import date as _date
+    items_input = tool_input.get("items") or []
+    proveedor_nit = tool_input.get("proveedor_nit", "")
+    proveedor_nom = tool_input.get("proveedor_nombre", "Auteco S.A.S.")
+    numero_factura = tool_input.get("numero_factura", "")
+    fecha = tool_input.get("fecha") or _date.today().isoformat()
+
+    if not items_input:
+        return {"success": False, "error": "items vacío — pasa items=[{...}, ...]"}
+    if not proveedor_nit or not numero_factura:
+        return {"success": False, "error": "proveedor_nit y numero_factura son obligatorios."}
+
+    from services.firecrawl.alegra_browser import crear_lote_repuestos_agente
+    result = await crear_lote_repuestos_agente(
+        items=items_input,
+        proveedor_nit=proveedor_nit,
+        numero_factura=numero_factura,
+        fecha=fecha,
+        proveedor_nombre=proveedor_nom,
+    )
+
+    if result.get("success"):
+        from core.events import publish_event
+        await publish_event(
+            db=db,
+            event_type="compra.repuestos.registrada",
+            source="agente_contador",
+            datos={
+                "items_creados":            result.get("items_creados", []),
+                "items_omitidos":           result.get("items_omitidos", []),
+                "items_error":              result.get("errores", []),
+                "proveedor_nit":            proveedor_nit,
+                "numero_factura":           numero_factura,
+                "fecha":                    fecha,
+                "bill_alegra_id":           result.get("bill_alegra_id"),
+                "bill_alegra_url":          result.get("bill_alegra_url"),
+                "bodega_repuestos_id":      result.get("bodega_repuestos_id"),
+                "bodega_repuestos_creada":  result.get("bodega_repuestos_creada"),
+                "via":                      "firecrawl_agent_v2",
+            },
+            alegra_id=result.get("bill_alegra_id"),
+            accion_ejecutada=(
+                f"Lote {result.get('creadas',0)} repuestos + bill {result.get('bill_alegra_id')} "
+                f"en bodega {result.get('bodega_repuestos_id')}"
+            ),
+        )
+
+    bodega_msg = (
+        " (bodega Repuestos creada)" if result.get("bodega_repuestos_creada")
+        else (f" (bodega Repuestos id {result.get('bodega_repuestos_id')})" if result.get("bodega_repuestos_id") else "")
+    )
+    return {
+        "success":                  result.get("success", False),
+        "bodega_repuestos_id":      result.get("bodega_repuestos_id"),
+        "bodega_repuestos_creada":  result.get("bodega_repuestos_creada"),
+        "bodega_repuestos_existia": result.get("bodega_repuestos_existia"),
+        "creadas":                  result.get("creadas", 0),
+        "omitidas":                 result.get("omitidas", 0),
+        "errores":                  result.get("errores_count", 0),
+        "bill_alegra_id":           result.get("bill_alegra_id"),
+        "bill_alegra_url":          result.get("bill_alegra_url"),
+        "detalle_creadas":          result.get("items_creados", []),
+        "detalle_omitidas":         result.get("items_omitidos", []),
+        "detalle_errores":          result.get("errores", []),
+        "stage":                    result.get("stage"),
+        "error":                    result.get("error"),
+        "via":                      "firecrawl_agent_v2",
+        "mensaje": (
+            f"{result.get('creadas',0)} repuestos creados, "
+            f"{result.get('omitidas',0)} omitidos (ya existían), "
+            f"bill {result.get('bill_alegra_id') or 'NO CREADO'}{bodega_msg}."
+        ),
+    }
+
+
 async def handle_consultar_inventario_alegra(
     tool_input: dict,
     alegra: AlegraClient,

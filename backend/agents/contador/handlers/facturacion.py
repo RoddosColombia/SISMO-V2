@@ -653,6 +653,149 @@ async def handle_registrar_compra_motos(
     }
 
 
+async def handle_crear_factura_venta_alegra_agente(
+    tool_input: dict,
+    alegra: AlegraClient,
+    db: AsyncIOMotorDatabase,
+    event_bus: Any,
+    user_id: str,
+) -> dict:
+    """V2 — Crea factura venta vía fc.agent() de Firecrawl (LLM-driven UI).
+
+    Devuelve alegra_id REAL (numérico, extraído de la URL final). Solo publica
+    evento factura.venta.creada si la factura fue verificada en Alegra.
+    Diagnóstico: .planning/DIAGNOSTICO_CONTADOR_FIRECRAWL.md
+    """
+    validate_write_permission("contador", "POST /invoices", "alegra")
+
+    # Validación temprana
+    vin   = (tool_input.get("moto_vin") or "").strip()
+    motor = (tool_input.get("moto_motor") or "").strip()
+    if not vin:
+        return {"success": False, "error": "VIN obligatorio para facturar."}
+    if not motor:
+        return {"success": False, "error": "Número de motor obligatorio para facturar."}
+
+    from services.firecrawl.alegra_browser import crear_factura_venta_agente
+    result = await crear_factura_venta_agente(tool_input)
+
+    if not result.get("success"):
+        logger.warning(
+            "crear_factura_venta_alegra_agente FALLO — stage=%s error=%s",
+            result.get("stage"), result.get("error"),
+        )
+        return {
+            "success": False,
+            "error":   result.get("error", "Fallo desconocido en agente Firecrawl"),
+            "stage":   result.get("stage"),
+        }
+
+    alegra_id    = result.get("alegra_id")
+    alegra_url   = result.get("alegra_url", "")
+    factura_total = result.get("factura_total")
+
+    # ROG-4: solo publica evento si tenemos id Alegra real (verificado)
+    await publish_event(
+        db=db,
+        event_type="factura.venta.creada",
+        source="agente_contador",
+        datos={
+            **tool_input,
+            "alegra_invoice_id": alegra_id,
+            "alegra_invoice_url": alegra_url,
+            "factura_total":     factura_total,
+            "via":               "firecrawl_agent_v2",
+        },
+        alegra_id=alegra_id,
+        accion_ejecutada=f"Factura {alegra_id} VIN {vin} via Firecrawl Agent",
+    )
+
+    return {
+        "success":              True,
+        "alegra_id":            alegra_id,
+        "alegra_invoice_url":   alegra_url,
+        "factura_total":        factura_total,
+        "via":                  "firecrawl_agent_v2",
+        "message":              f"Factura #{alegra_id} creada en Alegra (vía agente Firecrawl).",
+    }
+
+
+async def handle_registrar_compra_motos_agente(
+    tool_input: dict,
+    alegra: AlegraClient,
+    db: AsyncIOMotorDatabase,
+    event_bus: Any,
+    user_id: str,
+) -> dict:
+    """V2 — Registra lote de motos (items + bill) vía fc.agent().
+
+    Reemplaza el Firecrawl scrape+interact roto por un agente IA que crea cada
+    ítem con reference=VIN y dispara el bill al proveedor en una sola sesión.
+    """
+    motos = tool_input.get("motos") or []
+    proveedor_nit  = tool_input.get("proveedor_nit", "")
+    proveedor_nom  = tool_input.get("proveedor_nombre", "Auteco Mobility S.A.S.")
+    numero_factura = tool_input.get("numero_factura", "")
+    fecha          = tool_input.get("fecha", today_bogota().isoformat())
+
+    if not motos:
+        return {"success": False, "error": "Lote vacío — pasa motos=[{...}, ...]"}
+    if not proveedor_nit or not numero_factura:
+        return {"success": False, "error": "proveedor_nit y numero_factura son obligatorios."}
+
+    from services.firecrawl.alegra_browser import crear_lote_motos_agente
+    result = await crear_lote_motos_agente(
+        motos=motos,
+        proveedor_nit=proveedor_nit,
+        numero_factura=numero_factura,
+        fecha=fecha,
+        proveedor_nombre=proveedor_nom,
+    )
+
+    # Publicar evento solo si bill tiene id real
+    if result.get("success"):
+        await publish_event(
+            db=db,
+            event_type="compra.motos.registrada",
+            source="agente_contador",
+            datos={
+                "motos_creadas":  result.get("items_creados", []),
+                "motos_omitidas": result.get("items_omitidos", []),
+                "motos_error":    result.get("errores", []),
+                "proveedor_nit":  proveedor_nit,
+                "numero_factura": numero_factura,
+                "fecha":          fecha,
+                "bill_alegra_id": result.get("bill_alegra_id"),
+                "bill_alegra_url": result.get("bill_alegra_url"),
+                "via":            "firecrawl_agent_v2",
+            },
+            alegra_id=result.get("bill_alegra_id"),
+            accion_ejecutada=(
+                f"Lote {result.get('creadas',0)} motos + bill {result.get('bill_alegra_id')} via Firecrawl Agent"
+            ),
+        )
+
+    return {
+        "success":          result.get("success", False),
+        "creadas":          result.get("creadas", 0),
+        "omitidas":         result.get("omitidas", 0),
+        "errores":          result.get("errores_count", 0),
+        "bill_alegra_id":   result.get("bill_alegra_id"),
+        "bill_alegra_url":  result.get("bill_alegra_url"),
+        "detalle_creadas":  result.get("items_creados", []),
+        "detalle_omitidas": result.get("items_omitidos", []),
+        "detalle_errores":  result.get("errores", []),
+        "stage":            result.get("stage"),
+        "error":            result.get("error"),
+        "via":              "firecrawl_agent_v2",
+        "mensaje": (
+            f"{result.get('creadas',0)} motos creadas, "
+            f"{result.get('omitidas',0)} omitidas (ya existían), "
+            f"bill {result.get('bill_alegra_id') or 'NO CREADO'}."
+        ),
+    }
+
+
 async def handle_crear_item_inventario(
     tool_input: dict,
     alegra: AlegraClient,

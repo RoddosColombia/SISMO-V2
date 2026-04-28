@@ -1063,6 +1063,123 @@ _COMPRAS: list[dict] = [
 # LISTA COMPLETA: 44 herramientas (43 previas + 1 consultar_cuentas_inventario)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# CATEGORÍA 9 — TOOLS V2 vía Firecrawl Agent (2026-04-27)
+# Reemplazo robusto de las tools que iban via API REST cuando Alegra bloquea
+# bots, y de las tools que iban via scrape+interact de Firecrawl (rotas).
+# Diagnóstico: .planning/DIAGNOSTICO_CONTADOR_FIRECRAWL.md
+# ---------------------------------------------------------------------------
+
+_AGENTE_V2: list[dict] = [
+    {
+        "name": "crear_factura_venta_alegra_agente",
+        "description": (
+            "USAR SIEMPRE para emitir una factura de venta de moto a crédito. "
+            "Reemplaza a crear_factura_venta y a crear_factura_venta_via_firecrawl (ambas obsoletas/rotas). "
+            "Esta tool ejecuta el agente IA de Firecrawl (Playwright + LLM) sobre la UI de Alegra "
+            "y devuelve el ID NUMÉRICO real de la factura (extraído de la URL final). "
+            "VIN y motor son obligatorios. SOAT, matrícula y GPS van incluidos por defecto. "
+            "Forma de pago: CRÉDITO. Status: open (factura electrónica DIAN)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["cliente_nombre", "cliente_cedula", "moto_vin", "moto_motor", "moto_modelo", "plan", "modo_pago"],
+            "properties": {
+                "cliente_nombre":    {"type": "string"},
+                "cliente_cedula":    {"type": "string"},
+                "cliente_telefono":  {"type": "string"},
+                "cliente_direccion": {"type": "string"},
+                "cliente_email":     {"type": "string"},
+                "moto_vin":          {"type": "string", "description": "VIN/chasis OBLIGATORIO"},
+                "moto_motor":        {"type": "string", "description": "Número de motor — el operador lo proporciona"},
+                "moto_modelo":       {"type": "string", "enum": ["TVS Raider 125", "TVS Sport 100"]},
+                "moto_color":        {"type": "string"},
+                "plan":              {"type": "string", "enum": ["P15S", "P26S", "P39S", "P52S", "P78S"]},
+                "modo_pago":         {"type": "string", "enum": ["semanal", "quincenal", "mensual"]},
+                "cuota_inicial":     {"type": "number"},
+                "incluir_soat":      {"type": "boolean", "description": "Default true"},
+                "incluir_matricula": {"type": "boolean", "description": "Default true"},
+                "incluir_gps":       {"type": "boolean", "description": "Default true"},
+            },
+        },
+    },
+    {
+        "name": "registrar_compra_motos_agente",
+        "description": (
+            "USAR SIEMPRE para registrar la llegada de un lote de motos del proveedor. "
+            "Reemplaza a registrar_compra_motos cuando Alegra bloquea POST /items via API. "
+            "Esta tool usa el agente IA de Firecrawl: por cada moto crea un ítem inventariable "
+            "individual (reference=VIN exacto, categoría Motos nuevas id 1, cuentas 41350501/14350101/61350501) "
+            "y luego registra el bill al proveedor. Idempotente: VINs duplicados se omiten. "
+            "Devuelve el ID NUMÉRICO real del bill en Alegra. "
+            "Cuándo: 'llegaron N motos', 'subir lote Auteco', PDF Auteco de motos."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["motos", "proveedor_nit", "numero_factura", "fecha"],
+            "properties": {
+                "motos": {
+                    "type": "array",
+                    "description": "Lista de motos. Una por VIN.",
+                    "items": {
+                        "type": "object",
+                        "required": ["vin", "motor", "modelo"],
+                        "properties": {
+                            "vin":    {"type": "string", "description": "VIN/chasis exacto, mayúsculas"},
+                            "motor":  {"type": "string", "description": "Número de motor — OBLIGATORIO DIAN"},
+                            "modelo": {"type": "string", "enum": ["TVS Raider 125", "TVS Sport 100"]},
+                            "color":  {"type": "string"},
+                            "precio_costo": {"type": "number", "description": "Costo unitario sin IVA en COP"},
+                        },
+                    },
+                },
+                "proveedor_nit":    {"type": "string", "description": "NIT proveedor (Auteco 901249413 o 860024781)"},
+                "proveedor_nombre": {"type": "string"},
+                "numero_factura":   {"type": "string"},
+                "fecha":            {"type": "string", "description": "yyyy-MM-dd"},
+            },
+        },
+    },
+    {
+        "name": "registrar_compra_repuestos_agente",
+        "description": (
+            "USAR SIEMPRE para registrar compras de repuestos a proveedor (Auteco u otros). "
+            "Crítico: garantiza que los ítems queden en la BODEGA 'Repuestos' para que las "
+            "cuentas contables 14350102 (inventario), 41350601 (ingreso) y 61350601 (costo) "
+            "NO sean sobreescritas por la bodega default de motos. "
+            "Si la bodega 'Repuestos' no existe, esta tool la crea automáticamente. "
+            "Luego crea los ítems (reference=referencia del proveedor, categoría Repuestos id 5) "
+            "y registra el bill. Idempotente por reference. "
+            "Devuelve ID NUMÉRICO real del bill. Auteco NIT 860024781/901249413 = autoretenedor."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["items", "proveedor_nit", "numero_factura", "fecha"],
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["referencia", "nombre", "cantidad", "precio_unit"],
+                        "properties": {
+                            "referencia":  {"type": "string", "description": "SKU/referencia exacta del proveedor"},
+                            "nombre":      {"type": "string"},
+                            "cantidad":    {"type": "number"},
+                            "precio_unit": {"type": "number", "description": "Precio unitario sin IVA en COP"},
+                            "iva_pct":     {"type": "number", "description": "Default 19"},
+                        },
+                    },
+                },
+                "proveedor_nit":    {"type": "string"},
+                "proveedor_nombre": {"type": "string"},
+                "numero_factura":   {"type": "string"},
+                "fecha":            {"type": "string", "description": "yyyy-MM-dd"},
+            },
+        },
+    },
+]
+
+
 CONTADOR_TOOLS: list[dict] = (
     _EGRESOS
     + _INGRESOS
@@ -1073,6 +1190,7 @@ CONTADOR_TOOLS: list[dict] = (
     + _NOMINA_IMPUESTOS
     + _COMPRAS
     + _CATALOGO
+    + _AGENTE_V2  # Tools V2 robustas vía Firecrawl Agent (2026-04-27)
 )
 
 from agents.loanbook.tools import LOANBOOK_TOOLS
