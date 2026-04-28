@@ -38,10 +38,12 @@ class TestToolUseNative:
                     f"Tool '{tool['name']}' references /journal-entries without NUNCA warning"
                 )
 
-    def test_cfo_and_radar_have_no_tools(self):
-        """D-05: CFO, RADAR get no tools. Loanbook has 11 tools (Phase 7)."""
+    def test_cfo_has_no_tools(self):
+        """D-05: CFO gets no tools (Ejecucion 4 los agrega).
+        RADAR ahora tiene 5 tools desde Sprint S2 (Ejecucion 2).
+        Loanbook tiene 11 tools (Phase 7)."""
         assert get_tools_for_agent('cfo') == []
-        assert get_tools_for_agent('radar') == []
+        assert len(get_tools_for_agent('radar')) == 5     # Sprint S2
         assert len(get_tools_for_agent('loanbook')) == 11
 
     def test_registrar_gasto_or_crear_causacion_tool_exists(self):

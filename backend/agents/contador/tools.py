@@ -1196,11 +1196,12 @@ CONTADOR_TOOLS: list[dict] = (
 )
 
 from agents.loanbook.tools import LOANBOOK_TOOLS
+from agents.radar.tools import RADAR_TOOLS  # Sprint S2 — 5 tools cobranza
 
 AGENT_TOOLS: dict[str, list[dict]] = {
     'contador': CONTADOR_TOOLS,
-    'cfo': [],      # No tools — CFO solo lee de Alegra (GET)
-    'radar': [],    # No tools — RADAR solo gestiona cobranza
+    'cfo': [],      # No tools — CFO solo lee de Alegra (GET) — Ejecucion 4
+    'radar': RADAR_TOOLS,        # 5 tools — Sprint S2 (Ejecucion 2)
     'loanbook': LOANBOOK_TOOLS,  # 11 tools — Sprint 7
 }
 

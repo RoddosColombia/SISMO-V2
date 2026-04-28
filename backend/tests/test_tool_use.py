@@ -101,8 +101,16 @@ def test_get_tools_for_cfo_returns_empty():
     assert get_tools_for_agent('cfo') == []
 
 
-def test_get_tools_for_radar_returns_empty():
-    assert get_tools_for_agent('radar') == []
+def test_get_tools_for_radar_returns_5_tools():
+    """Sprint S2 (Ejecucion 2): RADAR tiene 5 tools de cobranza."""
+    tools = get_tools_for_agent('radar')
+    assert len(tools) == 5
+    nombres = {t["name"] for t in tools}
+    assert "generar_cola_cobranza" in nombres
+    assert "registrar_gestion" in nombres
+    assert "registrar_promesa_pago" in nombres
+    assert "enviar_whatsapp_template" in nombres
+    assert "consultar_estado_cliente" in nombres
 
 
 def test_get_tools_for_loanbook_returns_11():

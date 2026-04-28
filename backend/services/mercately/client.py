@@ -143,3 +143,138 @@ class MercatelyClient:
                 phone_clean, template_id, exc,
             )
             return {"success": False, "error": str(exc), "raw": {}}
+
+    # ── Sprint S2 (Ejecucion 2) — Mercately bidireccional ─────────────────────
+
+    async def get_customer_by_phone(self, phone_number: str) -> dict:
+        """GET /customers?phone=... (R-MERCATELY: SIEMPRE antes de POST/PATCH).
+
+        Returns:
+            {"success": True, "found": bool, "customer": {...}|None, "raw": {...}}
+        """
+        if not self.api_key:
+            return {"success": False, "found": False, "customer": None,
+                    "error": "MERCATELY_API_KEY no configurada"}
+
+        phone = _limpiar_telefono(phone_number)
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(
+                    f"{self.base_url}/customers",
+                    params={"phone_number": phone},
+                    headers={"api-key": self.api_key},
+                )
+            if resp.status_code == 200:
+                raw = resp.json()
+                # API puede devolver lista directa o {"customers": [...]}
+                customers = raw if isinstance(raw, list) else raw.get("customers", [])
+                if customers:
+                    return {"success": True, "found": True, "customer": customers[0], "raw": raw}
+                return {"success": True, "found": False, "customer": None, "raw": raw}
+            return {"success": False, "found": False, "customer": None,
+                    "error": f"HTTP {resp.status_code}", "raw": resp.text[:500]}
+        except Exception as exc:
+            logger.error("Mercately get_customer_by_phone %s: %s", phone, exc)
+            return {"success": False, "found": False, "customer": None, "error": str(exc)}
+
+    async def create_customer(
+        self, phone_number: str, first_name: str, last_name: str = "",
+        email: str = "", id_number: str = "", tags: list[str] | None = None,
+    ) -> dict:
+        """POST /customers — crea contacto en Mercately."""
+        if not self.api_key:
+            return {"success": False, "error": "MERCATELY_API_KEY no configurada"}
+        phone = _limpiar_telefono(phone_number)
+        payload = {
+            "phone_number": phone,
+            "first_name":   first_name,
+            "last_name":    last_name,
+            "email":        email,
+            "id_number":    id_number,
+        }
+        if tags:
+            payload["tags"] = tags
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.post(
+                    f"{self.base_url}/customers",
+                    json=payload,
+                    headers={"Content-Type": "application/json", "api-key": self.api_key},
+                )
+            raw = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {"body": resp.text}
+            if resp.status_code in (200, 201):
+                return {"success": True, "customer": raw, "raw": raw}
+            return {"success": False, "error": f"HTTP {resp.status_code}", "raw": raw}
+        except Exception as exc:
+            logger.error("Mercately create_customer %s: %s", phone, exc)
+            return {"success": False, "error": str(exc)}
+
+    async def update_customer_tags(
+        self, phone_number: str, add_tags: list[str] | None = None,
+        remove_tags: list[str] | None = None,
+    ) -> dict:
+        """PATCH tags del contacto. Idempotente.
+        Mercately no documenta endpoint exacto en todas las versiones; intentamos
+        PATCH /customers/by_phone/{phone}/tags. Si falla, fallback al endpoint
+        de actualizar contacto completo."""
+        if not self.api_key:
+            return {"success": False, "error": "MERCATELY_API_KEY no configurada"}
+        phone = _limpiar_telefono(phone_number)
+        body: dict = {}
+        if add_tags:
+            body["add_tags"] = add_tags
+        if remove_tags:
+            body["remove_tags"] = remove_tags
+        if not body:
+            return {"success": True, "noop": True}
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.patch(
+                    f"{self.base_url}/customers/by_phone/{phone}",
+                    json=body,
+                    headers={"Content-Type": "application/json", "api-key": self.api_key},
+                )
+            if resp.status_code in (200, 204):
+                return {"success": True, "tags_added": add_tags or [], "tags_removed": remove_tags or []}
+            return {"success": False, "error": f"HTTP {resp.status_code}", "raw": resp.text[:500]}
+        except Exception as exc:
+            logger.error("Mercately update_customer_tags %s: %s", phone, exc)
+            return {"success": False, "error": str(exc)}
+
+    async def send_text(self, phone_number: str, message: str) -> dict:
+        """Envía mensaje de texto libre (no template) via Mercately.
+        Solo funciona dentro de la ventana de 24h después de la última respuesta
+        del cliente. Para fuera de ventana, usar send_template."""
+        if not self.api_key:
+            return {"success": False, "error": "MERCATELY_API_KEY no configurada"}
+        phone = _limpiar_telefono(phone_number)
+        payload = {"phone_number": phone, "message": message[:1024]}
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.post(
+                    f"{self.base_url}/whatsapp/send_message",
+                    json=payload,
+                    headers={"Content-Type": "application/json", "api-key": self.api_key},
+                )
+            raw = {}
+            try:
+                raw = resp.json()
+            except Exception:
+                raw = {"body": resp.text[:500]}
+            if resp.status_code in (200, 201):
+                return {"success": True, "message_id": raw.get("id", ""), "raw": raw}
+            return {"success": False, "error": f"HTTP {resp.status_code}", "raw": raw}
+        except Exception as exc:
+            logger.error("Mercately send_text %s: %s", phone, exc)
+            return {"success": False, "error": str(exc)}
+
+
+# Singleton helper
+_mercately_client: MercatelyClient | None = None
+
+
+def get_mercately_client() -> MercatelyClient:
+    global _mercately_client
+    if _mercately_client is None:
+        _mercately_client = MercatelyClient()
+    return _mercately_client

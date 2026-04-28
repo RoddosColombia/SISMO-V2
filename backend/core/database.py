@@ -15,6 +15,8 @@ _alegra_sync_task: asyncio.Task | None = None
 _dpd_scheduler_task: asyncio.Task | None = None
 _informes_scheduler_task: asyncio.Task | None = None
 _radar_scheduler_task: asyncio.Task | None = None
+_radar_scheduler_martes_task: asyncio.Task | None = None  # Sprint S2
+_radar_scheduler_jueves_task: asyncio.Task | None = None  # Sprint S2
 
 
 async def init_db() -> None:
@@ -110,13 +112,33 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"RADAR scheduler failed to start: {e}")
 
+    # ── RADAR scheduler martes 09:00 AM (recordatorio T1, Sprint S2) ──
+    global _radar_scheduler_martes_task
+    try:
+        from agents.radar.alertas import run_radar_scheduler_martes
+        _radar_scheduler_martes_task = asyncio.create_task(run_radar_scheduler_martes(db))
+        logger.info("RADAR scheduler martes started (recordatorio T1 09:00 AM Bogota)")
+    except Exception as e:
+        logger.error(f"RADAR scheduler martes failed to start: {e}")
+        _radar_scheduler_martes_task = None
+
+    # ── RADAR scheduler jueves 10:00 AM (mora T3-T5, Sprint S2) ──────
+    global _radar_scheduler_jueves_task
+    try:
+        from agents.radar.alertas import run_radar_scheduler_jueves
+        _radar_scheduler_jueves_task = asyncio.create_task(run_radar_scheduler_jueves(db))
+        logger.info("RADAR scheduler jueves started (mora T3-T5 10:00 AM Bogota)")
+    except Exception as e:
+        logger.error(f"RADAR scheduler jueves failed to start: {e}")
+        _radar_scheduler_jueves_task = None
+
     yield
 
     # ── Shutdown ───────────────────────────────────────────────────────
     if _processor:
         await _processor.stop()
 
-    for task in (_processor_task, _alegra_sync_task, _dpd_scheduler_task, _informes_scheduler_task, _radar_scheduler_task):
+    for task in (_processor_task, _alegra_sync_task, _dpd_scheduler_task, _informes_scheduler_task, _radar_scheduler_task, _radar_scheduler_martes_task, _radar_scheduler_jueves_task):
         if task:
             task.cancel()
             try:

@@ -100,6 +100,9 @@ def _check_read_only_for_agent(tool_name: str, agent_type: str) -> bool:
     if agent_type == "loanbook":
         from agents.loanbook.handlers.dispatcher import is_read_only_tool as lb_iro
         return lb_iro(tool_name)
+    if agent_type == "radar":
+        from agents.radar.handlers.dispatcher import is_read_only_tool as rd_iro
+        return rd_iro(tool_name)
     return is_read_only_tool(tool_name)
 
 
@@ -108,6 +111,9 @@ def _make_dispatcher(agent_type: str, db: AsyncIOMotorDatabase):
     if agent_type == "loanbook":
         from agents.loanbook.handlers.dispatcher import LoanToolDispatcher
         return LoanToolDispatcher(db=db)
+    if agent_type == "radar":
+        from agents.radar.handlers.dispatcher import RadarToolDispatcher
+        return RadarToolDispatcher(db=db)
     # Default: contador
     from services.alegra.client import AlegraClient
     alegra = AlegraClient(db=db)
@@ -456,8 +462,3 @@ def _format_tool_proposal(tool_name: str, tool_input: dict) -> str:
             if entry.get('credit', 0) > 0:
                 lines.append(f"CREDITO cta {entry['id']}: ${entry['credit']:,.0f}")
         return " | ".join(lines)
-    if tool_name == 'registrar_gasto':
-        monto = tool_input.get('monto', 0)
-        desc = tool_input.get('descripcion', '')
-        return f"Registrar gasto: {desc} -- ${monto:,.0f}"
-    return f"Ejecutar {tool_name} con parametros: {json.dumps(tool_input, ensure_ascii=False)}"

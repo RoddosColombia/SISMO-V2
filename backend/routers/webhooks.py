@@ -256,3 +256,123 @@ async def alegra_health() -> dict[str, str]:
 @router.get("/alegra/health")
 async def alegra_health_get() -> dict[str, str]:
     return {"ok": "true", "service": "sismo.roddos.com", "endpoint": "alegra-webhook"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Mercately — inbound webhook (cliente respondio WhatsApp)
+# Sprint S2 (Ejecucion 2) — RADAR + Mercately bidireccional
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.post("/mercately/inbound")
+async def mercately_inbound_webhook(
+    request: Request,
+    x_mercately_signature: str | None = Header(default=None),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+) -> dict[str, Any]:
+    """
+    Recibe webhook de Mercately cuando un cliente responde un WhatsApp enviado
+    por SISMO. Registra la respuesta en crm_clientes.gestiones[] como timeline.
+
+    Cuerpo esperado (formato Mercately webhooks):
+        {
+          "event": "incoming_message",
+          "data": {
+            "phone_number": "573001234567",
+            "message": "voy a pagar manana",
+            "type": "text",
+            "timestamp": "...",
+            "customer": {"id": "...", "first_name": "..."}
+          }
+        }
+
+    Acciones:
+    1. Validar HMAC con MERCATELY_WEBHOOK_SECRET (si configurado).
+    2. Buscar cliente CRM por mercately_phone == phone_number.
+    3. Append a crm_clientes.gestiones[] con tipo='whatsapp_inbound'.
+    4. Publica cliente.respondio.whatsapp para que RADAR decida siguiente accion.
+    """
+    body_bytes = await request.body()
+    secret = os.getenv("MERCATELY_WEBHOOK_SECRET", "")
+    if not _validate_hmac(body_bytes, x_mercately_signature, secret, require=bool(secret)):
+        logger.warning("mercately/inbound — HMAC invalido o ausente")
+        raise HTTPException(401, "Invalid or missing X-Mercately-Signature")
+
+    try:
+        payload = await request.json()
+    except Exception as e:
+        raise HTTPException(400, f"Invalid JSON: {e}")
+
+    event_name = (payload.get("event") or "").lower()
+    data = payload.get("data") or payload
+
+    phone = (data.get("phone_number") or data.get("from") or "").strip()
+    message_text = (data.get("message") or data.get("text") or "").strip()
+    msg_type = data.get("type", "text")
+
+    if not phone:
+        raise HTTPException(400, "Missing data.phone_number")
+
+    # Normalizar phone a 12 digitos +57
+    digits = "".join(ch for ch in phone if ch.isdigit())
+    if len(digits) == 10:
+        digits = "57" + digits
+    if not (len(digits) == 12 and digits.startswith("57")):
+        logger.warning(f"mercately/inbound phone formato invalido: {phone}")
+        return {"ok": False, "reason": "phone_invalid"}
+
+    # Buscar cliente CRM
+    cliente = await db.crm_clientes.find_one({"mercately_phone": digits})
+    if not cliente:
+        # Fallback por telefono crudo
+        cliente = await db.crm_clientes.find_one({"telefono": {"$regex": digits[-10:]}})
+
+    cedula = (cliente or {}).get("cedula", "")
+
+    # Append gestion al timeline si encontramos cliente
+    if cliente:
+        from datetime import datetime, timezone as _tz
+        await db.crm_clientes.update_one(
+            {"_id": cliente["_id"]},
+            {"$push": {
+                "gestiones": {
+                    "tipo": "whatsapp_inbound",
+                    "fecha": datetime.now(_tz.utc).isoformat(),
+                    "mensaje": message_text[:1024],
+                    "msg_type": msg_type,
+                    "phone": digits,
+                    "nota": f"Cliente respondio por WhatsApp: '{message_text[:200]}'",
+                }
+            }},
+        )
+        logger.info(
+            f"mercately/inbound — gestion registrada cedula={cedula} phone={digits} msg='{message_text[:80]}'"
+        )
+
+    # Publicar evento para que RADAR decida siguiente accion
+    await publish_event(
+        db=db,
+        event_type="cliente.respondio.whatsapp",
+        source="webhook.mercately",
+        datos={
+            "phone": digits,
+            "cedula": cedula,
+            "mensaje": message_text[:1024],
+            "msg_type": msg_type,
+            "evento_mercately": event_name,
+        },
+        alegra_id=None,
+        accion_ejecutada=f"Respuesta WhatsApp de {cedula or phone}",
+    )
+
+    return {
+        "ok": True,
+        "event_published": "cliente.respondio.whatsapp",
+        "cliente_encontrado": bool(cliente),
+        "cedula": cedula,
+        "phone": digits,
+    }
+
+
+@router.get("/mercately/health")
+async def mercately_health() -> dict[str, str]:
+    return {"ok": "true", "service": "sismo.roddos.com", "endpoint": "mercately-inbound-webhook"}

@@ -324,3 +324,284 @@ async def run_radar_scheduler(db: "AsyncIOMotorDatabase") -> None:
             logger.info("RADAR scheduler completado: %s", stats)
         except Exception as exc:
             logger.error("RADAR scheduler falló: %s", exc)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Schedulers extra (Sprint S2 — Ejecucion 2)
+# Martes 9AM: recordatorio T1 a clientes con cuota miercoles -2d
+# Jueves 10AM: mora T3/T4/T5 a clientes que no pagaron miercoles
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _segundos_hasta_dia_hora(target_weekday: int, target_hour: int) -> float:
+    """Calcula segundos hasta el proximo target_weekday a las target_hour:00 AM Bogota.
+
+    target_weekday: 0=Lun ... 6=Dom. Ejemplo: martes=1, jueves=3.
+    """
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    TZ = ZoneInfo("America/Bogota")
+    ahora = datetime.now(TZ)
+
+    dias_hasta = (target_weekday - ahora.weekday()) % 7
+    if dias_hasta == 0:
+        target_hoy = ahora.replace(hour=target_hour, minute=0, second=0, microsecond=0)
+        if ahora < target_hoy:
+            return (target_hoy - ahora).total_seconds()
+        dias_hasta = 7
+
+    target = (ahora + timedelta(days=dias_hasta)).replace(
+        hour=target_hour, minute=0, second=0, microsecond=0
+    )
+    return (target - ahora).total_seconds()
+
+
+async def enviar_recordatorios_martes(db: "AsyncIOMotorDatabase") -> dict:
+    """Martes 9AM — Envia template T1 a clientes cuya cuota es el miercoles siguiente.
+
+    Filtros:
+    - loanbook estado activo/al_dia/en_riesgo
+    - tiene cuota pendiente con fecha == hoy + 1 (miercoles)
+    - no contactado hoy (Ley 2300)
+
+    Returns: {"enviados": N, "errores": M, "saltados": K}
+    """
+    from datetime import timedelta
+    hoy = today_bogota()
+    if hoy.weekday() != 1:  # 1 = Tuesday
+        logger.info("recordatorios_martes: hoy no es martes (weekday=%d), saltado", hoy.weekday())
+        return {"enviados": 0, "errores": 0, "saltados": 0, "razon": "no_es_martes"}
+
+    miercoles = hoy + timedelta(days=1)
+    miercoles_iso = miercoles.isoformat()
+
+    enviados = 0
+    errores = 0
+    saltados = 0
+
+    cursor = db.loanbook.find({"estado": {"$nin": list(_ESTADOS_EXCLUIDOS)}})
+    async for lb in cursor:
+        cliente = lb.get("cliente") or {}
+        cedula = cliente.get("cedula", "")
+        nombre = cliente.get("nombre", "")
+        telefono = cliente.get("telefono", "")
+        if not cedula or not telefono:
+            saltados += 1
+            continue
+
+        # Buscar cuota pendiente para mañana (miercoles)
+        cuota_target = None
+        for c in lb.get("cuotas") or []:
+            if c.get("estado") == "pagada":
+                continue
+            fecha_c = (c.get("fecha") or "")[:10]
+            if fecha_c == miercoles_iso:
+                cuota_target = c
+                break
+
+        if not cuota_target:
+            saltados += 1
+            continue
+
+        # Ya contactado hoy?
+        crm = await db.crm_clientes.find_one({"cedula": cedula}, {"gestiones": 1, "_id": 0})
+        if crm:
+            today_iso = hoy.isoformat()
+            ya_contactado = any(
+                (g.get("fecha") or "")[:10] == today_iso and (g.get("tipo") or "").startswith("whatsapp")
+                for g in (crm.get("gestiones") or [])
+            )
+            if ya_contactado:
+                saltados += 1
+                continue
+
+        monto = cuota_target.get("monto") or cuota_target.get("monto_total") or 0
+        template_id = os.getenv("MERCATELY_TEMPLATE_T1_RECORDATORIO_ID",
+                                os.getenv("MERCATELY_TEMPLATE_COBRO_ID", ""))
+        if not template_id:
+            logger.warning("recordatorios_martes: MERCATELY_TEMPLATE_T1_RECORDATORIO_ID no configurado")
+            return {"enviados": 0, "errores": 1, "saltados": saltados,
+                    "razon": "template_no_configurado"}
+
+        client = MercatelyClient()
+        result = await client.send_template(
+            phone_number=telefono,
+            template_id=template_id,
+            template_params=[_nombre_corto(nombre), _formato_monto(monto), _formato_fecha(miercoles_iso)],
+        )
+        if result.get("success"):
+            enviados += 1
+            await db.crm_clientes.update_one(
+                {"cedula": cedula},
+                {"$push": {"gestiones": {
+                    "tipo": "whatsapp_t1",
+                    "fecha": now_iso_bogota(),
+                    "resultado": "enviado",
+                    "template": "T1",
+                    "vin": lb.get("vin"),
+                }}},
+            )
+        else:
+            errores += 1
+        await db.radar_alertas.insert_one({
+            "scheduler": "martes_9am",
+            "cedula": cedula,
+            "telefono": telefono,
+            "vin": lb.get("vin"),
+            "template": "T1",
+            "estado": "enviado" if result.get("success") else "error",
+            "raw_result": result,
+            "fecha": now_iso_bogota(),
+        })
+
+    logger.info("recordatorios_martes: enviados=%d errores=%d saltados=%d", enviados, errores, saltados)
+    return {"enviados": enviados, "errores": errores, "saltados": saltados}
+
+
+async def enviar_alertas_mora_jueves(db: "AsyncIOMotorDatabase") -> dict:
+    """Jueves 10AM — Envia template T3/T4/T5 a clientes que NO pagaron miercoles."""
+    hoy = today_bogota()
+    if hoy.weekday() != 3:  # 3 = Thursday
+        logger.info("alertas_mora_jueves: hoy no es jueves (weekday=%d), saltado", hoy.weekday())
+        return {"enviados": 0, "errores": 0, "saltados": 0, "razon": "no_es_jueves"}
+
+    enviados = 0
+    errores = 0
+    saltados = 0
+
+    cursor = db.loanbook.find({"estado": {"$nin": list(_ESTADOS_EXCLUIDOS)}})
+    async for lb in cursor:
+        cliente = lb.get("cliente") or {}
+        cedula = cliente.get("cedula", "")
+        nombre = cliente.get("nombre", "")
+        telefono = cliente.get("telefono", "")
+        if not cedula or not telefono:
+            saltados += 1
+            continue
+
+        # Encontrar la cuota mas vencida no pagada
+        cuotas = lb.get("cuotas") or []
+        max_dpd = 0
+        cuota_mora = None
+        for c in cuotas:
+            if c.get("estado") == "pagada":
+                continue
+            fecha_str = c.get("fecha")
+            if not fecha_str:
+                continue
+            try:
+                from datetime import date
+                f = date.fromisoformat(fecha_str[:10])
+            except Exception:
+                continue
+            if f < hoy:
+                d = (hoy - f).days
+                if d > max_dpd:
+                    max_dpd = d
+                    cuota_mora = c
+
+        if not cuota_mora or max_dpd <= 0:
+            saltados += 1
+            continue
+
+        # Decidir template segun DPD
+        if max_dpd >= 30:
+            template_key = "T5"
+            template_id = os.getenv("MERCATELY_TEMPLATE_T5_ULTIMO_AVISO_ID",
+                                    os.getenv("MERCATELY_TEMPLATE_MORA_ID", ""))
+        elif max_dpd >= 7:
+            template_key = "T4"
+            template_id = os.getenv("MERCATELY_TEMPLATE_T4_MORA_MEDIA_ID",
+                                    os.getenv("MERCATELY_TEMPLATE_MORA_ID", ""))
+        else:
+            template_key = "T3"
+            template_id = os.getenv("MERCATELY_TEMPLATE_T3_MORA_CORTA_ID",
+                                    os.getenv("MERCATELY_TEMPLATE_MORA_ID", ""))
+
+        if not template_id:
+            logger.warning("alertas_mora_jueves: template %s no configurado", template_key)
+            saltados += 1
+            continue
+
+        # Mora COP acumulada $2000/dia desde el dia siguiente a la cuota
+        mora_cop = max(0, (max_dpd - 1)) * 2_000
+
+        # Ya contactado hoy?
+        crm = await db.crm_clientes.find_one({"cedula": cedula}, {"gestiones": 1, "_id": 0})
+        if crm:
+            today_iso = hoy.isoformat()
+            ya_contactado = any(
+                (g.get("fecha") or "")[:10] == today_iso and (g.get("tipo") or "").startswith("whatsapp")
+                for g in (crm.get("gestiones") or [])
+            )
+            if ya_contactado:
+                saltados += 1
+                continue
+
+        client = MercatelyClient()
+        result = await client.send_template(
+            phone_number=telefono,
+            template_id=template_id,
+            template_params=[_nombre_corto(nombre), str(max_dpd), _formato_monto(mora_cop)],
+        )
+        if result.get("success"):
+            enviados += 1
+            await db.crm_clientes.update_one(
+                {"cedula": cedula},
+                {"$push": {"gestiones": {
+                    "tipo": f"whatsapp_{template_key.lower()}",
+                    "fecha": now_iso_bogota(),
+                    "resultado": "enviado",
+                    "template": template_key,
+                    "vin": lb.get("vin"),
+                    "dpd": max_dpd,
+                }},
+                 "$addToSet": {"tags": "mora"}},
+            )
+        else:
+            errores += 1
+        await db.radar_alertas.insert_one({
+            "scheduler": "jueves_10am",
+            "cedula": cedula,
+            "telefono": telefono,
+            "vin": lb.get("vin"),
+            "template": template_key,
+            "dpd": max_dpd,
+            "estado": "enviado" if result.get("success") else "error",
+            "raw_result": result,
+            "fecha": now_iso_bogota(),
+        })
+
+    logger.info("alertas_mora_jueves: enviados=%d errores=%d saltados=%d", enviados, errores, saltados)
+    return {"enviados": enviados, "errores": errores, "saltados": saltados}
+
+
+async def run_radar_scheduler_martes(db: "AsyncIOMotorDatabase") -> None:
+    """Loop infinito martes 09:00 AM Bogota."""
+    import asyncio
+    logger.info("RADAR scheduler-martes iniciado (corre martes 09:00 AM Bogota)")
+    while True:
+        segundos = _segundos_hasta_dia_hora(target_weekday=1, target_hour=9)
+        logger.info("RADAR scheduler-martes: proxima ejecucion en %.0fs", segundos)
+        await asyncio.sleep(segundos)
+        try:
+            stats = await enviar_recordatorios_martes(db)
+            logger.info("RADAR scheduler-martes completado: %s", stats)
+        except Exception as exc:
+            logger.error("RADAR scheduler-martes fallo: %s", exc)
+
+
+async def run_radar_scheduler_jueves(db: "AsyncIOMotorDatabase") -> None:
+    """Loop infinito jueves 10:00 AM Bogota."""
+    import asyncio
+    logger.info("RADAR scheduler-jueves iniciado (corre jueves 10:00 AM Bogota)")
+    while True:
+        segundos = _segundos_hasta_dia_hora(target_weekday=3, target_hour=10)
+        logger.info("RADAR scheduler-jueves: proxima ejecucion en %.0fs", segundos)
+        await asyncio.sleep(segundos)
+        try:
+            stats = await enviar_alertas_mora_jueves(db)
+            logger.info("RADAR scheduler-jueves completado: %s", stats)
+        except Exception as exc:
+            logger.error("RADAR scheduler-jueves fallo: %s", exc)
