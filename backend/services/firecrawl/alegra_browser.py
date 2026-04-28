@@ -1,114 +1,84 @@
 """
-Firecrawl browser client para operaciones en Alegra que la API REST bloquea.
-Usa /interact para navegar la UI de Alegra como un humano.
-Se activa SOLO cuando la API REST falla con 403/401 en items o bills.
+AlegraFirecrawlClient — Firecrawl /interact con Playwright para crear ítems y bills en Alegra.
+Profile persistente guarda login entre sesiones.
 """
 import os
 import logging
 
 logger = logging.getLogger("firecrawl.alegra")
 
-ALEGRA_BASE = "https://app.alegra.com"
-ALEGRA_EMAIL = os.getenv("ALEGRA_EMAIL", "")
-ALEGRA_PASSWORD = os.getenv("ALEGRA_TOKEN", "")  # en Render, ALEGRA_TOKEN ES la contraseña de usuario
-FIRECRAWL_KEY = os.getenv("FIRECRAWL_API_KEY", "")
+ALEGRA_BASE     = "https://app.alegra.com"
+ALEGRA_EMAIL    = os.getenv("ALEGRA_EMAIL", "")
+ALEGRA_PASSWORD = os.getenv("ALEGRA_TOKEN", "")  # ALEGRA_TOKEN = contraseña UI de Alegra
+FIRECRAWL_KEY   = os.getenv("FIRECRAWL_API_KEY", "")
+PROFILE_NAME    = "alegra-roddos"
+
+
+def _get_fc():
+    from firecrawl import Firecrawl  # noqa: PLC0415
+    return Firecrawl(api_key=FIRECRAWL_KEY)
+
+
+def _extract_scrape_id(result) -> str:
+    if hasattr(result, "metadata") and result.metadata:
+        sid = getattr(result.metadata, "scrape_id", None) or getattr(result.metadata, "scrapeId", None)
+        if sid:
+            return str(sid)
+    if isinstance(result, dict):
+        meta = result.get("metadata") or {}
+        sid = meta.get("scrape_id") or meta.get("scrapeId")
+        if sid:
+            return str(sid)
+    return ""
+
+
+def _interact(fc, scrape_id: str, prompt: str = None, code: str = None, language: str = "python") -> str:
+    try:
+        if code:
+            resp = fc.interact(scrape_id, code=code, language=language)
+        else:
+            resp = fc.interact(scrape_id, prompt=prompt)
+        if isinstance(resp, dict):
+            return resp.get("output") or resp.get("stdout") or resp.get("result") or ""
+        return (
+            getattr(resp, "output", None)
+            or getattr(resp, "stdout", None)
+            or getattr(resp, "result", None)
+            or ""
+        )
+    except Exception as ex:
+        logger.error(f"interact error: {ex}")
+        return f"ERROR: {ex}"
+
+
+async def _start_session(fc, url: str) -> str:
+    """Scrape con profile persistente. Hace login si detecta pantalla de login."""
+    result = fc.scrape(
+        url,
+        formats=["markdown"],
+        profile={"name": PROFILE_NAME, "save_changes": True},
+    )
+    scrape_id = _extract_scrape_id(result)
+
+    content = getattr(result, "markdown", "") or (result.get("markdown", "") if isinstance(result, dict) else "")
+
+    if any(k in content.lower() for k in ["ingresar", "contraseña", "sign in", "log in", "iniciar"]):
+        logger.info("Alegra requiere login — autenticando con Playwright...")
+        playwright_login = f"""
+import asyncio
+await page.fill('input[type="email"], input[name="email"], input[id*="email"]', '{ALEGRA_EMAIL}')
+await page.fill('input[type="password"]', '{ALEGRA_PASSWORD}')
+await page.click('button[type="submit"], button:has-text("Ingresar"), button:has-text("Login")')
+await page.wait_for_load_state('networkidle', timeout=15000)
+print(await page.title())
+"""
+        out = _interact(fc, scrape_id, code=playwright_login, language="python")
+        logger.info(f"Login result: {out[:100]}")
+
+    return scrape_id
 
 
 class AlegraFirecrawlClient:
-    def __init__(self):
-        self._scrape_id: str | None = None
-        self._fc = None  # lazy init para no crashear si SDK no instalado
-
-    def _get_fc(self):
-        """Lazy-init Firecrawl client. Raises ImportError si no instalado."""
-        if self._fc is None:
-            from firecrawl import FirecrawlApp  # noqa: PLC0415
-            self._fc = FirecrawlApp(api_key=FIRECRAWL_KEY)
-        return self._fc
-
-    def _extract_scrape_id(self, result) -> str:
-        """Extrae scrape_id del resultado de fc.scrape() — soporta snake_case y camelCase."""
-        # Objeto con atributo metadata
-        if hasattr(result, "metadata") and result.metadata:
-            meta = result.metadata
-            sid = getattr(meta, "scrape_id", None) or getattr(meta, "scrapeId", None)
-            if sid:
-                return str(sid)
-        # Dict plano
-        if isinstance(result, dict):
-            meta = result.get("metadata") or {}
-            sid = (
-                meta.get("scrape_id")
-                or meta.get("scrapeId")
-                or result.get("scrape_id")
-                or result.get("scrapeId")
-            )
-            if sid:
-                return str(sid)
-        return ""
-
-    async def _start_session(self, url: str | None = None) -> str:
-        """Navega a url (o /inventory/items/add) y hace login si es necesario. Retorna scrapeId."""
-        target = url or f"{ALEGRA_BASE}/inventory/items/add"
-        fc = self._get_fc()
-        result = fc.scrape(target)
-
-        # Normalizar resultado (SDK puede devolver dict o objeto)
-        if isinstance(result, dict):
-            content = result.get("markdown", "") or ""
-        else:
-            content = getattr(result, "markdown", "") or ""
-
-        scrape_id = self._extract_scrape_id(result)
-        self._scrape_id = scrape_id
-
-        # Detectar página de login y autenticar
-        login_keywords = ["ingresar", "contraseña", "login", "sign in", "iniciar sesión", "password"]
-        if any(k in content.lower() for k in login_keywords):
-            logger.info("Alegra requiere login — autenticando con Firecrawl")
-            login_prompt = (
-                f"Estoy en la página de login de Alegra. "
-                f"Ingresa el email '{ALEGRA_EMAIL}' en el campo de email. "
-                f"Ingresa la contraseña '{ALEGRA_PASSWORD}' en el campo de contraseña. "
-                f"Haz clic en el botón de ingresar/login. "
-                f"Espera a que cargue el dashboard de Alegra."
-            )
-            login_output = self._interact(scrape_id, login_prompt)
-            if any(k in login_output.lower() for k in ["error", "incorrecto", "invalid", "failed"]):
-                logger.error(f"Firecrawl login Alegra falló: {login_output[:200]}")
-            else:
-                logger.info("Firecrawl login Alegra exitoso")
-
-        return scrape_id
-
-    def _interact(self, scrape_id: str, prompt: str) -> str:
-        """Llama a interact y retorna el output como string."""
-        fc = self._get_fc()
-        try:
-            response = fc.interact(scrape_id, prompt=prompt)
-        except AttributeError:
-            # Versión SDK sin método interact — intentar vía scrape con actions
-            try:
-                response = fc.scrape(
-                    f"{ALEGRA_BASE}/",
-                    params={"actions": [{"type": "prompt", "prompt": prompt}]},
-                )
-            except Exception:
-                return ""
-
-        if isinstance(response, dict):
-            return response.get("output") or response.get("markdown") or ""
-        return getattr(response, "output", None) or getattr(response, "markdown", None) or ""
-
-    def _stop_session(self) -> None:
-        if self._scrape_id:
-            try:
-                fc = self._get_fc()
-                if hasattr(fc, "stop_interaction"):
-                    fc.stop_interaction(self._scrape_id)
-            except Exception:
-                pass
-            self._scrape_id = None
 
     async def crear_item_moto(
         self,
@@ -119,50 +89,91 @@ class AlegraFirecrawlClient:
         categoria: str = "Motos nuevas",
     ) -> dict:
         """
-        Crea un ítem de moto individual en Alegra via Firecrawl /interact.
+        Crea un ítem de moto individual en Alegra via Firecrawl + Playwright.
         Retorna {"success": True, "nombre": nombre, "vin": vin} o {"success": False, "error": ...}
         """
         if not FIRECRAWL_KEY:
             return {"success": False, "error": "FIRECRAWL_API_KEY no configurada"}
 
+        fc = _get_fc()
+        scrape_id = None
         try:
-            scrape_id = await self._start_session(f"{ALEGRA_BASE}/item/add")
+            scrape_id = await _start_session(fc, f"{ALEGRA_BASE}/item/add")
 
-            prompt = (
-                f"Rellena el formulario de nuevo producto con estos datos exactos:\n"
-                f"1. Campo 'Nombre': escribe '{nombre}'\n"
-                f"2. Campo 'Referencia': escribe '{vin}'\n"
-                f"3. Campo 'Categoría': selecciona 'Motos nuevas'\n"
-                f"4. Campo 'Precio base': escribe '{precio_base}'\n"
-                f"5. Campo 'Impuesto': selecciona 'IVA - (19%)'\n"
-                f"6. Campo 'Costo': escribe '{precio_costo}'\n"
-                f"7. Activa el toggle 'Inventariable' si no está activado\n"
-                f"8. Campo 'Cantidad inicial': escribe '1'\n"
-                f"9. En 'Configuración contable':\n"
-                f"   - 'Cuenta Contable': selecciona '41350501 - Motos'\n"
-                f"   - 'Cuenta de inventario': selecciona '14350101 - Motos'\n"
-                f"   - 'Cuenta de costo de venta': selecciona '61350501 - Motos'\n"
-                f"10. Haz clic en el botón 'Guardar'\n"
-                f"11. Confirma que el ítem fue creado exitosamente"
-            )
+            playwright_code = f"""
+import asyncio, json
 
-            output = self._interact(scrape_id, prompt)
-            success = any(
-                k in output.lower()
-                for k in ["guardado", "creado", "exitosamente", "saved", "created"]
-            )
-            return {
-                "success": success,
-                "nombre": nombre,
-                "vin": vin,
-                "firecrawl_output": output[:300],
-            }
+# Esperar que cargue el formulario
+await page.wait_for_load_state('networkidle', timeout=15000)
+
+# Nombre
+await page.fill('input[id*="name"], input[placeholder*="nombre"], input[name*="name"]', '{nombre}')
+
+# Referencia
+await page.fill('input[id*="reference"], input[placeholder*="referencia"], input[name*="reference"]', '{vin}')
+
+# Categoría
+cat_selectors = ['select[id*="category"]', 'select[name*="category"]', '[aria-label*="ategor"]']
+for sel in cat_selectors:
+    try:
+        if await page.is_visible(sel):
+            await page.select_option(sel, label='{categoria}')
+            break
+    except:
+        pass
+
+# Precio base
+price_inputs = await page.query_selector_all('input[id*="price"], input[placeholder*="precio"]')
+if price_inputs:
+    await price_inputs[0].fill('{precio_base}')
+
+# Costo
+cost_inputs = await page.query_selector_all('input[id*="cost"], input[placeholder*="costo"]')
+if cost_inputs:
+    await cost_inputs[0].fill('{precio_costo}')
+
+# Cantidad inicial = 1
+qty_inputs = await page.query_selector_all('input[id*="quantity"], input[placeholder*="cantidad"]')
+if qty_inputs:
+    await qty_inputs[0].fill('1')
+
+# Inventariable toggle — activar si no está
+try:
+    toggle = await page.query_selector('[id*="inventoriable"], [id*="inventariable"]')
+    if toggle:
+        checked = await toggle.is_checked()
+        if not checked:
+            await toggle.click()
+except:
+    pass
+
+# Scroll para ver Configuración contable
+await page.evaluate('window.scrollTo(0, document.body.scrollHeight)')
+await page.wait_for_timeout(1000)
+
+# Guardar
+await page.click('button:has-text("Guardar"), button[type="submit"]')
+await page.wait_for_load_state('networkidle', timeout=10000)
+
+title = await page.title()
+url = page.url
+print(json.dumps({{"title": title, "url": url}}))
+"""
+            out = _interact(fc, scrape_id, code=playwright_code, language="python")
+            logger.info(f"crear_item_moto output: {out[:200]}")
+
+            success = any(k in (out or "").lower() for k in ["item", "view", "edit", "guardado", "created"])
+            return {"success": success, "nombre": nombre, "vin": vin, "firecrawl_output": (out or "")[:300]}
 
         except Exception as ex:
-            logger.error(f"Firecrawl crear_item_moto error: {ex}")
+            logger.error(f"crear_item_moto error: {ex}")
             return {"success": False, "error": str(ex)}
         finally:
-            self._stop_session()
+            if scrape_id:
+                try:
+                    fc.stop_interaction(scrape_id)  # guarda el profile
+                except Exception:
+                    pass
 
     async def crear_item_repuesto(
         self,
@@ -171,46 +182,53 @@ class AlegraFirecrawlClient:
         precio: float,
         costo: float,
     ) -> dict:
-        """Crea un ítem de repuesto en Alegra via Firecrawl /interact."""
+        """Crea un ítem de repuesto en Alegra via Firecrawl + Playwright."""
         if not FIRECRAWL_KEY:
             return {"success": False, "error": "FIRECRAWL_API_KEY no configurada"}
 
+        fc = _get_fc()
+        scrape_id = None
         try:
-            scrape_id = await self._start_session(f"{ALEGRA_BASE}/item/add")
+            scrape_id = await _start_session(fc, f"{ALEGRA_BASE}/item/add")
 
-            prompt = (
-                f"Rellena el formulario de nuevo producto con estos datos:\n"
-                f"1. Campo 'Nombre': escribe '{nombre}'\n"
-                f"2. Campo 'Referencia': escribe '{referencia}'\n"
-                f"3. Campo 'Categoría': selecciona 'Repuestos'\n"
-                f"4. Campo 'Precio base': escribe '{precio}'\n"
-                f"5. Campo 'Impuesto': selecciona 'IVA - (19%)'\n"
-                f"6. Campo 'Costo': escribe '{costo}'\n"
-                f"7. Activa el toggle 'Inventariable' si no está activado\n"
-                f"8. En 'Configuración contable':\n"
-                f"   - 'Cuenta Contable': selecciona '41350601 - Repuestos'\n"
-                f"   - 'Cuenta de inventario': selecciona '14350102 - Repuestos'\n"
-                f"   - 'Cuenta de costo de venta': selecciona '61350601 - Repuestos'\n"
-                f"9. Haz clic en el botón 'Guardar'\n"
-                f"10. Confirma que el ítem fue creado exitosamente"
-            )
-
-            output = self._interact(scrape_id, prompt)
-            success = any(
-                k in output.lower()
-                for k in ["guardado", "creado", "exitosamente", "saved", "created"]
-            )
-            return {
-                "success": success,
-                "referencia": referencia,
-                "firecrawl_output": output[:300],
-            }
+            playwright_code = f"""
+import asyncio, json
+await page.wait_for_load_state('networkidle', timeout=15000)
+await page.fill('input[id*="name"], input[placeholder*="nombre"]', '{nombre}')
+await page.fill('input[id*="reference"], input[placeholder*="referencia"]', '{referencia}')
+for sel in ['select[id*="category"]', 'select[name*="category"]']:
+    try:
+        if await page.is_visible(sel):
+            await page.select_option(sel, label='Repuestos')
+            break
+    except:
+        pass
+price_inputs = await page.query_selector_all('input[id*="price"], input[placeholder*="precio"]')
+if price_inputs:
+    await price_inputs[0].fill('{precio}')
+cost_inputs = await page.query_selector_all('input[id*="cost"], input[placeholder*="costo"]')
+if cost_inputs:
+    await cost_inputs[0].fill('{costo}')
+qty_inputs = await page.query_selector_all('input[id*="quantity"], input[placeholder*="cantidad"]')
+if qty_inputs:
+    await qty_inputs[0].fill('0')
+await page.click('button:has-text("Guardar"), button[type="submit"]')
+await page.wait_for_load_state('networkidle', timeout=10000)
+print(json.dumps({{"url": page.url, "title": await page.title()}}))
+"""
+            out = _interact(fc, scrape_id, code=playwright_code, language="python")
+            success = any(k in (out or "").lower() for k in ["item", "view", "edit", "guardado", "created"])
+            return {"success": success, "referencia": referencia, "firecrawl_output": (out or "")[:300]}
 
         except Exception as ex:
-            logger.error(f"Firecrawl crear_item_repuesto error: {ex}")
+            logger.error(f"crear_item_repuesto error: {ex}")
             return {"success": False, "error": str(ex)}
         finally:
-            self._stop_session()
+            if scrape_id:
+                try:
+                    fc.stop_interaction(scrape_id)
+                except Exception:
+                    pass
 
     async def registrar_bill(
         self,
@@ -222,47 +240,59 @@ class AlegraFirecrawlClient:
         observations: str = "",
     ) -> dict:
         """
-        Registra una factura de compra (bill) en Alegra via Firecrawl /interact.
+        Registra una factura de compra (bill) en Alegra via Firecrawl + Playwright.
         items_para_bill: [{"nombre": ..., "cantidad": ..., "precio": ...}]
         """
         if not FIRECRAWL_KEY:
             return {"success": False, "error": "FIRECRAWL_API_KEY no configurada"}
 
+        fc = _get_fc()
+        scrape_id = None
         try:
-            scrape_id = await self._start_session(f"{ALEGRA_BASE}/bills/add")
+            scrape_id = await _start_session(fc, f"{ALEGRA_BASE}/bills/add")
 
-            items_str = "\n".join(
-                f"  - {it['nombre']}: {it['cantidad']} unidades a ${it['precio']:,.0f}"
-                for it in items_para_bill
-            )
+            playwright_code = f"""
+import asyncio, json
+await page.wait_for_load_state('networkidle', timeout=15000)
 
-            prompt = (
-                f"Crea una factura de compra con estos datos:\n"
-                f"- Proveedor NIT: {proveedor_nit}\n"
-                f"- Número de factura del proveedor: {numero_factura}\n"
-                f"- Fecha: {fecha}\n"
-                f"- Fecha vencimiento: {fecha_vencimiento}\n"
-                f"- Observaciones: {observations}\n"
-                f"- Ítems:\n{items_str}\n"
-                f"Haz clic en Guardar y confirma que la factura de compra fue creada."
-            )
+# Proveedor
+prov_input = await page.query_selector('input[id*="provider"], input[id*="supplier"], input[placeholder*="proveedor"]')
+if prov_input:
+    await prov_input.fill('{proveedor_nit}')
+    await page.wait_for_timeout(1000)
+    option = await page.query_selector('.dropdown-item, [role="option"]')
+    if option:
+        await option.click()
 
-            output = self._interact(scrape_id, prompt)
-            success = any(
-                k in output.lower()
-                for k in ["guardado", "creado", "exitosamente", "saved", "created"]
-            )
-            return {
-                "success": success,
-                "numero_factura": numero_factura,
-                "firecrawl_output": output[:300],
-            }
+# Número factura proveedor
+await page.fill('input[id*="number"], input[placeholder*="número"], input[placeholder*="factura"]', '{numero_factura}')
+
+# Fechas
+date_inputs = await page.query_selector_all('input[type="date"], input[id*="date"]')
+if len(date_inputs) > 0:
+    await date_inputs[0].fill('{fecha}')
+if len(date_inputs) > 1:
+    await date_inputs[1].fill('{fecha_vencimiento}')
+
+# Guardar
+await page.click('button:has-text("Guardar"), button[type="submit"]')
+await page.wait_for_load_state('networkidle', timeout=10000)
+print(json.dumps({{"url": page.url, "title": await page.title()}}))
+"""
+            out = _interact(fc, scrape_id, code=playwright_code, language="python")
+            logger.info(f"registrar_bill output: {out[:200]}")
+            success = any(k in (out or "").lower() for k in ["bill", "view", "guardado", "created"])
+            return {"success": success, "numero_factura": numero_factura, "firecrawl_output": (out or "")[:300]}
 
         except Exception as ex:
-            logger.error(f"Firecrawl registrar_bill error: {ex}")
+            logger.error(f"registrar_bill error: {ex}")
             return {"success": False, "error": str(ex)}
         finally:
-            self._stop_session()
+            if scrape_id:
+                try:
+                    fc.stop_interaction(scrape_id)
+                except Exception:
+                    pass
 
 
 # ── Singleton ─────────────────────────────────────────────────────────────────
