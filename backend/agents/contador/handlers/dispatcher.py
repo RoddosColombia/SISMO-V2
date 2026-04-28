@@ -234,6 +234,17 @@ class ToolDispatcher:
         except ImportError as _imp_err:
             logger.error("Phase 9 V2 handlers no se pudieron importar: %s", _imp_err)
 
+        # Sprint S3 (2026-04-28): Notificaciones internas WhatsApp al equipo
+        try:
+            from agents.contador.handlers.notificaciones import (
+                handle_notificar_equipo,
+            )
+            self._handlers.update({
+                "notificar_equipo": handle_notificar_equipo,
+            })
+        except ImportError as _imp_err:
+            logger.error("Sprint S3 notificaciones handler no se pudo importar: %s", _imp_err)
+
     async def dispatch(self, tool_name: str, tool_input: dict, user_id: str) -> dict:
         handler = self._handlers.get(tool_name)
         if not handler:

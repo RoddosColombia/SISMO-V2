@@ -1182,6 +1182,64 @@ _AGENTE_V2: list[dict] = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# CATEGORÍA 11 — NOTIFICACIONES INTERNAS WhatsApp (Sprint S3, 2026-04-28)
+# ---------------------------------------------------------------------------
+
+_NOTIFICACIONES: list[dict] = [
+    {
+        "name": "notificar_equipo",
+        "description": (
+            "Envía un WhatsApp interno a un miembro del equipo RODDOS via Mercately. "
+            "Usar cuando ocurre un evento operativo relevante que requiere conocimiento "
+            "o intervencion humana: gasto creado en Alegra, factura aprobada, obligacion "
+            "tributaria por vencer, conciliacion bancaria pendiente, error que bloquea "
+            "automatizacion, recordatorio importante.\n\n"
+            "DESTINATARIOS:\n"
+            "- 'andres': CEO — decisiones estrategicas, alertas criticas, aprobaciones\n"
+            "- 'ivan': CFO/Operaciones — gasto operativo, cartera, recaudo\n"
+            "- 'fabian': Contador — temas tributarios, conciliacion, cierres\n\n"
+            "NIVELES:\n"
+            "- 'info':   informativo, baja urgencia (ej: 'factura 1234 aprobada')\n"
+            "- 'alerta': operacional importante (ej: 'saldo BBVA bajo umbral')\n"
+            "- 'task':   asignacion de tarea (ej: 'conciliar Bancolombia 2029 antes manana')\n\n"
+            "ANTI-SPAM: max 10 mensajes/dia por persona, dedupe 1h por hash. "
+            "Si excede, retorna skip — no es error, es proteccion del equipo. "
+            "El mensaje se envia via send_text si la ventana 24h esta abierta, "
+            "fallback a template MERCATELY_TEMPLATE_INTERNO_ID si configurado."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "persona": {
+                    "type": "string",
+                    "enum": ["andres", "ivan", "fabian"],
+                    "description": "Destinatario del WhatsApp interno",
+                },
+                "nivel": {
+                    "type": "string",
+                    "enum": ["info", "alerta", "task"],
+                    "description": "Severidad — afecta el prefijo del mensaje",
+                },
+                "mensaje": {
+                    "type": "string",
+                    "description": "Texto del mensaje (max 1000 chars utiles)",
+                },
+                "contexto": {
+                    "type": "object",
+                    "description": (
+                        "Opcional. Dict con campos relevantes para audit y trazabilidad "
+                        "(ej: {alegra_id: '12345', monto: 500000}). Se aplana a "
+                        "'k1=v1, k2=v2' al final del mensaje en italica."
+                    ),
+                },
+            },
+            "required": ["persona", "nivel", "mensaje"],
+        },
+    },
+]
+
+
 CONTADOR_TOOLS: list[dict] = (
     _EGRESOS
     + _INGRESOS
@@ -1193,6 +1251,7 @@ CONTADOR_TOOLS: list[dict] = (
     + _COMPRAS
     + _CATALOGO
     + _AGENTE_V2  # Tools V2 robustas vía Firecrawl Agent (2026-04-27)
+    + _NOTIFICACIONES  # Sprint S3 (2026-04-28) — WhatsApp interno equipo
 )
 
 from agents.loanbook.tools import LOANBOOK_TOOLS
