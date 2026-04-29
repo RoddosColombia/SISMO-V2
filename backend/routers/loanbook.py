@@ -2220,20 +2220,35 @@ async def diagnostico_crm_reconciliar(
                 creados.append({"cedula": ced, "nombre": nombre, "telefono": tel, "loanbook_id": lb_id})
             else:
                 update_set = {}
-                # Phone update si difiere
-                tel_existing = (existing.get("telefono") or "").strip()
-                if tel and tel != tel_existing:
+                # Phone update si difiere — defensivo: telefono puede venir int en BD legacy
+                tel_existing_raw = existing.get("telefono") or ""
+                tel_existing = str(tel_existing_raw).strip() if tel_existing_raw else ""
+                tel_normalized = str(tel).strip() if tel else ""
+                if tel_normalized and tel_normalized != tel_existing:
                     if not dry_run:
-                        update_set["telefono"] = tel
+                        update_set["telefono"] = tel_normalized
                         update_set["telefono_actualizado_at"] = datetime.now(timezone.utc).isoformat()
                     actualizados_phone.append({
                         "cedula": ced, "nombre": nombre,
-                        "telefono_anterior": tel_existing, "telefono_nuevo": tel,
+                        "telefono_anterior": tel_existing, "telefono_nuevo": tel_normalized,
                     })
-                # Agregar loanbook_id si falta
-                lb_array = existing.get("loanbooks") or []
+                # Agregar loanbook_id si falta — defensivo: loanbooks puede venir int/str/None en BD legacy
+                lb_array_raw = existing.get("loanbooks")
+                if isinstance(lb_array_raw, list):
+                    lb_array = lb_array_raw
+                elif lb_array_raw:
+                    # Legacy: era un solo valor, no array. Lo convertimos
+                    lb_array = [str(lb_array_raw)]
+                else:
+                    lb_array = []
                 if lb_id and lb_id not in lb_array:
                     if not dry_run:
+                        # Si el campo era no-array, primero lo reseteamos a array válido
+                        if not isinstance(lb_array_raw, list):
+                            await db.crm_clientes.update_one(
+                                {"cedula": ced},
+                                {"$set": {"loanbooks": lb_array}},
+                            )
                         await db.crm_clientes.update_one(
                             {"cedula": ced},
                             {"$addToSet": {"loanbooks": lb_id}},
@@ -2243,7 +2258,12 @@ async def diagnostico_crm_reconciliar(
                     update_set["updated_at"] = datetime.now(timezone.utc).isoformat()
                     await db.crm_clientes.update_one({"cedula": ced}, {"$set": update_set})
         except Exception as e:
-            errores.append({"cedula": ced, "loanbook_id": lb_id, "error": str(e)})
+            errores.append({
+                "cedula": ced, "loanbook_id": lb_id,
+                "error": f"{type(e).__name__}: {e}",
+                "telefono_tipo": type(existing.get("telefono") if existing else None).__name__,
+                "loanbooks_tipo": type(existing.get("loanbooks") if existing else None).__name__,
+            })
 
     return {
         "dry_run": dry_run,
