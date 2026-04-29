@@ -296,48 +296,101 @@ async def liquidar_reica_bogota(
 @router.get("/debug/bills-iva")
 async def debug_bills_iva(
     periodo: Annotated[str, Query()] = "2026-C1",
-    limit: Annotated[int, Query(ge=1, le=20)] = 10,
+    limit_muestra: Annotated[int, Query(ge=1, le=50)] = 10,
+    nit_filter: Annotated[str, Query()] = "",
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    """Debug: muestra las primeras N bills del periodo CRUDAS para ver el campo 'tax' real.
+    """Debug: pagina TODAS las bills, filtra por periodo y opcionalmente por NIT.
 
-    Si las compras a Auteco no tienen IVA, vamos a verlo aquí.
+    Si nit_filter='901249413' o '860024781' → solo Auteco.
     """
     inicio, fin, _ = _ventana_iva_cuatrimestre(periodo)
     inicio_str = inicio.isoformat()
     fin_str = fin.isoformat()
     alegra = AlegraClient(db=db)
-    page = await alegra.get("bills", params={"start": 0, "limit": 30, "order_field": "date"})
-    if not isinstance(page, list):
-        return {"error": "respuesta no es lista", "raw": page}
-    in_range = [b for b in page if inicio_str <= (b.get("date") or "")[:10] <= fin_str][:limit]
+
+    todas_bills = []
+    proveedores_vistos: dict[str, dict] = {}
+    start = 0
+    LIMIT = 100  # Alegra acepta 100
+    paginas = 0
+    MAX_PAGES = 200  # safety
+    while paginas < MAX_PAGES:
+        try:
+            page = await alegra.get(
+                "bills",
+                params={"start": start, "limit": LIMIT, "order_direction": "desc"},
+            )
+        except Exception as e:
+            return {"error_alegra": str(e), "start": start}
+        if not isinstance(page, list) or not page:
+            break
+        for b in page:
+            prov = b.get("provider") or {}
+            prov_nit = prov.get("identification") if isinstance(prov, dict) else ""
+            prov_nombre = prov.get("name") if isinstance(prov, dict) else str(prov)
+            # Index proveedores
+            if prov_nit:
+                proveedores_vistos.setdefault(prov_nit, {
+                    "nombre": prov_nombre, "n_bills": 0, "total_bills_cop": 0
+                })
+                proveedores_vistos[prov_nit]["n_bills"] += 1
+                proveedores_vistos[prov_nit]["total_bills_cop"] += float(b.get("total") or 0)
+            # Filtros
+            b_date = (b.get("date") or "")[:10]
+            if not (inicio_str <= b_date <= fin_str):
+                continue
+            if nit_filter and prov_nit != nit_filter:
+                continue
+            todas_bills.append(b)
+        paginas += 1
+        if len(page) < LIMIT:
+            break
+        start += LIMIT
+
+    # Construir muestra
     sample = []
-    for b in in_range:
+    for b in todas_bills[:limit_muestra]:
         items_summary = []
+        total_iva_calc = 0.0
         for item in (b.get("items") or []):
+            tax_pct = 0.0
+            for tax in (item.get("tax") or []):
+                tax_pct = max(tax_pct, float(tax.get("percentage") or 0)) / 100
+            base = float(item.get("price") or 0) * float(item.get("quantity") or 0)
+            iva_item = base * tax_pct
+            total_iva_calc += iva_item
             items_summary.append({
                 "name": item.get("name"),
                 "price": item.get("price"),
                 "quantity": item.get("quantity"),
                 "tax": item.get("tax"),
-                "discount": item.get("discount"),
-                "subtotal": item.get("subtotal"),
-                "total": item.get("total"),
+                "iva_calculado": round(iva_item),
             })
+        prov = b.get("provider") or {}
         sample.append({
             "id": b.get("id"),
             "date": b.get("date"),
-            "provider": (b.get("provider") or {}).get("name") if isinstance(b.get("provider"), dict) else b.get("provider"),
+            "provider_nombre": prov.get("name") if isinstance(prov, dict) else prov,
+            "provider_nit": prov.get("identification") if isinstance(prov, dict) else None,
             "status": b.get("status"),
-            "total": b.get("total"),
+            "total_bill": b.get("total"),
+            "iva_calculado_total": round(total_iva_calc),
             "items": items_summary,
-            "all_keys": list(b.keys()),
         })
+
     return {
         "periodo": periodo,
         "rango": [inicio_str, fin_str],
-        "bills_en_periodo": len(in_range),
-        "muestra": sample,
+        "nit_filter": nit_filter or "(ninguno — todos los proveedores)",
+        "paginas_recorridas": paginas,
+        "total_bills_en_alegra": sum(p["n_bills"] for p in proveedores_vistos.values()),
+        "bills_en_periodo_filtrado": len(todas_bills),
+        "top_10_proveedores_historico": sorted(
+            [{"nit": k, **v} for k, v in proveedores_vistos.items()],
+            key=lambda x: x["total_bills_cop"], reverse=True,
+        )[:10],
+        "muestra_periodo": sample,
     }
 
 

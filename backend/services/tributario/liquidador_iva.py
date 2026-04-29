@@ -135,16 +135,21 @@ async def liquidar_iva_cuatrimestre(
         if len(page) < LIMIT:
             break
 
-    # ── 2) Leer facturas de compra (bills) del periodo ───────────────────
+    # ── 2) Leer facturas de compra (bills) del periodo — paginar TODO desc ──
+    # Alegra ordena bills cronológicamente; usar order_direction=desc para traer
+    # primero las recientes (las del periodo en curso). LIMIT=100 max.
     iva_descontable = 0.0
     compras_gravadas = 0.0
     n_bills = 0
     start = 0
-    while True:
+    BILLS_LIMIT = 100
+    paginas_bills = 0
+    MAX_PAGES_BILLS = 200  # safety
+    while paginas_bills < MAX_PAGES_BILLS:
         try:
             page = await alegra.get(
                 "bills",
-                params={"start": start, "limit": LIMIT, "order_field": "date"},
+                params={"start": start, "limit": BILLS_LIMIT, "order_direction": "desc"},
             )
         except Exception as e:
             logger.warning(f"Alegra bills page start={start}: {e}")
@@ -169,9 +174,10 @@ async def liquidar_iva_cuatrimestre(
                 iva_descontable += iva_item
                 if tax_pct > 0:
                     compras_gravadas += base
-        start += LIMIT
-        if len(page) < LIMIT:
+        paginas_bills += 1
+        if len(page) < BILLS_LIMIT:
             break
+        start += BILLS_LIMIT
 
     # ── 3) ReteIVA que nos retuvieron clientes (lo veremos en payments) ──
     # Por ahora 0 — Wave 4 lo refinará leyendo journals con cuenta 13551501.
