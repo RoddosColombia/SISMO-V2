@@ -14,7 +14,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, Field
 
@@ -2028,3 +2028,38 @@ async def rechazar_pago_backlog(
         {"$set": {"estado": "rechazado", "motivo_rechazo": motivo}},
     )
     return {"success": res.modified_count > 0, "backlog_id": backlog_id}
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# L5/B6: Revisor cobranza jueves — endpoints manuales (preview + run on-demand)
+# ───────────────────────────────────────────────────────────────────────────
+
+@router.get("/cobranza-jueves/preview")
+async def preview_cobranza_jueves(db: AsyncIOMotorDatabase = Depends(get_db)):
+    """Preview del análisis cartera + cola priorizada SIN enviar email.
+    Útil para revisar cómo quedaría el reporte antes de jueves 8AM."""
+    from services.cobranza.cartera_revisor import analizar_cartera
+    return await analizar_cartera(db)
+
+
+@router.post("/cobranza-jueves/run")
+async def ejecutar_cobranza_jueves_now(
+    body: dict | None = None,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Ejecuta el revisor cobranza inmediatamente (no espera al jueves 8AM).
+    Body opcional: {"dry_run": true} para no enviar email/WhatsApp."""
+    from services.cobranza.scheduler_jueves import ejecutar_revisor_jueves
+    dry_run = bool((body or {}).get("dry_run", False))
+    return await ejecutar_revisor_jueves(db, dry_run=dry_run)
+
+
+@router.get("/cobranza-jueves/preview-html", response_class=Response)
+async def preview_html_reporte(db: AsyncIOMotorDatabase = Depends(get_db)):
+    """Devuelve el HTML del reporte semanal para previsualizar en navegador."""
+    from services.cobranza.cartera_revisor import analizar_cartera
+    from services.email.reportes_jueves import construir_html_reporte
+    analisis = await analizar_cartera(db)
+    html = construir_html_reporte(analisis)
+    return Response(content=html, media_type="text/html")
+xt/html")

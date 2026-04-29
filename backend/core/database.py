@@ -18,6 +18,7 @@ _radar_scheduler_task: asyncio.Task | None = None
 _radar_scheduler_martes_task: asyncio.Task | None = None  # Sprint S2
 _radar_scheduler_jueves_task: asyncio.Task | None = None  # Sprint S2
 _mercately_inbound_poller_task: asyncio.Task | None = None  # Sprint S2.5
+_revisor_jueves_task: asyncio.Task | None = None  # L5 (2026-04-28)
 
 
 async def init_db() -> None:
@@ -158,13 +159,23 @@ async def lifespan(app: FastAPI):
         logger.error(f"Mercately inbound poller failed to start: {e}")
         _mercately_inbound_poller_task = None
 
+    # ── Revisor cobranza jueves 8AM Bogotá (L5/B6) ─────────────────────
+    global _revisor_jueves_task
+    try:
+        from services.cobranza.scheduler_jueves import run_revisor_jueves_loop
+        _revisor_jueves_task = asyncio.create_task(run_revisor_jueves_loop(get_db_sync))
+        logger.info("Revisor cobranza jueves started (jueves 08:00 AM Bogota)")
+    except Exception as e:
+        logger.error(f"Revisor jueves failed to start: {e}")
+        _revisor_jueves_task = None
+
     yield
 
     # ── Shutdown ───────────────────────────────────────────────────────
     if _processor:
         await _processor.stop()
 
-    for task in (_processor_task, _alegra_sync_task, _dpd_scheduler_task, _informes_scheduler_task, _radar_scheduler_task, _radar_scheduler_martes_task, _radar_scheduler_jueves_task, _mercately_inbound_poller_task):
+    for task in (_processor_task, _alegra_sync_task, _dpd_scheduler_task, _informes_scheduler_task, _radar_scheduler_task, _radar_scheduler_martes_task, _radar_scheduler_jueves_task, _mercately_inbound_poller_task, _revisor_jueves_task):
         if task:
             task.cancel()
             try:
