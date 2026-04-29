@@ -2278,6 +2278,80 @@ async def diagnostico_crm_reconciliar(
     }
 
 
+@router.post("/diagnostico/crm-cleanup-legacy")
+async def diagnostico_crm_cleanup_legacy(
+    body: dict | None = None,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Limpia entradas basura en crm_clientes.loanbooks[].
+
+    Remueve cualquier entrada del array que NO matchee el patrón LB-YYYY-NNNN.
+    Esto repara los docs donde 'loanbooks' era un int legacy (ej: 1, 2)
+    que se convirtió a string durante el reconciliar.
+
+    Body opcional: {"dry_run": true} → solo muestra qué haría.
+    Default: dry_run=true.
+    """
+    import re
+    PATRON_LB = re.compile(r"^LB-\d{4}-\d{4}$")
+    dry_run = bool((body or {}).get("dry_run", True))
+
+    limpiados = []
+    sin_cambios = []
+    errores = []
+
+    async for c in db.crm_clientes.find({}):
+        ced = c.get("cedula", "")
+        nombre = c.get("nombre", "")
+        lb_array = c.get("loanbooks")
+        if not isinstance(lb_array, list):
+            # No-array: convertir a array vacio si no es lista
+            if lb_array is None:
+                continue
+            try:
+                if not dry_run:
+                    await db.crm_clientes.update_one(
+                        {"_id": c["_id"]},
+                        {"$set": {"loanbooks": []}},
+                    )
+                limpiados.append({
+                    "cedula": ced, "nombre": nombre,
+                    "antes": str(lb_array), "despues": [],
+                    "tipo_anterior": type(lb_array).__name__,
+                })
+            except Exception as e:
+                errores.append({"cedula": ced, "error": str(e)})
+            continue
+
+        validos = [x for x in lb_array if isinstance(x, str) and PATRON_LB.match(x)]
+        if len(validos) != len(lb_array):
+            invalidos = [x for x in lb_array if not (isinstance(x, str) and PATRON_LB.match(x))]
+            try:
+                if not dry_run:
+                    await db.crm_clientes.update_one(
+                        {"_id": c["_id"]},
+                        {"$set": {"loanbooks": validos}},
+                    )
+                limpiados.append({
+                    "cedula": ced, "nombre": nombre,
+                    "antes": lb_array, "despues": validos,
+                    "removidos": invalidos,
+                })
+            except Exception as e:
+                errores.append({"cedula": ced, "error": str(e)})
+        else:
+            sin_cambios.append(ced)
+
+    return {
+        "dry_run": dry_run,
+        "limpiados_count": len(limpiados),
+        "sin_cambios_count": len(sin_cambios),
+        "errores_count": len(errores),
+        "limpiados": limpiados,
+        "errores": errores,
+    }
+
+
 @router.get("/diagnostico/crm-html", response_class=Response)
 async def diagnostico_crm_html(db: AsyncIOMotorDatabase = Depends(get_db)):
     """Versión HTML visual del diagnóstico CRM-gap (abrir en navegador)."""
