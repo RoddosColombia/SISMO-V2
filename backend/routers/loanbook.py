@@ -1895,3 +1895,136 @@ async def obtener_comprobante(
         "uploaded_at": uploaded_at,
         "size_kb": round(comp.get("size_bytes", 0) / 1024, 1),
     }
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# B11: Backlog pagos pendientes de revisar (OCR comprobantes WhatsApp)
+# ───────────────────────────────────────────────────────────────────────────
+
+@router.get("/pagos-revisar")
+async def listar_pagos_revisar(db: AsyncIOMotorDatabase = Depends(get_db)):
+    """Lista comprobantes WhatsApp que el OCR no pudo aplicar automáticamente.
+
+    Casos típicos:
+    - Match score < 0.75 (cliente ambiguo)
+    - OCR baja confianza
+    - Beneficiario no es RODDOS
+    - Múltiples loanbooks con mismo monto exacto
+    """
+    cursor = db.backlog_pagos_revisar.find(
+        {"estado": "pendiente_revision"}
+    ).sort("fecha", -1).limit(200)
+    items = []
+    async for doc in cursor:
+        doc["_id"] = str(doc["_id"])
+        # Limpiar fechas serializables
+        if hasattr(doc.get("fecha"), "isoformat"):
+            doc["fecha"] = doc["fecha"].isoformat()
+        items.append(doc)
+    return {"count": len(items), "pagos": items}
+
+
+class ConfirmarPagoExtraidoBody(BaseModel):
+    backlog_id: str
+    loanbook_id: str
+    monto: int | None = None  # opcional: si no se pasa, usa el del comprobante
+    fecha_pago: str | None = None
+    metodo: str = "Transferencia"
+    banco: str = ""
+    referencia: str = ""
+
+
+@router.post("/pagos-revisar/confirmar")
+async def confirmar_pago_extraido(
+    body: ConfirmarPagoExtraidoBody,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Confirma manualmente un pago del backlog y lo aplica al loanbook
+    indicado, publicando cuota.pagada para que el Contador cree el journal."""
+    from bson import ObjectId
+    try:
+        oid = ObjectId(body.backlog_id)
+    except Exception:
+        raise HTTPException(400, "backlog_id invalido")
+
+    backlog = await db.backlog_pagos_revisar.find_one({"_id": oid})
+    if not backlog:
+        raise HTTPException(404, "backlog item no existe")
+    if backlog.get("estado") != "pendiente_revision":
+        raise HTTPException(409, f"backlog ya en estado {backlog.get('estado')}")
+
+    extraccion = backlog.get("extraccion") or {}
+    monto = body.monto or extraccion.get("monto_cop", 0)
+    fecha_pago = body.fecha_pago or extraccion.get("fecha", "")
+    referencia = body.referencia or extraccion.get("referencia", "")
+    banco_origen = body.banco or extraccion.get("banco_origen", "")
+
+    if not monto or not fecha_pago:
+        raise HTTPException(400, "monto y fecha_pago obligatorios")
+
+    lb = await db.loanbook.find_one({"loanbook_id": body.loanbook_id})
+    if not lb:
+        raise HTTPException(404, f"loanbook {body.loanbook_id} no existe")
+
+    # Re-publicar evento comprobante.pago.recibido apuntando al loanbook correcto
+    # via override manual. El handler comprobante toma datos de extraccion.
+    cliente_block = lb.get("cliente") or {}
+    await _publish_event(
+        db,
+        "pago.cuota.recibido.manual",
+        "routers.loanbook.pagos_revisar",
+        {
+            "loanbook_id":      body.loanbook_id,
+            "cliente_cedula":   cliente_block.get("cedula") or lb.get("cliente_cedula"),
+            "cliente_nombre":   cliente_block.get("nombre") or lb.get("cliente_nombre"),
+            "monto":            int(monto),
+            "fecha_pago":       fecha_pago,
+            "metodo":           body.metodo,
+            "banco_origen":     banco_origen,
+            "referencia":       referencia,
+            "via":              "backlog_manual",
+            "backlog_id":       body.backlog_id,
+            "extraccion":       extraccion,
+        },
+        accion=f"Confirmacion manual pago ${monto:,} → {body.loanbook_id}",
+    )
+
+    # Marcar backlog como resuelto
+    await db.backlog_pagos_revisar.update_one(
+        {"_id": oid},
+        {"$set": {
+            "estado":        "aplicado_manual",
+            "loanbook_id":   body.loanbook_id,
+            "monto_final":   int(monto),
+            "fecha_aplicado": fecha_pago,
+            "resolved_by":   "admin",
+        }},
+    )
+
+    return {
+        "success":        True,
+        "backlog_id":     body.backlog_id,
+        "loanbook_id":    body.loanbook_id,
+        "monto_aplicado": int(monto),
+        "mensaje":        "Pago aplicado manualmente. Saldo actualizado.",
+    }
+
+
+@router.post("/pagos-revisar/rechazar")
+async def rechazar_pago_backlog(
+    body: dict,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Rechaza un comprobante del backlog (ej: no es RODDOS, duplicado, etc.)."""
+    from bson import ObjectId
+    backlog_id = body.get("backlog_id", "")
+    motivo = body.get("motivo", "rechazado_admin")
+    try:
+        oid = ObjectId(backlog_id)
+    except Exception:
+        raise HTTPException(400, "backlog_id invalido")
+    res = await db.backlog_pagos_revisar.update_one(
+        {"_id": oid},
+        {"$set": {"estado": "rechazado", "motivo_rechazo": motivo}},
+    )
+    return {"success": res.modified_count > 0, "backlog_id": backlog_id}

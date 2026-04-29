@@ -79,6 +79,7 @@ async def lifespan(app: FastAPI):
         import core.datakeeper_handlers_loanbook    # noqa: F401
         import core.datakeeper_handlers_crm         # noqa: F401
         import core.datakeeper_handlers_comprobante # noqa: F401  # B9 (2026-04-28)
+        import core.datakeeper_handlers_confirmacion # noqa: F401 # B11 (2026-04-28)
 
         await ensure_datakeeper_indexes(db)
 
