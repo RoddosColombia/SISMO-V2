@@ -447,4 +447,21 @@ async def handle_pago_cuota(event: dict, db: AsyncIOMotorDatabase):
     dpd = calcular_dpd(cuotas, fecha_pago)
     new_estado = estado_from_dpd(dpd)
 
-    # Persist all updates — f
+    # Persist all updates — fix 2026-04-29: filtrar por _id para no depender de vin
+    await db.loanbook.update_one(
+        {"_id": lb["_id"]},
+        {"$set": {
+            "cuotas": cuotas,
+            "saldo_capital": max(new_saldo, 0),
+            "total_pagado": new_total_pagado,
+            "total_mora_pagada": new_total_mora,
+            "total_anzi_pagado": new_total_anzi,
+            "estado": new_estado,
+        }},
+    )
+
+    logger.info(
+        f"Momento 3: Pago ${monto_pago:,.0f} applied to VIN {vin} — "
+        f"ANZI={allocation['anzi']}, mora={allocation['mora']}, "
+        f"corriente={allocation['corriente']}, estado={new_estado}"
+    )
