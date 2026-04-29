@@ -57,7 +57,7 @@ async def liquidar_reica_bogota_bimestre(
         try:
             page = await alegra.get(
                 "invoices",
-                params={"start": start, "limit": LIMIT, "order_field": "date"},
+                params={"start": start, "limit": LIMIT},
             )
         except Exception as e:
             logger.warning(f"Alegra invoices page start={start}: {e}")
@@ -91,7 +91,7 @@ async def liquidar_reica_bogota_bimestre(
         try:
             page = await alegra.get(
                 "journals",
-                params={"start": start, "limit": LIMIT, "order_field": "date"},
+                params={"start": start, "limit": LIMIT},
             )
         except Exception as e:
             logger.warning(f"Alegra journals page start={start}: {e}")

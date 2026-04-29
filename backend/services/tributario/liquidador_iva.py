@@ -88,7 +88,7 @@ async def liquidar_iva_cuatrimestre(
         try:
             page = await alegra.get(
                 "invoices",
-                params={"start": start, "limit": LIMIT, "order_field": "date"},
+                params={"start": start, "limit": LIMIT},
             )
         except Exception as e:
             logger.warning(f"Alegra invoices page start={start}: {e}")
@@ -149,7 +149,7 @@ async def liquidar_iva_cuatrimestre(
         try:
             page = await alegra.get(
                 "bills",
-                params={"start": start, "limit": BILLS_LIMIT, "order_direction": "desc"},
+                params={"start": start, "limit": BILLS_LIMIT},
             )
         except Exception as e:
             logger.warning(f"Alegra bills page start={start}: {e}")

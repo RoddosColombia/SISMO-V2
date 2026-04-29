@@ -319,7 +319,7 @@ async def debug_bills_iva(
         try:
             page = await alegra.get(
                 "bills",
-                params={"start": start, "limit": LIMIT, "order_direction": "desc"},
+                params={"start": start, "limit": LIMIT},
             )
         except Exception as e:
             return {"error_alegra": str(e), "start": start}

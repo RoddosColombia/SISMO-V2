@@ -84,7 +84,7 @@ async def liquidar_retefuente_mes(
         try:
             page = await alegra.get(
                 "journals",
-                params={"start": start, "limit": LIMIT, "order_field": "date"},
+                params={"start": start, "limit": LIMIT},
             )
         except Exception as e:
             logger.warning(f"Alegra journals page start={start}: {e}")
