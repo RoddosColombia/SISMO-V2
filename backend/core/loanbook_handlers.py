@@ -334,15 +334,25 @@ async def handle_pago_cuota(event: dict, db: AsyncIOMotorDatabase):
     Updates cuotas, saldo_capital, totals, and derives new estado from DPD.
     """
     datos = event["datos"]
-    vin = datos["vin"]
-    monto_pago = datos["monto_pago"]
-    fecha_pago_str = datos["fecha_pago"]
+    # Fix 2026-04-29: aceptar vin o loanbook_id (eventos B9/B10 publican loanbook_id sin vin)
+    vin = datos.get("vin")
+    loanbook_id = datos.get("loanbook_id")
+    monto_pago = datos.get("monto_pago") or datos.get("monto") or 0
+    fecha_pago_str = datos.get("fecha_pago") or datos.get("fecha")
+    if not fecha_pago_str:
+        raise ValueError("evento pago.cuota.recibido sin fecha_pago")
     fecha_pago = date.fromisoformat(fecha_pago_str)
 
-    # Find loanbook
-    lb = await db.loanbook.find_one({"vin": vin})
+    # Find loanbook por vin o por loanbook_id
+    if vin:
+        lb = await db.loanbook.find_one({"vin": vin})
+    elif loanbook_id:
+        lb = await db.loanbook.find_one({"loanbook_id": loanbook_id})
+        vin = (lb or {}).get("vin", "")
+    else:
+        raise ValueError("evento pago.cuota.recibido sin vin ni loanbook_id")
     if not lb:
-        raise ValueError(f"No existe loanbook para VIN {vin}.")
+        raise ValueError(f"No existe loanbook para vin={vin} loanbook_id={loanbook_id}")
 
     cuotas = lb["cuotas"]
     anzi_pct = lb.get("anzi_pct", 0.02)
@@ -437,21 +447,4 @@ async def handle_pago_cuota(event: dict, db: AsyncIOMotorDatabase):
     dpd = calcular_dpd(cuotas, fecha_pago)
     new_estado = estado_from_dpd(dpd)
 
-    # Persist all updates
-    await db.loanbook.update_one(
-        {"vin": vin},
-        {"$set": {
-            "cuotas": cuotas,
-            "saldo_capital": max(new_saldo, 0),
-            "total_pagado": new_total_pagado,
-            "total_mora_pagada": new_total_mora,
-            "total_anzi_pagado": new_total_anzi,
-            "estado": new_estado,
-        }},
-    )
-
-    logger.info(
-        f"Momento 3: Pago ${monto_pago:,.0f} applied to VIN {vin} — "
-        f"ANZI={allocation['anzi']}, mora={allocation['mora']}, "
-        f"corriente={allocation['corriente']}, estado={new_estado}"
-    )
+    # Persist all updates — f

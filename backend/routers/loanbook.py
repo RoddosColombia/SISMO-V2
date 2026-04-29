@@ -2062,4 +2062,3 @@ async def preview_html_reporte(db: AsyncIOMotorDatabase = Depends(get_db)):
     analisis = await analizar_cartera(db)
     html = construir_html_reporte(analisis)
     return Response(content=html, media_type="text/html")
-xt/html")
