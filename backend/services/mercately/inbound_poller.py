@@ -143,6 +143,15 @@ async def _process_inbound_message(db: AsyncIOMotorDatabase,
     content_type = msg.get("content_type", "text")
     created_time_iso = msg.get("created_time", "")
 
+    # B7: Detectar si es comprobante (media: imagen/PDF) para flujo OCR automatico
+    content_media_url = msg.get("content_media_url", "") or ""
+    content_media_type = msg.get("content_media_type", "") or ""
+    es_comprobante = bool(content_media_url) and (
+        content_media_type.startswith("image/")
+        or content_media_type.startswith("application/pdf")
+        or content_type in ("image", "document", "media")
+    )
+
     cliente = await db.crm_clientes.find_one({"mercately_phone": phone})
     if not cliente and len(phone) >= 10:
         cliente = await db.crm_clientes.find_one({"telefono": {"$regex": phone[-10:]}})
@@ -166,10 +175,36 @@ async def _process_inbound_message(db: AsyncIOMotorDatabase,
         source="polling.mercately",
         datos={"phone": phone, "cedula": cedula, "mensaje": content_text[:1024],
                "msg_type": content_type, "msg_id": msg_id, "via": "polling",
-               "created_time": created_time_iso},
+               "created_time": created_time_iso,
+               "tiene_comprobante": es_comprobante,
+               "media_url": content_media_url,
+               "media_type": content_media_type},
         alegra_id=None,
         accion_ejecutada=f"Respuesta WhatsApp poll {cedula or phone}",
     )
+
+    # B7: Si es comprobante, publicar evento adicional para que el handler OCR
+    # lo procese (B8). El handler match_pago (B9) consumira el resultado.
+    if es_comprobante:
+        await publish_event(
+            db=db, event_type="comprobante.pago.recibido",
+            source="polling.mercately",
+            datos={
+                "phone":           phone,
+                "cedula":          cedula,
+                "msg_id":          msg_id,
+                "media_url":       content_media_url,
+                "media_type":      content_media_type,
+                "content_text":    content_text[:300],
+                "created_time":    created_time_iso,
+                "loanbook_ids":    (cliente or {}).get("loanbook_ids", []),
+                "cliente_nombre":  (cliente or {}).get("nombre", ""),
+            },
+            alegra_id=None,
+            accion_ejecutada=f"Comprobante WhatsApp recibido {cedula or phone}",
+        )
+        logger.info("comprobante detectado phone=%s cedula=%s media_type=%s",
+                    phone, cedula, content_media_type)
 
     await db.mercately_inbound_audit.insert_one({
         "fecha": datetime.now(timezone.utc), "phone": phone, "msg_id": msg_id,
