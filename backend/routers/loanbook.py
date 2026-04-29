@@ -2056,9 +2056,287 @@ async def ejecutar_cobranza_jueves_now(
 
 @router.get("/cobranza-jueves/preview-html", response_class=Response)
 async def preview_html_reporte(db: AsyncIOMotorDatabase = Depends(get_db)):
-    """Devuelve el HTML del reporte semanal para previsualizar en navegador."""
-    from services.cobranza.cartera_revisor import analizar_cartera
-    from services.email.reportes_jueves import construir_html_reporte
-    analisis = await analizar_cartera(db)
-    html = construir_html_reporte(analisis)
-    return Response(content=html, media_type="text/html")
+    """Devuelve el HTML del reporte semanal para previsualizar en navegador.
+
+    Resiliente: si el análisis falla, devuelve HTML con el error visible
+    (no 500 con body vacío que aparece "en blanco" en el navegador).
+    """
+    import traceback
+    try:
+        from services.cobranza.cartera_revisor import analizar_cartera
+        from services.email.reportes_jueves import construir_html_reporte
+        analisis = await analizar_cartera(db)
+        html = construir_html_reporte(analisis)
+        return Response(content=html, media_type="text/html; charset=utf-8")
+    except Exception as e:
+        tb = traceback.format_exc()
+        logger.exception("preview-html falló")
+        error_html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><title>Preview error</title>
+<style>body{{font-family:monospace;padding:24px;background:#fef2f2;color:#7f1d1d;}}
+pre{{background:#fff;padding:16px;border-radius:8px;border:1px solid #fecaca;overflow:auto;}}
+h1{{color:#dc2626;}}</style></head><body>
+<h1>Error generando reporte cobranza-jueves</h1>
+<p><strong>{type(e).__name__}:</strong> {str(e)}</p>
+<pre>{tb}</pre>
+<hr><p>Si ves esto significa que el endpoint funciona pero falla el análisis. Revisa logs.</p>
+</body></html>"""
+        return Response(content=error_html, media_type="text/html; charset=utf-8", status_code=500)
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# CRM-GAP: diagnóstico y reconciliación CRM ↔ loanbook
+# ───────────────────────────────────────────────────────────────────────────
+
+@router.get("/diagnostico/crm-gap")
+async def diagnostico_crm_gap(db: AsyncIOMotorDatabase = Depends(get_db)):
+    """Audita gap entre loanbook y crm_clientes.
+
+    Returns JSON con:
+    - clientes_en_loanbook: cédulas únicas de loanbooks activos
+    - clientes_en_crm: cédulas en crm_clientes
+    - faltantes_en_crm: en loanbook pero NO en crm_clientes (← bug que rompe RADAR)
+    - phone_desincronizado: en ambos pero teléfono difiere
+    - sin_telefono_loanbook: loanbooks activos sin teléfono cliente
+    """
+    estados_excluir = {"saldado", "Pagado", "castigado", "ChargeOff"}
+
+    loanbooks_clientes = {}
+    sin_telefono = []
+    async for lb in db.loanbook.find({}):
+        if lb.get("estado") in estados_excluir:
+            continue
+        cli = lb.get("cliente") or {}
+        ced = (cli.get("cedula") or lb.get("cliente_cedula") or "").strip()
+        if not ced:
+            continue
+        nombre = cli.get("nombre") or lb.get("cliente_nombre") or ""
+        tel = cli.get("telefono") or lb.get("cliente_telefono") or ""
+        loanbooks_clientes[ced] = {
+            "nombre": nombre,
+            "telefono": tel,
+            "loanbook_id": lb.get("loanbook_id", ""),
+            "estado": lb.get("estado", ""),
+        }
+        if not tel:
+            sin_telefono.append({
+                "cedula": ced, "nombre": nombre,
+                "loanbook_id": lb.get("loanbook_id", "")
+            })
+
+    crm_clientes_dict = {}
+    async for c in db.crm_clientes.find({}):
+        ced = (c.get("cedula") or "").strip()
+        if ced:
+            crm_clientes_dict[ced] = {
+                "nombre": c.get("nombre") or "",
+                "telefono": c.get("telefono") or c.get("mercately_phone") or "",
+            }
+
+    faltantes = []
+    desincronizados = []
+    for ced, lb_data in loanbooks_clientes.items():
+        if ced not in crm_clientes_dict:
+            faltantes.append({"cedula": ced, **lb_data})
+        else:
+            crm_data = crm_clientes_dict[ced]
+            tel_lb = (lb_data["telefono"] or "").strip()
+            tel_crm = (crm_data["telefono"] or "").strip()
+            # Solo flagear si ambos tienen tel y difieren significativamente
+            if tel_lb and tel_crm:
+                # Normalizar para comparar (quitar +57, espacios, guiones)
+                norm_lb = "".join(c for c in tel_lb if c.isdigit())[-10:]
+                norm_crm = "".join(c for c in tel_crm if c.isdigit())[-10:]
+                if norm_lb and norm_crm and norm_lb != norm_crm:
+                    desincronizados.append({
+                        "cedula": ced,
+                        "nombre": lb_data["nombre"],
+                        "telefono_loanbook": tel_lb,
+                        "telefono_crm": tel_crm,
+                        "loanbook_id": lb_data["loanbook_id"],
+                    })
+
+    return {
+        "total_loanbook_activos_unicos": len(loanbooks_clientes),
+        "total_crm_clientes": len(crm_clientes_dict),
+        "faltantes_en_crm_count": len(faltantes),
+        "phone_desincronizado_count": len(desincronizados),
+        "sin_telefono_en_loanbook_count": len(sin_telefono),
+        "faltantes_en_crm": faltantes,
+        "phone_desincronizado": desincronizados,
+        "sin_telefono_en_loanbook": sin_telefono,
+    }
+
+
+@router.post("/diagnostico/crm-reconciliar")
+async def diagnostico_crm_reconciliar(
+    body: dict | None = None,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Reconcilia crm_clientes contra loanbook (loanbook = source of truth para clientes activos).
+
+    Body opcional: {"dry_run": true} → solo muestra qué haría, no escribe.
+    Default: dry_run=true (seguro).
+
+    Para cada cliente en loanbook activo:
+    - Si NO existe en crm_clientes → crear con datos del loanbook
+    - Si existe pero phone difiere → actualizar phone (loanbook gana)
+    - Si tiene loanbooks[] sin el loanbook_id actual → agregarlo
+    """
+    from datetime import datetime, timezone
+    from core.crm_model import crear_cliente_doc
+
+    dry_run = bool((body or {}).get("dry_run", True))
+    estados_excluir = {"saldado", "Pagado", "castigado", "ChargeOff"}
+
+    creados = []
+    actualizados_phone = []
+    loanbook_ids_agregados = []
+    errores = []
+
+    async for lb in db.loanbook.find({}):
+        if lb.get("estado") in estados_excluir:
+            continue
+        cli = lb.get("cliente") or {}
+        ced = (cli.get("cedula") or lb.get("cliente_cedula") or "").strip()
+        if not ced:
+            continue
+        lb_id = lb.get("loanbook_id", "")
+        nombre = cli.get("nombre") or lb.get("cliente_nombre") or ""
+        tel = cli.get("telefono") or lb.get("cliente_telefono") or ""
+        email = cli.get("email") or lb.get("cliente_email") or ""
+        direccion = cli.get("direccion") or lb.get("cliente_direccion") or ""
+
+        try:
+            existing = await db.crm_clientes.find_one({"cedula": ced})
+            if not existing:
+                if not dry_run:
+                    doc = crear_cliente_doc(
+                        cedula=ced, nombre=nombre, telefono=tel,
+                        email=email, direccion=direccion,
+                    )
+                    doc["loanbooks"] = [lb_id] if lb_id else []
+                    doc["fuente"] = "reconciliar_crm_2026-04-29"
+                    await db.crm_clientes.insert_one(doc)
+                creados.append({"cedula": ced, "nombre": nombre, "telefono": tel, "loanbook_id": lb_id})
+            else:
+                update_set = {}
+                # Phone update si difiere
+                tel_existing = (existing.get("telefono") or "").strip()
+                if tel and tel != tel_existing:
+                    if not dry_run:
+                        update_set["telefono"] = tel
+                        update_set["telefono_actualizado_at"] = datetime.now(timezone.utc).isoformat()
+                    actualizados_phone.append({
+                        "cedula": ced, "nombre": nombre,
+                        "telefono_anterior": tel_existing, "telefono_nuevo": tel,
+                    })
+                # Agregar loanbook_id si falta
+                lb_array = existing.get("loanbooks") or []
+                if lb_id and lb_id not in lb_array:
+                    if not dry_run:
+                        await db.crm_clientes.update_one(
+                            {"cedula": ced},
+                            {"$addToSet": {"loanbooks": lb_id}},
+                        )
+                    loanbook_ids_agregados.append({"cedula": ced, "loanbook_id": lb_id})
+                if update_set and not dry_run:
+                    update_set["updated_at"] = datetime.now(timezone.utc).isoformat()
+                    await db.crm_clientes.update_one({"cedula": ced}, {"$set": update_set})
+        except Exception as e:
+            errores.append({"cedula": ced, "loanbook_id": lb_id, "error": str(e)})
+
+    return {
+        "dry_run": dry_run,
+        "creados_count": len(creados),
+        "phones_actualizados_count": len(actualizados_phone),
+        "loanbook_ids_agregados_count": len(loanbook_ids_agregados),
+        "errores_count": len(errores),
+        "creados": creados,
+        "phones_actualizados": actualizados_phone,
+        "loanbook_ids_agregados": loanbook_ids_agregados,
+        "errores": errores,
+    }
+
+
+@router.get("/diagnostico/crm-html", response_class=Response)
+async def diagnostico_crm_html(db: AsyncIOMotorDatabase = Depends(get_db)):
+    """Versión HTML visual del diagnóstico CRM-gap (abrir en navegador)."""
+    import traceback
+    try:
+        gap = await diagnostico_crm_gap(db)
+        rows_falt = "".join(
+            f"<tr><td>{c['cedula']}</td><td>{c['nombre']}</td><td>{c['telefono'] or '<em>sin tel</em>'}</td><td>{c['loanbook_id']}</td><td><span style='color:#dc2626'>FALTANTE</span></td></tr>"
+            for c in gap["faltantes_en_crm"]
+        )
+        rows_des = "".join(
+            f"<tr><td>{c['cedula']}</td><td>{c['nombre']}</td><td>{c['telefono_loanbook']}</td><td>{c['telefono_crm']}</td><td>{c['loanbook_id']}</td></tr>"
+            for c in gap["phone_desincronizado"]
+        )
+        rows_st = "".join(
+            f"<tr><td>{c['cedula']}</td><td>{c['nombre']}</td><td>{c['loanbook_id']}</td></tr>"
+            for c in gap["sin_telefono_en_loanbook"]
+        )
+        html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><title>CRM Gap Audit</title>
+<style>body{{font-family:-apple-system,'Segoe UI',sans-serif;padding:24px;background:#f6f3f2;color:#1f2937;max-width:1200px;margin:0 auto;}}
+h1{{color:#006e2a;}}h2{{margin-top:32px;color:#1f2937;}}
+.card{{background:white;padding:16px;border-radius:8px;margin-bottom:16px;box-shadow:0 1px 3px rgba(0,0,0,0.06);}}
+.metric{{display:inline-block;margin-right:24px;}}.metric-val{{font-size:28px;font-weight:600;color:#006e2a;}}
+.metric-bad{{color:#dc2626;}}table{{width:100%;border-collapse:collapse;margin-top:8px;}}
+th,td{{padding:8px 12px;text-align:left;border-bottom:1px solid #e5e7eb;font-size:13px;}}
+th{{background:#f9fafb;text-transform:uppercase;font-size:11px;color:#6b7280;}}
+.warn{{background:#fef3c7;padding:12px 16px;border-left:4px solid #f59e0b;border-radius:4px;}}
+button{{background:#006e2a;color:white;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;font-weight:600;margin-right:8px;}}
+button:hover{{background:#004d1d;}}.btn-danger{{background:#dc2626;}}.btn-danger:hover{{background:#991b1b;}}
+code{{background:#f3f4f6;padding:2px 6px;border-radius:4px;font-family:monospace;}}
+</style></head><body>
+<h1>📊 Auditoría CRM ↔ Loanbook</h1>
+<div class="card">
+  <span class="metric"><div>Loanbooks activos (clientes únicos)</div><div class="metric-val">{gap['total_loanbook_activos_unicos']}</div></span>
+  <span class="metric"><div>Total clientes en CRM</div><div class="metric-val">{gap['total_crm_clientes']}</div></span>
+  <span class="metric"><div>Faltantes en CRM</div><div class="metric-val metric-bad">{gap['faltantes_en_crm_count']}</div></span>
+  <span class="metric"><div>Phones desincronizados</div><div class="metric-val metric-bad">{gap['phone_desincronizado_count']}</div></span>
+  <span class="metric"><div>Sin tel en Loanbook</div><div class="metric-val metric-bad">{gap['sin_telefono_en_loanbook_count']}</div></span>
+</div>
+
+{('<div class="warn"><strong>⚠️ Acción requerida:</strong> hay '+str(gap['faltantes_en_crm_count'])+' clientes activos en loanbook que NO existen en crm_clientes. Esto rompe RADAR (alertas WhatsApp) y el OCR matcher.</div>') if gap['faltantes_en_crm_count'] else '<p style="color:#10b981">✅ Todos los clientes loanbook están en crm_clientes.</p>'}
+
+<h2>🔧 Reconciliar (poblar/actualizar crm_clientes desde loanbook)</h2>
+<div class="card">
+  <p>Loanbook es la fuente de verdad. Esta acción:</p>
+  <ol><li>Crea en <code>crm_clientes</code> los clientes que solo están en loanbook</li>
+  <li>Actualiza el teléfono en <code>crm_clientes</code> si difiere del loanbook</li>
+  <li>Agrega <code>loanbook_id</code> al array <code>loanbooks[]</code> del cliente CRM si falta</li></ol>
+  <p>
+    <button onclick="reconciliar(true)">🔍 DRY-RUN (solo simular)</button>
+    <button class="btn-danger" onclick="reconciliar(false)">🚀 EJECUTAR (escribe a la BD)</button>
+  </p>
+  <pre id="result" style="background:#1f2937;color:#10b981;padding:12px;border-radius:6px;display:none;max-height:300px;overflow:auto;"></pre>
+</div>
+
+<h2>❌ Faltantes en CRM ({gap['faltantes_en_crm_count']})</h2>
+<table><thead><tr><th>Cédula</th><th>Nombre</th><th>Teléfono</th><th>Loanbook ID</th><th>Estado</th></tr></thead><tbody>{rows_falt or '<tr><td colspan=5 style=text-align:center>Ninguno ✅</td></tr>'}</tbody></table>
+
+<h2>⚠️ Phones desincronizados ({gap['phone_desincronizado_count']})</h2>
+<table><thead><tr><th>Cédula</th><th>Nombre</th><th>Tel en Loanbook</th><th>Tel en CRM</th><th>Loanbook ID</th></tr></thead><tbody>{rows_des or '<tr><td colspan=5 style=text-align:center>Ninguno ✅</td></tr>'}</tbody></table>
+
+<h2>📵 Sin teléfono en Loanbook ({gap['sin_telefono_en_loanbook_count']})</h2>
+<table><thead><tr><th>Cédula</th><th>Nombre</th><th>Loanbook ID</th></tr></thead><tbody>{rows_st or '<tr><td colspan=3 style=text-align:center>Ninguno ✅</td></tr>'}</tbody></table>
+
+<script>
+async function reconciliar(dryRun){{
+  const r=document.getElementById('result');r.style.display='block';r.textContent='Procesando…';
+  try{{
+    const resp=await fetch('/api/loanbook/diagnostico/crm-reconciliar',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{dry_run:dryRun}})}});
+    const data=await resp.json();r.textContent=JSON.stringify(data,null,2);
+    if(!dryRun)setTimeout(()=>location.reload(),2000);
+  }}catch(e){{r.textContent='Error: '+e.message;}}
+}}
+</script>
+</body></html>"""
+        return Response(content=html, media_type="text/html; charset=utf-8")
+    except Exception as e:
+        return Response(
+            content=f"<pre>Error: {type(e).__name__}: {e}\n\n{traceback.format_exc()}</pre>",
+            media_type="text/html; charset=utf-8",
+            status_code=500,
+        )
