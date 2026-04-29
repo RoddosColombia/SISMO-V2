@@ -84,8 +84,7 @@ async def liquidar_retefuente_mes(
         try:
             page = await alegra.get(
                 "journals",
-                params={"start": start, "limit": LIMIT,
-                        "date": f"{inicio_str},{fin_str}"},
+                params={"start": start, "limit": LIMIT, "order_field": "date"},
             )
         except Exception as e:
             logger.warning(f"Alegra journals page start={start}: {e}")
@@ -93,6 +92,9 @@ async def liquidar_retefuente_mes(
         if not isinstance(page, list) or not page:
             break
         for journal in page:
+            j_date = (journal.get("date") or "")[:10]
+            if not (inicio_str <= j_date <= fin_str):
+                continue
             n_journals += 1
             for entry in (journal.get("entries") or []):
                 cuenta_id = str(entry.get("id") or "")

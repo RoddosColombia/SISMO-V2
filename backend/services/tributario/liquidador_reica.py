@@ -48,7 +48,7 @@ async def liquidar_reica_bogota_bimestre(
     inicio_str = inicio.isoformat()
     fin_str = fin.isoformat()
 
-    # ── 1) Ingresos del bimestre (suma totales de invoices status open/closed) ─
+    # ── 1) Ingresos del bimestre (paginado + filtro Python) ─
     ingresos = 0.0
     n_inv = 0
     start = 0
@@ -57,9 +57,7 @@ async def liquidar_reica_bogota_bimestre(
         try:
             page = await alegra.get(
                 "invoices",
-                params={"start": start, "limit": LIMIT,
-                        "date": f"{inicio_str},{fin_str}",
-                        "status": "open,closed"},
+                params={"start": start, "limit": LIMIT, "order_field": "date"},
             )
         except Exception as e:
             logger.warning(f"Alegra invoices page start={start}: {e}")
@@ -67,6 +65,11 @@ async def liquidar_reica_bogota_bimestre(
         if not isinstance(page, list) or not page:
             break
         for inv in page:
+            inv_date = (inv.get("date") or "")[:10]
+            if not (inicio_str <= inv_date <= fin_str):
+                continue
+            if inv.get("status") in ("draft", "void", "cancelled"):
+                continue
             n_inv += 1
             # Subtotal sin IVA es la base ICA
             for item in (inv.get("items") or []):
@@ -88,8 +91,7 @@ async def liquidar_reica_bogota_bimestre(
         try:
             page = await alegra.get(
                 "journals",
-                params={"start": start, "limit": LIMIT,
-                        "date": f"{inicio_str},{fin_str}"},
+                params={"start": start, "limit": LIMIT, "order_field": "date"},
             )
         except Exception as e:
             logger.warning(f"Alegra journals page start={start}: {e}")
@@ -97,6 +99,9 @@ async def liquidar_reica_bogota_bimestre(
         if not isinstance(page, list) or not page:
             break
         for journal in page:
+            j_date = (journal.get("date") or "")[:10]
+            if not (inicio_str <= j_date <= fin_str):
+                continue
             n_journals += 1
             for entry in (journal.get("entries") or []):
                 cuenta = str(entry.get("id") or "")

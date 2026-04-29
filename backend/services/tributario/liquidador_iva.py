@@ -72,6 +72,8 @@ async def liquidar_iva_cuatrimestre(
     fin_str = fin.isoformat()
 
     # ── 1) Leer facturas de venta del periodo (paginado) ─────────────────
+    # Alegra NO acepta filtro 'date=inicio,fin' como param. Paginamos todo y
+    # filtramos en Python por inv["date"] dentro del rango.
     iva_generado = 0.0
     ventas_gravadas = 0.0
     ventas_exentas = 0.0
@@ -86,9 +88,7 @@ async def liquidar_iva_cuatrimestre(
         try:
             page = await alegra.get(
                 "invoices",
-                params={"start": start, "limit": LIMIT,
-                        "date": f"{inicio_str},{fin_str}",
-                        "status": "open,closed"},
+                params={"start": start, "limit": LIMIT, "order_field": "date"},
             )
         except Exception as e:
             logger.warning(f"Alegra invoices page start={start}: {e}")
@@ -96,6 +96,11 @@ async def liquidar_iva_cuatrimestre(
         if not isinstance(page, list) or not page:
             break
         for inv in page:
+            inv_date = (inv.get("date") or "")[:10]
+            if not (inicio_str <= inv_date <= fin_str):
+                continue
+            if inv.get("status") in ("draft", "void", "cancelled"):
+                continue
             n_facturas += 1
             for item in (inv.get("items") or []):
                 price = float(item.get("price") or 0)
@@ -139,9 +144,7 @@ async def liquidar_iva_cuatrimestre(
         try:
             page = await alegra.get(
                 "bills",
-                params={"start": start, "limit": LIMIT,
-                        "date": f"{inicio_str},{fin_str}",
-                        "status": "open,closed"},
+                params={"start": start, "limit": LIMIT, "order_field": "date"},
             )
         except Exception as e:
             logger.warning(f"Alegra bills page start={start}: {e}")
@@ -149,6 +152,11 @@ async def liquidar_iva_cuatrimestre(
         if not isinstance(page, list) or not page:
             break
         for bill in page:
+            bill_date = (bill.get("date") or "")[:10]
+            if not (inicio_str <= bill_date <= fin_str):
+                continue
+            if bill.get("status") in ("draft", "void", "cancelled"):
+                continue
             n_bills += 1
             for item in (bill.get("items") or []):
                 price = float(item.get("price") or 0)
