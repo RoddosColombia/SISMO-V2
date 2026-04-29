@@ -273,34 +273,134 @@ async def handle_comprobante_recibido(event: dict, db: AsyncIOMotorDatabase) -> 
         )
         return
 
-    # 5. Match exitoso → publicar pago.cuota.recibido para que el Contador
-    #    cree el journal en Alegra (B10) y el Loanbook actualice saldo
+    # 5. Match exitoso → aplicar waterfall + actualizar loanbook + publicar
+    #    cuota.pagada (schema canonico que el handler Contador ya escucha)
     loanbook_id = match_res["loanbook_id"]
     cuota_objetivo = match_res.get("cuota_objetivo") or {}
 
+    # Lookup loanbook completo + aplicar waterfall canonico
+    from core.loanbook_model import aplicar_waterfall, calcular_dpd, estado_from_dpd
+    from datetime import date as _date
+    lb = await db.loanbook.find_one({"loanbook_id": loanbook_id})
+    if not lb:
+        logger.error("loanbook %s no existe — abortando", loanbook_id)
+        return
+
+    saldo_capital = lb.get("saldo_capital", 0) or 0
+    cuotas = lb.get("cuotas") or []
+    try:
+        fpago = _date.fromisoformat(fecha_pago[:10])
+    except Exception:
+        fpago = _date.today()
+
+    allocation = aplicar_waterfall(
+        monto_pago=monto, cuotas=cuotas, fecha_pago=fpago,
+        anzi_pct=lb.get("anzi_pct", 0.02), saldo_capital=saldo_capital,
+    )
+
+    # Marcar cuotas pagadas
+    rem_v = allocation["vencidas"]; rem_c = allocation["corriente"]
+    fpago_str = fpago.isoformat()
+    for cu in cuotas:
+        if cu.get("estado") == "pagada":
+            continue
+        cu_monto = cu.get("monto") or lb.get("cuota_periodica", 0) or 0
+        if cu.get("fecha"):
+            try:
+                fc = _date.fromisoformat(cu["fecha"])
+            except Exception:
+                continue
+            if fc < fpago and rem_v >= cu_monto:
+                cu["estado"] = "pagada"; cu["fecha_pago"] = fpago_str
+                cu["monto_pagado"] = cu_monto; cu["metodo_pago"] = extraccion.get("tipo_transferencia", "Transferencia")
+                cu["banco"] = extraccion.get("banco_origen", ""); cu["referencia"] = referencia
+                rem_v -= cu_monto
+                continue
+            if fc >= fpago and rem_c >= cu_monto:
+                cu["estado"] = "pagada"; cu["fecha_pago"] = fpago_str
+                cu["monto_pagado"] = cu_monto; cu["metodo_pago"] = extraccion.get("tipo_transferencia", "Transferencia")
+                cu["banco"] = extraccion.get("banco_origen", ""); cu["referencia"] = referencia
+                rem_c -= cu_monto
+                break
+
+    # Actualizar saldos
+    nuevo_saldo_capital = max(0, saldo_capital - allocation["corriente"] - allocation["vencidas"] - allocation["capital"])
+    cuotas_pagadas_n = sum(1 for c in cuotas if c.get("estado") == "pagada")
+    cuotas_vencidas_n = sum(1 for c in cuotas if c.get("estado") != "pagada"
+                            and c.get("fecha") and _date.fromisoformat(c["fecha"]) < _date.today())
+    dpd = calcular_dpd(cuotas, fpago)
+    nuevo_estado = estado_from_dpd(dpd)
+    saldo_intereses_n = lb.get("saldo_intereses", 0) or 0
+    saldo_pendiente_n = nuevo_saldo_capital + saldo_intereses_n
+
+    await db.loanbook.update_one(
+        {"loanbook_id": loanbook_id},
+        {"$set": {
+            "cuotas": cuotas, "saldo_capital": nuevo_saldo_capital,
+            "saldo_pendiente": saldo_pendiente_n, "estado": nuevo_estado,
+            "cuotas_pagadas": cuotas_pagadas_n, "cuotas_vencidas": cuotas_vencidas_n,
+            "dpd": dpd, "fecha_ultimo_pago": fpago_str,
+            "mora_acumulada_cop": 0 if dpd == 0 else lb.get("mora_acumulada_cop", 0),
+            "total_pagado": (lb.get("total_pagado", 0) or 0) + monto,
+            "total_mora_pagada": (lb.get("total_mora_pagada", 0) or 0) + allocation["mora"],
+            "total_anzi_pagado": (lb.get("total_anzi_pagado", 0) or 0) + allocation["anzi"],
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }},
+    )
+
+    # Publicar cuota.pagada con schema canonico (lo que el Contador ya escucha)
+    # Mapeo banco_origen del comprobante → banco_recibo Alegra payment ID
+    BANCOS_ALEGRA = {"bancolombia": "5314", "bbva": "5318", "davivienda": "5322",
+                     "nequi": "5314", "global66": "5536"}
+    banco_norm = (extraccion.get("banco_origen", "") or "").lower()
+    banco_recibo = next((v for k, v in BANCOS_ALEGRA.items() if k in banco_norm), "5314")
+
     await publish_event(
-        db=db, event_type="pago.cuota.recibido",
+        db=db, event_type="cuota.pagada",
         source="datakeeper.comprobante.auto",
         datos={
             "loanbook_id":         loanbook_id,
+            "vin":                 lb.get("vin", ""),
+            "cliente_nombre":      match_res["cliente_nombre"],
             "cliente_cedula":      match_res["cliente_cedula"],
             "tipo_identificacion": match_res["tipo_identificacion"],
-            "cliente_nombre":      match_res["cliente_nombre"],
-            "monto":               monto,
-            "fecha_pago":          fecha_pago,
-            "metodo":              extraccion.get("tipo_transferencia", "Transferencia"),
+            "cuota_numero":        cuota_objetivo.get("numero"),
+            "monto_total_pagado":  monto,
+            "desglose": {
+                "cuota_corriente": allocation["corriente"],
+                "vencidas":        allocation["vencidas"],
+                "anzi":            allocation["anzi"],
+                "mora":            allocation["mora"],
+                "capital_extra":   allocation["capital"],
+            },
+            "banco_recibo":        banco_recibo,
             "banco_origen":        extraccion.get("banco_origen", ""),
+            "fecha_pago":          fpago_str,
+            "modelo_moto":         lb.get("modelo", ""),
+            "plan_codigo":         lb.get("plan_codigo", ""),
+            "modalidad":           lb.get("modalidad", ""),
+            "nuevo_estado":        nuevo_estado,
+            "dpd":                 dpd,
             "referencia":          referencia,
             "score_match":         match_res["score"],
-            "razon_match":         match_res["razon"],
-            "cuota_numero":        cuota_objetivo.get("numero"),
             "via":                 "ocr_whatsapp_auto",
-            "phone":               phone,
-            "msg_id":              msg_id,
         },
         alegra_id=None,
         accion_ejecutada=f"Pago auto WhatsApp ${monto:,} → {loanbook_id} (score {match_res['score']:.2f})",
     )
+
+    # Si saldó completamente, publicar loanbook.saldado
+    if nuevo_saldo_capital == 0 and cuotas_vencidas_n == 0:
+        cuotas_pendientes_n = sum(1 for c in cuotas if c.get("estado") != "pagada")
+        if cuotas_pendientes_n == 0:
+            await publish_event(
+                db=db, event_type="loanbook.saldado",
+                source="datakeeper.comprobante.auto",
+                datos={"loanbook_id": loanbook_id, "vin": lb.get("vin", ""),
+                       "cliente_cedula": match_res["cliente_cedula"]},
+                alegra_id=None,
+                accion_ejecutada=f"Loanbook {loanbook_id} saldado vía pago WhatsApp auto",
+            )
 
     # 6. Marcar referencia como procesada
     await db.pagos_procesados.insert_one({
@@ -325,3 +425,81 @@ loanbook=%s monto=%s ref=%s score=%.2f",
 match_res["cliente_cedula"], loanbook_id, monto, referencia,
         match_res["score"],
     )
+nto; cu["metodo_pago"] = extraccion.get("tipo_transferencia", "Transferencia")
+                cu["banco"] = extraccion.get("banco_origen", ""); cu["referencia"] = referencia
+                rem_c -= cu_monto
+                break
+
+    # Actualizar saldos
+    nuevo_saldo_capital = max(0, saldo_capital - allocation["corriente"] - allocation["vencidas"] - allocation["capital"])
+    cuotas_pagadas_n = sum(1 for c in cuotas if c.get("estado") == "pagada")
+    cuotas_vencidas_n = sum(1 for c in cuotas if c.get("estado") != "pagada"
+                            and c.get("fecha") and _date.fromisoformat(c["fecha"]) < _date.today())
+    dpd = calcular_dpd(cuotas, fpago)
+    nuevo_estado = estado_from_dpd(dpd)
+    saldo_intereses_n = lb.get("saldo_intereses", 0) or 0
+    saldo_pendiente_n = nuevo_saldo_capital + saldo_intereses_n
+
+    await db.loanbook.update_one(
+        {"loanbook_id": loanbook_id},
+        {"$set": {
+            "cuotas": cuotas, "saldo_capital": nuevo_saldo_capital,
+            "saldo_pendiente": saldo_pendiente_n, "estado": nuevo_estado,
+            "cuotas_pagadas": cuotas_pagadas_n, "cuotas_vencidas": cuotas_vencidas_n,
+            "dpd": dpd, "fecha_ultimo_pago": fpago_str,
+            "mora_acumulada_cop": 0 if dpd == 0 else lb.get("mora_acumulada_cop", 0),
+            "total_pagado": (lb.get("total_pagado", 0) or 0) + monto,
+            "total_mora_pagada": (lb.get("total_mora_pagada", 0) or 0) + allocation["mora"],
+            "total_anzi_pagado": (lb.get("total_anzi_pagado", 0) or 0) + allocation["anzi"],
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }},
+    )
+
+    # Publicar cuota.pagada con schema canonico
+    BANCOS_ALEGRA = {"bancolombia": "5314", "bbva": "5318", "davivienda": "5322",
+                     "nequi": "5314", "global66": "5536"}
+    banco_norm = (extraccion.get("banco_origen", "") or "").lower()
+    banco_recibo = next((v for k, v in BANCOS_ALEGRA.items() if k in banco_norm), "5314")
+
+    await publish_event(
+        db=db, event_type="cuota.pagada",
+        source="datakeeper.comprobante.auto",
+        datos={
+            "loanbook_id": loanbook_id, "vin": lb.get("vin", ""),
+            "cliente_nombre": match_res["cliente_nombre"],
+            "cliente_cedula": match_res["cliente_cedula"],
+            "tipo_identificacion": match_res["tipo_identificacion"],
+            "cuota_numero": cuota_objetivo.get("numero"),
+            "monto_total_pagado": monto,
+            "desglose": {
+                "cuota_corriente": allocation["corriente"],
+                "vencidas": allocation["vencidas"],
+                "anzi": allocation["anzi"],
+                "mora": allocation["mora"],
+                "capital_extra": allocation["capital"],
+            },
+            "banco_recibo": banco_recibo,
+            "banco_origen": extraccion.get("banco_origen", ""),
+            "fecha_pago": fpago_str,
+            "modelo_moto": lb.get("modelo", ""),
+            "plan_codigo": lb.get("plan_codigo", ""),
+            "modalidad": lb.get("modalidad", ""),
+            "nuevo_estado": nuevo_estado, "dpd": dpd,
+            "referencia": referencia, "score_match": match_res["score"],
+            "via": "ocr_whatsapp_auto",
+        },
+        alegra_id=None,
+        accion_ejecutada=f"Pago auto WhatsApp ${monto:,} → {loanbook_id} score={match_res['score']:.2f}",
+    )
+
+    if nuevo_saldo_capital == 0 and cuotas_vencidas_n == 0:
+        cuotas_pendientes_n = sum(1 for c in cuotas if c.get("estado") != "pagada")
+        if cuotas_pendientes_n == 0:
+            await publish_event(
+                db=db, event_type="loanbook.saldado",
+                source="datakeeper.comprobante.auto",
+                datos={"loanbook_id": loanbook_id, "vin": lb.get("vin", ""),
+                       "cliente_cedula": match_res["cliente_cedula"]},
+                alegra_id=None,
+                accion_ejecutada=f"Loanbook {loanbook_id} saldado",
+            )
