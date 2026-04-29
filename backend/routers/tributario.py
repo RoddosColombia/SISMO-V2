@@ -185,6 +185,7 @@ async def _persistir_obligacion_calculada(
             "impuesto_a_pagar": impuesto_a_pagar,
             "fecha_vencimiento": fecha_vencimiento,
         },
+        alegra_id=None,
         accion_ejecutada=f"Liquidación {nombre}: ${impuesto_a_pagar:,.0f}",
     )
     return doc
