@@ -293,6 +293,48 @@ async def liquidar_reica_bogota(
     return {"ok": True, "liquidacion": liq, "doc_id": doc["obligacion_id"]}
 
 
+@router.get("/debug/bills-probe")
+async def debug_bills_probe(db: AsyncIOMotorDatabase = Depends(get_db)):
+    """Prueba 5 variantes de params contra GET /bills para encontrar uno que funcione."""
+    alegra = AlegraClient(db=db)
+    variantes = [
+        {"label": "sin_params", "params": None},
+        {"label": "solo_limit_30", "params": {"limit": 30}},
+        {"label": "limit_30_start_0", "params": {"limit": 30, "start": 0}},
+        {"label": "limit_100", "params": {"limit": 100}},
+        {"label": "limit_5", "params": {"limit": 5}},
+    ]
+    resultados = []
+    for v in variantes:
+        try:
+            resp = await alegra.get("bills", params=v["params"])
+            if isinstance(resp, list):
+                resultados.append({
+                    "variante": v["label"],
+                    "params": v["params"],
+                    "ok": True,
+                    "count": len(resp),
+                    "primer_item_keys": list(resp[0].keys()) if resp else [],
+                    "primer_item_sample": resp[0] if resp else None,
+                })
+            else:
+                resultados.append({
+                    "variante": v["label"],
+                    "params": v["params"],
+                    "ok": True,
+                    "type": type(resp).__name__,
+                    "raw": resp,
+                })
+        except Exception as e:
+            resultados.append({
+                "variante": v["label"],
+                "params": v["params"],
+                "ok": False,
+                "error": str(e),
+            })
+    return {"resultados": resultados}
+
+
 @router.get("/debug/bills-iva")
 async def debug_bills_iva(
     periodo: Annotated[str, Query()] = "2026-C1",
