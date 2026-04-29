@@ -12,7 +12,7 @@ interface Cliente {
   telefono?: string
   email?: string
   estado: string
-  loanbooks?: number
+  loanbooks?: number | string[] | string
   score_pago?: string
   score?: string
   created_at?: string
@@ -182,7 +182,11 @@ export default function CrmPage() {
                               <span className="text-[10px] text-on-surface-variant/60">—</span>
                             )}
                           </td>
-                          <td className="px-4 py-2.5 text-right text-on-surface">{c.loanbooks ?? 0}</td>
+                          <td className="px-4 py-2.5 text-right text-on-surface">{
+                            Array.isArray(c.loanbooks)
+                              ? c.loanbooks.filter((x: string) => /^LB-\d{4}-\d{4}$/.test(x)).length
+                              : (typeof c.loanbooks === 'number' ? c.loanbooks : 0)
+                          }</td>
                         </tr>
                       )
                     })}
