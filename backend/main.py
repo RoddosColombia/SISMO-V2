@@ -44,6 +44,7 @@ from routers.informes import router as informes_router
 from routers.radar import router as radar_router
 from routers.integraciones import router as integraciones_router
 from routers.webhooks import router as webhooks_router  # Sprint S1.5
+from routers.tributario import router as tributario_router  # E3.3 motor tributario
 
 app = FastAPI(title="SISMO V2", version="0.1.0", lifespan=lifespan)
 
@@ -77,6 +78,7 @@ app.include_router(informes_router)
 app.include_router(radar_router)
 app.include_router(integraciones_router)
 app.include_router(webhooks_router)  # Sprint S1.5 — Alegra/Mercately webhooks
+app.include_router(tributario_router)  # E3.3 motor tributario
 
 
 @app.get("/health")

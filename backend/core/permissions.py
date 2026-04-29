@@ -26,14 +26,15 @@ Cambios 2026-04-28 (cierre violacion latente):
 
 WRITE_PERMISSIONS: dict[str, dict[str, list[str]]] = {
     'contador': {
-        'mongodb': ['roddos_events'],
+        'mongodb': ['roddos_events', 'obligaciones_tributarias'],
         'alegra': ['POST /journals', 'POST /invoices', 'POST /payments',
                    'POST /items', 'POST /bills',
                    'DELETE /journals', 'GET /categories', 'GET /journals',
                    'GET /items', 'GET /bills'],
     },
     'cfo': {
-        'mongodb': ['cfo_informes', 'cfo_alertas', 'roddos_events'],
+        'mongodb': ['cfo_informes', 'cfo_alertas', 'roddos_events',
+                    'tributario_recomendaciones'],
         'alegra': ['GET /journals', 'GET /invoices', 'GET /payments',
                    'GET /categories', 'GET /bills'],
     },
