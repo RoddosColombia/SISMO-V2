@@ -135,16 +135,18 @@ async def liquidar_iva_cuatrimestre(
         if len(page) < LIMIT:
             break
 
-    # ── 2) Leer facturas de compra (bills) del periodo — paginar TODO desc ──
-    # Alegra ordena bills cronológicamente; usar order_direction=desc para traer
-    # primero las recientes (las del periodo en curso). LIMIT=100 max.
+    # ── 2) Leer facturas de compra (bills) del periodo ─────────────────
+    # IMPORTANTE: estructura bills ≠ invoices.
+    #   items están en bill["purchases"]["items"], NO bill["items"]
+    #   campo "tax" puede venir vacío "" — IVA = total - subtotal
+    # Alegra cap = 30 para bills.
     iva_descontable = 0.0
     compras_gravadas = 0.0
     n_bills = 0
     start = 0
-    BILLS_LIMIT = 100
+    BILLS_LIMIT = 30
     paginas_bills = 0
-    MAX_PAGES_BILLS = 200  # safety
+    MAX_PAGES_BILLS = 200
     while paginas_bills < MAX_PAGES_BILLS:
         try:
             page = await alegra.get(
@@ -163,17 +165,27 @@ async def liquidar_iva_cuatrimestre(
             if bill.get("status") in ("draft", "void", "cancelled"):
                 continue
             n_bills += 1
-            for item in (bill.get("items") or []):
-                price = float(item.get("price") or 0)
-                qty = float(item.get("quantity") or 0)
+            # Estructura bills: items dentro de bill["purchases"]["items"]
+            purchases = bill.get("purchases") or {}
+            items = purchases.get("items") if isinstance(purchases, dict) else []
+            for item in (items or []):
+                subtotal = float(item.get("subtotal") or 0)
+                total = float(item.get("total") or 0)
+                # Si tax viene como array con percentage, úsalo. Si viene "" o vacío,
+                # calcular IVA = total - subtotal (el caso real de Alegra para bills)
+                tax_field = item.get("tax")
                 tax_pct = 0.0
-                for tax in (item.get("tax") or []):
-                    tax_pct = max(tax_pct, float(tax.get("percentage") or 0)) / 100
-                base = price * qty
-                iva_item = base * tax_pct
-                iva_descontable += iva_item
+                if isinstance(tax_field, list):
+                    for tax in tax_field:
+                        tax_pct = max(tax_pct, float(tax.get("percentage") or 0)) / 100
                 if tax_pct > 0:
-                    compras_gravadas += base
+                    iva_item = subtotal * tax_pct
+                else:
+                    # Inferir IVA por diferencia (caso bills sin tax explícito)
+                    iva_item = max(0, total - subtotal)
+                iva_descontable += iva_item
+                if iva_item > 0:
+                    compras_gravadas += subtotal
         paginas_bills += 1
         if len(page) < BILLS_LIMIT:
             break
