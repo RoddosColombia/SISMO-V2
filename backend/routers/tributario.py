@@ -293,6 +293,54 @@ async def liquidar_reica_bogota(
     return {"ok": True, "liquidacion": liq, "doc_id": doc["obligacion_id"]}
 
 
+@router.get("/debug/bills-iva")
+async def debug_bills_iva(
+    periodo: Annotated[str, Query()] = "2026-C1",
+    limit: Annotated[int, Query(ge=1, le=20)] = 10,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Debug: muestra las primeras N bills del periodo CRUDAS para ver el campo 'tax' real.
+
+    Si las compras a Auteco no tienen IVA, vamos a verlo aquí.
+    """
+    inicio, fin, _ = _ventana_iva_cuatrimestre(periodo)
+    inicio_str = inicio.isoformat()
+    fin_str = fin.isoformat()
+    alegra = AlegraClient(db=db)
+    page = await alegra.get("bills", params={"start": 0, "limit": 30, "order_field": "date"})
+    if not isinstance(page, list):
+        return {"error": "respuesta no es lista", "raw": page}
+    in_range = [b for b in page if inicio_str <= (b.get("date") or "")[:10] <= fin_str][:limit]
+    sample = []
+    for b in in_range:
+        items_summary = []
+        for item in (b.get("items") or []):
+            items_summary.append({
+                "name": item.get("name"),
+                "price": item.get("price"),
+                "quantity": item.get("quantity"),
+                "tax": item.get("tax"),
+                "discount": item.get("discount"),
+                "subtotal": item.get("subtotal"),
+                "total": item.get("total"),
+            })
+        sample.append({
+            "id": b.get("id"),
+            "date": b.get("date"),
+            "provider": (b.get("provider") or {}).get("name") if isinstance(b.get("provider"), dict) else b.get("provider"),
+            "status": b.get("status"),
+            "total": b.get("total"),
+            "items": items_summary,
+            "all_keys": list(b.keys()),
+        })
+    return {
+        "periodo": periodo,
+        "rango": [inicio_str, fin_str],
+        "bills_en_periodo": len(in_range),
+        "muestra": sample,
+    }
+
+
 @router.post("/liquidar/todo-vencimientos-30d")
 async def liquidar_todo_proximos_30d(db: AsyncIOMotorDatabase = Depends(get_db)):
     """Conveniencia: dispara liquidación de TODAS las obligaciones que vencen en 30 días."""
