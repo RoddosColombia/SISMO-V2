@@ -2434,3 +2434,270 @@ async function reconciliar(dryRun){{
             media_type="text/html; charset=utf-8",
             status_code=500,
         )
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# LOANBOOK-FIX — Auditoría integridad + reparación batch
+# ───────────────────────────────────────────────────────────────────────────
+
+@router.get("/audit/integridad")
+async def audit_integridad_loanbooks(db: AsyncIOMotorDatabase = Depends(get_db)):
+    """Audita TODOS los loanbooks y reporta problemas que rompen operación.
+
+    Status por LB:
+      VERDE: todo OK
+      AMARILLO: warnings menores (cuotas sin fecha, saldos inconsistentes)
+      ROJO: bloquea operación (estado activo sin cuotas, pendiente_entrega con pagos)
+    """
+    rojos = []
+    amarillos = []
+    verdes = []
+    total = 0
+
+    async for lb in db.loanbook.find({}):
+        total += 1
+        lb_id = lb.get("loanbook_id", "?")
+        estado = lb.get("estado", "?")
+        cuotas = lb.get("cuotas") or []
+        n_cuotas = len(cuotas)
+        nombre = (lb.get("cliente") or {}).get("nombre") or lb.get("cliente_nombre", "")
+
+        warnings = []
+        criticos = []
+
+        # CRÍTICO: estado activo sin cuotas
+        if estado == "activo" and n_cuotas == 0:
+            criticos.append("estado=activo pero cuotas vacío")
+
+        # CRÍTICO: pendiente_entrega que ya tiene pagos registrados
+        if estado == "pendiente_entrega":
+            criticos.append("pendiente_entrega — debe registrarse entrega para cobrar cuotas")
+
+        # CRÍTICO: cuotas sin fechas si activo
+        if estado == "activo" and n_cuotas > 0:
+            sin_fecha = [c.get("numero", "?") for c in cuotas if not c.get("fecha")]
+            if sin_fecha:
+                criticos.append(f"{len(sin_fecha)} cuotas sin fecha: {sin_fecha[:5]}")
+
+        # AMARILLO: cuotas con números no consecutivos
+        if cuotas:
+            numeros = sorted(int(c.get("numero", 0)) for c in cuotas if c.get("numero"))
+            esperado = list(range(1, len(numeros) + 1))
+            if numeros != esperado:
+                warnings.append(f"numeración cuotas no consecutiva: {numeros[:10]}")
+
+        # AMARILLO: saldos inconsistentes
+        saldo_pendiente = lb.get("saldo_pendiente", 0)
+        valor_total = lb.get("valor_total") or lb.get("monto_original", 0)
+        total_pagado = lb.get("total_pagado", 0)
+        if valor_total > 0:
+            esperado_saldo = valor_total - total_pagado
+            if abs(saldo_pendiente - esperado_saldo) > 1000:
+                warnings.append(f"saldo_pendiente={saldo_pendiente:,} no cuadra con valor_total-total_pagado={esperado_saldo:,}")
+
+        # AMARILLO: capital_plan ausente
+        if not lb.get("capital_plan"):
+            warnings.append("capital_plan ausente")
+
+        # AMARILLO: fecha_entrega ausente si activo
+        if estado == "activo" and not lb.get("fecha_entrega"):
+            warnings.append("fecha_entrega ausente aunque activo")
+
+        item = {
+            "loanbook_id": lb_id,
+            "cliente": nombre,
+            "estado": estado,
+            "modelo": lb.get("modelo", ""),
+            "modalidad": lb.get("modalidad", ""),
+            "n_cuotas": n_cuotas,
+            "cuotas_total_plan": lb.get("num_cuotas") or lb.get("cuotas_total", 0),
+            "saldo_pendiente": saldo_pendiente,
+            "valor_total": valor_total,
+            "fecha_entrega": lb.get("fecha_entrega"),
+            "criticos": criticos,
+            "warnings": warnings,
+        }
+        if criticos:
+            rojos.append(item)
+        elif warnings:
+            amarillos.append(item)
+        else:
+            verdes.append(item)
+
+    return {
+        "fecha_corte": today_bogota().isoformat(),
+        "total_loanbooks": total,
+        "rojos_count": len(rojos),
+        "amarillos_count": len(amarillos),
+        "verdes_count": len(verdes),
+        "rojos": rojos,
+        "amarillos": amarillos,
+        "verdes": verdes,
+    }
+
+
+@router.post("/audit/reparar-batch")
+async def audit_reparar_batch(
+    body: dict | None = None,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Auto-repara loanbooks con estado=pendiente_entrega que ya recibieron pagos.
+
+    Para cada LB pendiente_entrega:
+    1. Si tiene fecha_entrega proxy (fecha_factura, created_at, etc.):
+       → ejecutar registrar_entrega() automáticamente con esa fecha
+    2. Si no, queda en lista no_reparable para acción manual
+
+    Body: {"dry_run": true (default), "fecha_default": "2026-04-28"}
+    """
+    dry_run = bool((body or {}).get("dry_run", True))
+    fecha_default_str = (body or {}).get("fecha_default") or today_bogota().isoformat()
+
+    reparados = []
+    no_reparables = []
+    errores = []
+
+    async for lb in db.loanbook.find({"estado": "pendiente_entrega"}):
+        lb_id = lb.get("loanbook_id", "?")
+        nombre = (lb.get("cliente") or {}).get("nombre") or lb.get("cliente_nombre", "")
+
+        # Buscar fecha proxy en orden de prioridad
+        fecha_proxy = (
+            lb.get("fecha_entrega")
+            or lb.get("fecha_factura")
+            or lb.get("fecha_venta")
+            or (lb.get("created_at") or "")[:10]
+            or fecha_default_str
+        )
+
+        if not fecha_proxy:
+            no_reparables.append({"loanbook_id": lb_id, "cliente": nombre, "razon": "sin fecha proxy"})
+            continue
+
+        try:
+            fecha_entrega = date.fromisoformat(fecha_proxy[:10])
+        except ValueError:
+            no_reparables.append({"loanbook_id": lb_id, "cliente": nombre, "razon": f"fecha proxy inválida: {fecha_proxy}"})
+            continue
+
+        if dry_run:
+            reparados.append({
+                "loanbook_id": lb_id, "cliente": nombre,
+                "fecha_entrega_a_aplicar": fecha_entrega.isoformat(),
+                "modalidad": lb.get("modalidad"),
+                "num_cuotas": lb.get("num_cuotas") or lb.get("cuotas_total"),
+                "DRY_RUN": True,
+            })
+            continue
+
+        # Ejecutar registrar_entrega real
+        try:
+            from routers.loanbook import RegistrarEntregaBody, registrar_entrega
+            body_re = RegistrarEntregaBody(
+                fecha_entrega=fecha_entrega.isoformat(),
+                fecha_primera_cuota=None,
+                dia_cobro_especial=None,
+            )
+            result = await registrar_entrega(lb_id, body_re, db)
+            reparados.append({"loanbook_id": lb_id, "cliente": nombre, "result": "OK"})
+        except Exception as e:
+            errores.append({"loanbook_id": lb_id, "cliente": nombre, "error": str(e)})
+
+    return {
+        "dry_run": dry_run,
+        "reparados_count": len(reparados),
+        "no_reparables_count": len(no_reparables),
+        "errores_count": len(errores),
+        "reparados": reparados,
+        "no_reparables": no_reparables,
+        "errores": errores,
+    }
+
+
+@router.get("/audit/integridad-html", response_class=Response)
+async def audit_integridad_html(db: AsyncIOMotorDatabase = Depends(get_db)):
+    """Versión HTML visual del audit con botones de reparación."""
+    import traceback as _tb
+    try:
+        audit = await audit_integridad_loanbooks(db)
+
+        def _row_lb(lb, color):
+            criticos = "<br>".join(f"<span style='color:#dc2626'>❌ {c}</span>" for c in lb.get("criticos", []))
+            warnings = "<br>".join(f"<span style='color:#f59e0b'>⚠️ {w}</span>" for w in lb.get("warnings", []))
+            issues = (criticos + ("<br>" if criticos and warnings else "") + warnings) or "✅"
+            return (
+                f"<tr style='background:{color}'>"
+                f"<td><a href='/loanbook/{lb['loanbook_id']}' style='color:#006e2a;text-decoration:none;'><b>{lb['loanbook_id']}</b></a></td>"
+                f"<td>{lb.get('cliente','')[:30]}</td>"
+                f"<td><span class='badge badge-{lb.get('estado','?')}'>{lb.get('estado','')}</span></td>"
+                f"<td>{lb.get('modelo','')}</td>"
+                f"<td>{lb.get('modalidad','')}</td>"
+                f"<td style='text-align:right'>{lb.get('n_cuotas',0)} / {lb.get('cuotas_total_plan',0)}</td>"
+                f"<td style='text-align:right'>${int(lb.get('saldo_pendiente',0)):,}</td>"
+                f"<td style='font-size:11px'>{issues}</td>"
+                f"</tr>"
+            )
+
+        rows = (
+            "".join(_row_lb(lb, "#fee2e2") for lb in audit["rojos"]) +
+            "".join(_row_lb(lb, "#fef3c7") for lb in audit["amarillos"]) +
+            "".join(_row_lb(lb, "#fff") for lb in audit["verdes"][:30])  # solo 30 verdes
+        )
+
+        html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><title>Auditoría Loanbook</title>
+<style>body{{font-family:-apple-system,sans-serif;padding:24px;background:#f6f3f2;max-width:1400px;margin:0 auto;}}
+h1{{color:#006e2a;}}.metric{{display:inline-block;margin-right:24px;}}.metric-val{{font-size:32px;font-weight:600;}}
+.card{{background:white;padding:16px;border-radius:8px;margin-bottom:16px;box-shadow:0 1px 3px rgba(0,0,0,0.06);}}
+table{{width:100%;border-collapse:collapse;font-size:13px;}}
+th,td{{padding:8px 12px;text-align:left;border-bottom:1px solid #e5e7eb;}}
+th{{background:#f9fafb;text-transform:uppercase;font-size:11px;color:#6b7280;}}
+.badge{{padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;}}
+.badge-pendiente_entrega{{background:#fef3c7;color:#92400e;}}
+.badge-activo{{background:#d1fae5;color:#065f46;}}
+.badge-saldado{{background:#e5e7eb;color:#374151;}}
+.badge-mora{{background:#fee2e2;color:#991b1b;}}
+button{{background:#006e2a;color:white;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;font-weight:600;margin-right:8px;}}
+.btn-danger{{background:#dc2626;}}
+</style></head><body>
+<h1>🔍 Auditoría Integridad Loanbooks</h1>
+<div class="card">
+<span class="metric"><div>Total</div><div class="metric-val" style="color:#006e2a">{audit['total_loanbooks']}</div></span>
+<span class="metric"><div>🔴 Críticos</div><div class="metric-val" style="color:#dc2626">{audit['rojos_count']}</div></span>
+<span class="metric"><div>🟡 Warnings</div><div class="metric-val" style="color:#f59e0b">{audit['amarillos_count']}</div></span>
+<span class="metric"><div>🟢 OK</div><div class="metric-val" style="color:#10b981">{audit['verdes_count']}</div></span>
+</div>
+
+<div class="card">
+<h2>🔧 Reparación batch (pendiente_entrega → activo + cronograma)</h2>
+<p>Para cada LB en estado pendiente_entrega, se calcula fecha_entrega proxy y se ejecuta registrar_entrega automáticamente.</p>
+<button onclick="reparar(true)">🔍 DRY-RUN</button>
+<button class="btn-danger" onclick="reparar(false)">🚀 EJECUTAR</button>
+<pre id="result" style="background:#1f2937;color:#10b981;padding:12px;border-radius:6px;display:none;max-height:400px;overflow:auto;font-size:11px;"></pre>
+</div>
+
+<div class="card">
+<h2>Loanbooks (rojos primero, luego amarillos, luego 30 verdes)</h2>
+<table>
+<thead><tr><th>ID</th><th>Cliente</th><th>Estado</th><th>Modelo</th><th>Modalidad</th><th>Cuotas</th><th>Saldo</th><th>Issues</th></tr></thead>
+<tbody>{rows}</tbody>
+</table>
+</div>
+
+<script>
+async function reparar(dryRun){{
+  const r=document.getElementById('result');r.style.display='block';r.textContent='Procesando…';
+  try{{
+    const resp=await fetch('/api/loanbook/audit/reparar-batch',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{dry_run:dryRun}})}});
+    const data=await resp.json();r.textContent=JSON.stringify(data,null,2);
+    if(!dryRun)setTimeout(()=>location.reload(),3000);
+  }}catch(e){{r.textContent='Error: '+e.message;}}
+}}
+</script>
+</body></html>"""
+        return Response(content=html, media_type="text/html; charset=utf-8")
+    except Exception as e:
+        return Response(
+            content=f"<pre>Error: {type(e).__name__}: {e}\n\n{_tb.format_exc()}</pre>",
+            media_type="text/html; charset=utf-8",
+            status_code=500,
+        )
