@@ -372,12 +372,16 @@ def calcular_cronograma(
     """
     Calculate cuota schedule respecting the Wednesday Rule.
 
-    - Semanal: first Wednesday >= entrega + 7 days, then every 7 days
-    - Quincenal: fecha_primer_pago (must be Wednesday), then every 14 days
-    - Mensual: fecha_primer_pago (must be Wednesday), then every 28 days
+    Regla canónica RODDOS:
+      - Si fecha_primer_pago se pasa explícitamente: SE RESPETA (debe ser >fecha_entrega)
+      - Si NO se pasa:
+        * Semanal: primer miércoles DESPUÉS de fecha_entrega (no necesariamente +7d)
+        * Quincenal/mensual: ValueError (es obligatorio en estas modalidades)
 
-    Default: ALL dates are miércoles. Pass `dia_cobro_especial` for exceptional
-    cases (e.g. a client paid only on Thursdays due to their income schedule).
+    Después del primer cobro: cada N días según modalidad (7/14/28).
+
+    Default: ALL dates son miércoles. Pass `dia_cobro_especial` para excepciones
+    (e.g. cliente solo cobra jueves por su esquema de ingreso).
     """
     if modalidad not in MODALIDADES:
         raise ValueError(f"Modalidad '{modalidad}' no válida.")
@@ -395,29 +399,31 @@ def calcular_cronograma(
         target_weekday = WEDNESDAY
 
     dias = MODALIDADES[modalidad]["dias"]
-    min_first_date = fecha_entrega + timedelta(days=7)
 
-    if modalidad == "semanal":
-        # Auto-calculate: first target weekday >= entrega + 7 days
-        primer_cobro = _next_weekday(min_first_date, target_weekday)
-    else:
-        # Quincenal/mensual: user-provided fecha_primer_pago
-        if fecha_primer_pago is None:
+    if fecha_primer_pago is not None:
+        # Override explícito: respetar la fecha que el operador eligió
+        if fecha_primer_pago <= fecha_entrega:
             raise ValueError(
-                f"Modalidad '{modalidad}' requiere fecha_primer_pago."
+                f"fecha_primer_pago ({fecha_primer_pago.isoformat()}) debe ser "
+                f"posterior a fecha_entrega ({fecha_entrega.isoformat()})."
             )
         if fecha_primer_pago.weekday() != target_weekday:
             dia_nombre = dia_cobro_especial or "miércoles"
             raise ValueError(
-                f"fecha_primer_pago debe ser {dia_nombre}. "
-                f"Fecha recibida: {fecha_primer_pago.isoformat()}."
-            )
-        if fecha_primer_pago < min_first_date:
-            raise ValueError(
-                f"fecha_primer_pago debe ser >= fecha_entrega + 7 días "
-                f"({min_first_date.isoformat()})."
+                f"fecha_primer_pago debe caer en {dia_nombre}. "
+                f"Fecha recibida: {fecha_primer_pago.isoformat()} "
+                f"({['lun','mar','mié','jue','vie','sáb','dom'][fecha_primer_pago.weekday()]})."
             )
         primer_cobro = fecha_primer_pago
+    elif modalidad == "semanal":
+        # Auto-calculate: primer miércoles DESPUÉS de fecha_entrega
+        # (regla RODDOS: no se requiere gap de 7 días, basta que sea >entrega)
+        primer_cobro = _next_weekday(fecha_entrega + timedelta(days=1), target_weekday)
+    else:
+        # Quincenal/mensual REQUIERE fecha_primer_pago explícita
+        raise ValueError(
+            f"Modalidad '{modalidad}' requiere fecha_primer_pago."
+        )
 
     # Generate all dates
     fechas = []
