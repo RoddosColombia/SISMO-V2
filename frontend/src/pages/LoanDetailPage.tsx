@@ -454,6 +454,7 @@ export default function LoanDetailPage({ idProp, onClose }: LoanDetailPageProps 
             numProximaCuota={
               (lb.cuotas || []).find(c => c.estado !== 'pagada')?.numero ?? null
             }
+            cuotasPendientes={(lb.cuotas || []).filter(c => c.estado !== 'pagada')}
             onSuccess={loadLoanbook}
           />
         </Section>

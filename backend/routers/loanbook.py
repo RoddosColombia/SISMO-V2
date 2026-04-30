@@ -2721,6 +2721,151 @@ async def audit_recalcular_saldos(
     }
 
 
+@router.get("/audit/inspeccionar-reparados")
+async def audit_inspeccionar_reparados(
+    desde: Annotated[str, Query()] = "LB-2026-0030",
+    hasta: Annotated[str, Query()] = "LB-2026-0050",
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Lista LBs en rango con su estado de cronograma para validar fechas aplicadas en reparar-batch."""
+    out = []
+    async for lb in db.loanbook.find({"loanbook_id": {"$gte": desde, "$lte": hasta}}):
+        cuotas = lb.get("cuotas") or []
+        primera_cuota_fecha = None
+        ultima_cuota_fecha = None
+        if cuotas:
+            fechas = [c.get("fecha") for c in cuotas if c.get("fecha")]
+            if fechas:
+                primera_cuota_fecha = min(fechas)
+                ultima_cuota_fecha = max(fechas)
+        nombre = (lb.get("cliente") or {}).get("nombre") or lb.get("cliente_nombre", "")
+        out.append({
+            "loanbook_id": lb.get("loanbook_id"),
+            "cliente": nombre,
+            "estado": lb.get("estado"),
+            "modelo": lb.get("modelo"),
+            "modalidad": lb.get("modalidad"),
+            "fecha_entrega": lb.get("fecha_entrega"),
+            "fecha_factura": lb.get("fecha_factura"),
+            "created_at": lb.get("created_at"),
+            "n_cuotas": len(cuotas),
+            "primera_cuota_fecha": primera_cuota_fecha,
+            "ultima_cuota_fecha": ultima_cuota_fecha,
+            "cuotas_pagadas": lb.get("cuotas_pagadas", 0),
+            "saldo_pendiente": lb.get("saldo_pendiente", 0),
+        })
+    out.sort(key=lambda x: x["loanbook_id"] or "")
+    return {"total": len(out), "loanbooks": out}
+
+
+@router.post("/audit/corregir-batch")
+async def audit_corregir_batch(
+    body: dict = Body(...),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Corrige fecha_entrega + fecha_primera_cuota para una lista de loanbooks.
+
+    Body: {
+      "loanbook_ids": ["LB-2026-0034", ...],
+      "fecha_entrega": "2026-04-30",
+      "fecha_primera_cuota": "2026-05-06",
+      "dry_run": false
+    }
+
+    Para cada LB:
+    1. Si no es pendiente_entrega, lo regresa a ese estado y limpia cuotas[]
+    2. Llama registrar_entrega() con las nuevas fechas
+    3. El cronograma se regenera limpio
+    """
+    from routers.loanbook import RegistrarEntregaBody, registrar_entrega
+    lb_ids = body.get("loanbook_ids") or []
+    fecha_entrega = body.get("fecha_entrega")
+    fecha_primera_cuota = body.get("fecha_primera_cuota")
+    dia_cobro_especial = body.get("dia_cobro_especial")
+    dry_run = bool(body.get("dry_run", False))
+
+    if not lb_ids or not fecha_entrega:
+        raise HTTPException(status_code=400, detail="loanbook_ids y fecha_entrega obligatorios")
+
+    corregidos = []
+    errores = []
+
+    for lb_id in lb_ids:
+        try:
+            lb = await db.loanbook.find_one({"loanbook_id": lb_id})
+            if not lb:
+                errores.append({"loanbook_id": lb_id, "error": "no existe"})
+                continue
+            if dry_run:
+                corregidos.append({
+                    "loanbook_id": lb_id,
+                    "cliente": (lb.get("cliente") or {}).get("nombre") or lb.get("cliente_nombre", ""),
+                    "fecha_entrega_a_aplicar": fecha_entrega,
+                    "fecha_primera_cuota_a_aplicar": fecha_primera_cuota,
+                    "DRY_RUN": True,
+                })
+                continue
+            # Reset a pendiente_entrega para regenerar
+            await db.loanbook.update_one(
+                {"_id": lb["_id"]},
+                {"$set": {"estado": "pendiente_entrega", "cuotas": []}},
+            )
+            body_re = RegistrarEntregaBody(
+                fecha_entrega=fecha_entrega,
+                fecha_primera_cuota=fecha_primera_cuota,
+                dia_cobro_especial=dia_cobro_especial,
+            )
+            await registrar_entrega(lb_id, body_re, db)
+            corregidos.append({
+                "loanbook_id": lb_id,
+                "cliente": (lb.get("cliente") or {}).get("nombre") or lb.get("cliente_nombre", ""),
+                "result": "OK",
+            })
+        except Exception as e:
+            errores.append({"loanbook_id": lb_id, "error": str(e)})
+
+    return {
+        "dry_run": dry_run,
+        "corregidos_count": len(corregidos),
+        "errores_count": len(errores),
+        "corregidos": corregidos,
+        "errores": errores,
+    }
+
+
+@router.post("/{identifier}/corregir-fecha-entrega")
+async def corregir_fecha_entrega(
+    identifier: str,
+    body: dict = Body(...),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Cambia fecha_entrega y regenera cronograma. Body: {fecha_entrega: ISO, fecha_primera_cuota: ISO?}.
+
+    Si el cliente paga la próxima semana, fecha_primera_cuota = primer miércoles después
+    de fecha_entrega + 7 días (regla canónica).
+    """
+    from routers.loanbook import RegistrarEntregaBody, registrar_entrega
+    fecha_entrega = body.get("fecha_entrega")
+    if not fecha_entrega:
+        raise HTTPException(status_code=400, detail="fecha_entrega obligatoria (ISO yyyy-MM-dd)")
+
+    lb = await _find_lb_by_identifier(db, identifier)
+    # Volver a estado pendiente_entrega para que registrar_entrega no rechace
+    if lb.get("estado") not in ("pendiente_entrega",):
+        await db.loanbook.update_one(
+            {"_id": lb["_id"]},
+            {"$set": {"estado": "pendiente_entrega"},
+             "$unset": {"cuotas": ""}},
+        )
+
+    body_re = RegistrarEntregaBody(
+        fecha_entrega=fecha_entrega,
+        fecha_primera_cuota=body.get("fecha_primera_cuota"),
+        dia_cobro_especial=body.get("dia_cobro_especial"),
+    )
+    return await registrar_entrega(identifier, body_re, db)
+
+
 @router.get("/audit/integridad-html", response_class=Response)
 async def audit_integridad_html(db: AsyncIOMotorDatabase = Depends(get_db)):
     """Versión HTML visual del audit con botones de reparación."""

@@ -13,6 +13,7 @@ interface Props {
   cuotaInicial: number
   proximaCuota: { fecha: string; monto: number } | null
   numProximaCuota: number | null
+  cuotasPendientes?: Array<{ numero: number; fecha?: string; monto: number; estado: string }>
   onSuccess: () => void
 }
 
@@ -61,8 +62,10 @@ export default function LoanActionPanel({
   cuotaInicial,
   proximaCuota,
   numProximaCuota,
+  cuotasPendientes,
   onSuccess,
 }: Props) {
+  const cuotasPend = (cuotasPendientes || []).filter(c => c.estado !== 'pagada')
   const [modal, setModal] = useState<Modal>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -70,9 +73,10 @@ export default function LoanActionPanel({
   const esPendienteEntrega = estado === 'pendiente_entrega'
   const esActivo = !['saldado', 'castigado'].includes(estado)
 
-  // Form state (pago)
+  // Form state (pago) — cuota_numero: primera realmente pendiente, sino fallback
+  const _firstPendiente = cuotasPend[0]?.numero ?? numProximaCuota ?? null
   const [pagoForm, setPagoForm] = useState({
-    cuota_numero: numProximaCuota ?? 1,
+    cuota_numero: _firstPendiente ?? 0,
     monto_pago: proximaCuota?.monto ?? cuotaMonto,
     metodo_pago: 'efectivo',
     fecha_pago: todayISO(),
@@ -180,10 +184,30 @@ export default function LoanActionPanel({
         <ModalWrap title="Registrar pago de cuota">
           <div className="space-y-3">
             <div>
-              <label className="text-xs text-on-surface-variant">Cuota #</label>
-              <input type="number" className={inputClass()}
-                value={pagoForm.cuota_numero}
-                onChange={e => setPagoForm({ ...pagoForm, cuota_numero: Number(e.target.value) })} />
+              <label className="text-xs text-on-surface-variant">Cuota a pagar</label>
+              {cuotasPend.length > 0 ? (
+                <select className={inputClass()}
+                  value={pagoForm.cuota_numero}
+                  onChange={e => {
+                    const num = Number(e.target.value)
+                    const cuota = cuotasPend.find(c => c.numero === num)
+                    setPagoForm({
+                      ...pagoForm,
+                      cuota_numero: num,
+                      monto_pago: cuota?.monto ?? pagoForm.monto_pago,
+                    })
+                  }}>
+                  {cuotasPend.map(c => (
+                    <option key={c.numero} value={c.numero}>
+                      Cuota #{c.numero}{c.fecha ? ` — ${c.fecha}` : ''} — ${(c.monto || 0).toLocaleString('es-CO')}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <div className="text-sm text-on-surface-variant py-2">
+                  ✅ No hay cuotas pendientes. Crédito al día o saldado.
+                </div>
+              )}
             </div>
             <div>
               <label className="text-xs text-on-surface-variant">Monto pagado</label>
