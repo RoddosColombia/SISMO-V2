@@ -2850,6 +2850,367 @@ async def admin_repoblar_monto_cuotas(
     }
 
 
+@router.post("/admin-reconciliacion-completa")
+async def admin_reconciliacion_completa(
+    body: dict | None = None,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Reconciliación INTEGRAL de TODOS los loanbooks en una sola pasada.
+
+    Por cada LB no-saldado:
+    1. Marca las primeras N cuotas como "pagada" (según cuotas_pagadas agregado)
+       con fecha_pago = fecha_cuota (estimación) y monto_pagado = monto cuota
+    2. Recalcula valor_total = num_cuotas × cuota_monto (canónico)
+    3. Recalcula saldo_pendiente desde array cuotas
+    4. Recalcula dpd: días desde la primera cuota no-pagada con fecha < hoy
+    5. Recalcula cuotas_vencidas: cuotas pendientes con fecha < hoy
+    6. Recalcula sub_bucket Phase 7 según DPD real
+    7. Si fecha_primer_pago es futura (LB nuevos), dpd=0, cuotas_vencidas=0
+
+    Body: {"dry_run": true (default)}
+    """
+    from datetime import date, datetime as dt, timezone as tz
+    from core.datetime_utils import today_bogota
+    dry_run = bool((body or {}).get("dry_run", True))
+    today = today_bogota()
+    today_iso = today.isoformat()
+
+    def _phase7_bucket(dpd: int) -> str:
+        if dpd <= 0: return "Current"
+        if dpd <= 7: return "Grace"
+        if dpd <= 15: return "Warning"
+        if dpd <= 30: return "Alert"
+        if dpd <= 45: return "Critical"
+        if dpd <= 60: return "Severe"
+        if dpd <= 90: return "PreDefault"
+        if dpd <= 120: return "Default"
+        return "ChargeOff"
+
+    def _estado_from_dpd(dpd: int) -> str:
+        if dpd <= 0: return "al_dia"
+        if dpd <= 30: return "mora"
+        return "mora_grave"
+
+    reconciliados = []
+    sin_cambios = []
+    errores = []
+    total_saldo_antes = 0.0
+    total_saldo_despues = 0.0
+
+    estados_excluir = {"saldado", "Pagado", "castigado", "ChargeOff", "pendiente_entrega"}
+
+    async for lb in db.loanbook.find({}):
+        lb_id = lb.get("loanbook_id", "?")
+        nombre = (lb.get("cliente") or {}).get("nombre") or lb.get("cliente_nombre", "")
+        estado = lb.get("estado", "")
+
+        # Saltar saldados/pagados
+        if estado in estados_excluir:
+            sin_cambios.append({"loanbook_id": lb_id, "razon": f"estado={estado}"})
+            continue
+
+        cuotas = lb.get("cuotas") or []
+        if not cuotas:
+            errores.append({"loanbook_id": lb_id, "cliente": nombre, "error": "sin cuotas en array"})
+            continue
+
+        cuota_monto = float(lb.get("cuota_monto") or 0)
+        num_cuotas = int(lb.get("num_cuotas") or lb.get("cuotas_total") or len(cuotas))
+        cuotas_pagadas_agregado = int(lb.get("cuotas_pagadas") or 0)
+        total_pagado_agregado = float(lb.get("total_pagado") or 0)
+
+        if cuota_monto <= 0:
+            errores.append({"loanbook_id": lb_id, "cliente": nombre, "error": "cuota_monto=0"})
+            continue
+
+        saldo_antes = float(lb.get("saldo_pendiente") or 0)
+        total_saldo_antes += saldo_antes
+
+        # 1. Marcar las primeras N cuotas como "pagada"
+        cuotas_nuevas = []
+        cuotas_pagadas_array = sum(1 for c in cuotas if (c.get("estado") or "") == "pagada")
+        # Si el agregado dice más pagadas que el array, marcar las primeras (N - array) como pagada
+        n_a_marcar = max(0, cuotas_pagadas_agregado - cuotas_pagadas_array)
+        marcadas_count = 0
+        for c in cuotas:
+            estado_c = (c.get("estado") or "").lower()
+            if estado_c == "pagada":
+                cuotas_nuevas.append(c)
+                continue
+            if marcadas_count < n_a_marcar:
+                # Marcar como pagada
+                fecha_estimada = c.get("fecha") or today_iso
+                cuotas_nuevas.append({
+                    **c,
+                    "estado": "pagada",
+                    "fecha_pago": fecha_estimada,
+                    "monto_pagado": c.get("monto") or cuota_monto,
+                    "mora_acumulada": 0,
+                    "reconciliado_at": dt.now(tz.utc).isoformat(),
+                })
+                marcadas_count += 1
+            else:
+                cuotas_nuevas.append(c)
+
+        # 2-3. Recalcular valor_total y total_pagado canónicos
+        valor_total_canonico = num_cuotas * cuota_monto
+        total_pagado_real = sum(
+            float(c.get("monto_pagado") or c.get("monto") or 0)
+            for c in cuotas_nuevas
+            if (c.get("estado") or "").lower() == "pagada"
+        )
+        # Si el agregado dice más pagado que la suma del array, usar el agregado (tiene info real)
+        total_pagado_real = max(total_pagado_real, total_pagado_agregado)
+        saldo_pendiente_canonico = max(0, valor_total_canonico - total_pagado_real)
+
+        # 4-5. Recalcular DPD y cuotas_vencidas
+        cuotas_vencidas_real = 0
+        primera_pendiente_fecha = None
+        for c in cuotas_nuevas:
+            if (c.get("estado") or "").lower() == "pagada":
+                continue
+            fc = c.get("fecha")
+            if not fc:
+                continue
+            if fc < today_iso:
+                cuotas_vencidas_real += 1
+                if primera_pendiente_fecha is None:
+                    primera_pendiente_fecha = fc
+        dpd_real = 0
+        if primera_pendiente_fecha:
+            try:
+                dpd_real = (today - date.fromisoformat(primera_pendiente_fecha)).days
+            except Exception:
+                pass
+
+        # Si todas las cuotas son futuras (LB nuevo no entregado todavía), DPD=0
+        if cuotas_vencidas_real == 0:
+            dpd_real = 0
+
+        # 6. Sub-bucket Phase 7
+        sub_bucket = _phase7_bucket(dpd_real)
+        # 7. Estado canónico
+        cuotas_pagadas_real = sum(1 for c in cuotas_nuevas if (c.get("estado") or "").lower() == "pagada")
+        if cuotas_pagadas_real >= num_cuotas:
+            estado_canonico = "saldado"
+        else:
+            estado_canonico = _estado_from_dpd(dpd_real)
+
+        cambios = {
+            "valor_total":      {"antes": lb.get("valor_total"), "despues": int(valor_total_canonico)},
+            "saldo_pendiente":  {"antes": int(saldo_antes), "despues": int(saldo_pendiente_canonico)},
+            "total_pagado":     {"antes": int(total_pagado_agregado), "despues": int(total_pagado_real)},
+            "cuotas_pagadas":   {"antes": cuotas_pagadas_agregado, "despues": cuotas_pagadas_real},
+            "cuotas_vencidas":  {"antes": int(lb.get("cuotas_vencidas") or 0), "despues": cuotas_vencidas_real},
+            "dpd":              {"antes": int(lb.get("dpd") or 0), "despues": dpd_real},
+            "estado":           {"antes": estado, "despues": estado_canonico},
+            "sub_bucket":       {"antes": lb.get("sub_bucket_semanal") or "", "despues": sub_bucket},
+            "cuotas_marcadas_pagada_ahora": marcadas_count,
+        }
+
+        if not dry_run:
+            try:
+                await db.loanbook.update_one(
+                    {"_id": lb["_id"]},
+                    {"$set": {
+                        "cuotas":           cuotas_nuevas,
+                        "valor_total":      int(valor_total_canonico),
+                        "saldo_pendiente":  int(saldo_pendiente_canonico),
+                        "total_pagado":     int(total_pagado_real),
+                        "cuotas_pagadas":   cuotas_pagadas_real,
+                        "cuotas_vencidas":  cuotas_vencidas_real,
+                        "dpd":              dpd_real,
+                        "estado":           estado_canonico,
+                        "sub_bucket_semanal": sub_bucket,
+                        "reconciliacion_completa_at": dt.now(tz.utc).isoformat(),
+                    }},
+                )
+            except Exception as e:
+                errores.append({"loanbook_id": lb_id, "cliente": nombre, "error": str(e)})
+                continue
+
+        total_saldo_despues += saldo_pendiente_canonico
+        reconciliados.append({
+            "loanbook_id": lb_id,
+            "cliente": nombre,
+            "cambios": cambios,
+        })
+
+    return {
+        "dry_run": dry_run,
+        "fecha_corte": today_iso,
+        "reconciliados_count": len(reconciliados),
+        "sin_cambios_count": len(sin_cambios),
+        "errores_count": len(errores),
+        "cartera_total_antes": int(total_saldo_antes),
+        "cartera_total_despues": int(total_saldo_despues),
+        "delta_cartera": int(total_saldo_despues - total_saldo_antes),
+        "reconciliados": reconciliados,
+        "sin_cambios": sin_cambios,
+        "errores": errores,
+    }
+
+
+@router.get("/admin-diagnostico-integral")
+async def admin_diagnostico_integral(db: AsyncIOMotorDatabase = Depends(get_db)):
+    """Diagnóstico completo: para cada LB, todos los campos críticos + plan match.
+
+    Devuelve para cada LB:
+    - Estado actual de campos top-level (cuota_monto, num_cuotas, fecha_entrega, etc)
+    - Plan asociado y si existe en catalogo_planes
+    - Estado de cada cuota (count, primera con monto 0, sin fecha)
+    - Issues detectados con prioridad
+
+    Y al final lista de planes únicos y cuáles existen en catalogo_planes.
+    """
+    # 1) Cargar catálogo planes
+    planes_catalogo = {}
+    async for p in db.catalogo_planes.find({}):
+        codigo = p.get("plan_codigo") or p.get("codigo")
+        if codigo:
+            planes_catalogo[codigo] = {
+                "plan_codigo": codigo,
+                "modalidad": p.get("modalidad"),
+                "num_cuotas": p.get("num_cuotas"),
+                "cuota_monto": p.get("cuota_monto") or p.get("valor_cuota"),
+                "capital_plan": p.get("capital_plan"),
+                "modelo_default": p.get("modelo"),
+            }
+
+    # 2) Iterar loanbooks
+    loanbooks = []
+    planes_usados = {}
+    async for lb in db.loanbook.find({}):
+        lb_id = lb.get("loanbook_id", "?")
+        nombre = (lb.get("cliente") or {}).get("nombre") or lb.get("cliente_nombre", "")
+        plan_codigo = lb.get("plan_codigo") or (lb.get("plan") or {}).get("codigo") or ""
+        cuotas = lb.get("cuotas") or []
+
+        # Stats de cuotas
+        n_cuotas = len(cuotas)
+        cuotas_sin_monto = sum(1 for c in cuotas if (c.get("monto") or 0) == 0)
+        cuotas_sin_fecha = sum(1 for c in cuotas if not c.get("fecha"))
+        cuotas_sin_numero = sum(1 for c in cuotas if not c.get("numero"))
+        cuotas_pagadas = sum(1 for c in cuotas if c.get("estado") == "pagada")
+
+        # Issues
+        issues = []
+        if not plan_codigo:
+            issues.append("plan_codigo vacío")
+        elif plan_codigo not in planes_catalogo:
+            issues.append(f"plan_codigo '{plan_codigo}' no existe en catalogo_planes")
+
+        if not lb.get("cuota_monto"):
+            issues.append("cuota_monto top-level vacío")
+        if not lb.get("num_cuotas") and not lb.get("cuotas_total"):
+            issues.append("num_cuotas vacío")
+        if not lb.get("fecha_entrega") and lb.get("estado") not in ("pendiente_entrega", "saldado"):
+            issues.append("fecha_entrega vacía aunque activo")
+        if cuotas_sin_monto > 0:
+            issues.append(f"{cuotas_sin_monto} cuotas con monto 0")
+        if cuotas_sin_fecha > 0:
+            issues.append(f"{cuotas_sin_fecha} cuotas sin fecha")
+        if cuotas_sin_numero > 0:
+            issues.append(f"{cuotas_sin_numero} cuotas sin numero")
+
+        plan_existe = plan_codigo in planes_catalogo
+        planes_usados[plan_codigo] = planes_usados.get(plan_codigo, 0) + 1
+
+        loanbooks.append({
+            "loanbook_id": lb_id,
+            "cliente": nombre,
+            "estado": lb.get("estado"),
+            "modelo": lb.get("modelo"),
+            "modalidad": lb.get("modalidad"),
+            "plan_codigo": plan_codigo,
+            "plan_existe_en_catalogo": plan_existe,
+            "plan_catalogo_data": planes_catalogo.get(plan_codigo),
+            "cuota_monto_lb": lb.get("cuota_monto"),
+            "num_cuotas_lb": lb.get("num_cuotas") or lb.get("cuotas_total"),
+            "fecha_entrega": lb.get("fecha_entrega"),
+            "n_cuotas_array": n_cuotas,
+            "cuotas_pagadas": cuotas_pagadas,
+            "cuotas_sin_monto": cuotas_sin_monto,
+            "cuotas_sin_fecha": cuotas_sin_fecha,
+            "cuotas_sin_numero": cuotas_sin_numero,
+            "issues": issues,
+            "primera_cuota_sample": cuotas[0] if cuotas else None,
+        })
+
+    # Resumen
+    return {
+        "total_loanbooks": len(loanbooks),
+        "loanbooks_con_issues": sum(1 for lb in loanbooks if lb["issues"]),
+        "planes_en_catalogo": list(planes_catalogo.keys()),
+        "planes_usados_por_lbs": planes_usados,
+        "planes_sin_catalogo": [p for p in planes_usados if p not in planes_catalogo],
+        "loanbooks": loanbooks,
+    }
+
+
+@router.post("/admin-fijar-cuota-monto-manual")
+async def admin_fijar_cuota_monto_manual(
+    body: dict = Body(...),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Fija cuota_monto manualmente para una lista de LBs.
+
+    Body: {
+      "asignaciones": [
+        {"loanbook_id": "LB-2026-0029", "cuota_monto": 210000},
+        ...
+      ],
+      "dry_run": true
+    }
+
+    Por cada LB:
+    - Setea cuota_monto top-level
+    - Recalcula cuotas[].monto = cuota_monto para cuotas con monto 0
+    """
+    asignaciones = body.get("asignaciones") or []
+    dry_run = bool(body.get("dry_run", True))
+
+    aplicados = []
+    errores = []
+    for a in asignaciones:
+        lb_id = a.get("loanbook_id")
+        nuevo_monto = a.get("cuota_monto")
+        if not lb_id or not nuevo_monto:
+            errores.append({"input": a, "error": "loanbook_id y cuota_monto obligatorios"})
+            continue
+        try:
+            lb = await db.loanbook.find_one({"loanbook_id": lb_id})
+            if not lb:
+                errores.append({"loanbook_id": lb_id, "error": "no existe"})
+                continue
+            cuotas = lb.get("cuotas") or []
+            cuotas_nuevas = [
+                {**c, "monto": nuevo_monto} if (c.get("monto") or 0) == 0 else c
+                for c in cuotas
+            ]
+            cambios_count = sum(1 for c in cuotas if (c.get("monto") or 0) == 0)
+            if not dry_run:
+                await db.loanbook.update_one(
+                    {"_id": lb["_id"]},
+                    {"$set": {"cuota_monto": nuevo_monto, "cuotas": cuotas_nuevas}},
+                )
+            aplicados.append({
+                "loanbook_id": lb_id,
+                "cuota_monto_aplicado": nuevo_monto,
+                "cuotas_corregidas": cambios_count,
+            })
+        except Exception as e:
+            errores.append({"loanbook_id": lb_id, "error": str(e)})
+
+    return {
+        "dry_run": dry_run,
+        "aplicados_count": len(aplicados),
+        "errores_count": len(errores),
+        "aplicados": aplicados,
+        "errores": errores,
+    }
+
+
 @router.post("/admin-batch-corregir-fechas")
 async def admin_batch_corregir_fechas(
     body: dict = Body(...),
