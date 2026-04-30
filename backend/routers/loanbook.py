@@ -11,9 +11,9 @@ POST /api/loanbook/{id}/registrar-entrega       — Manual: activate a credit on
 import logging
 import uuid
 from datetime import date, datetime, timedelta, timezone
-from typing import Optional
+from typing import Annotated, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse, Response
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, Field
@@ -2603,7 +2603,6 @@ async def audit_reparar_batch(
 
         # Ejecutar registrar_entrega real
         try:
-            from routers.loanbook import RegistrarEntregaBody, registrar_entrega
             body_re = RegistrarEntregaBody(
                 fecha_entrega=fecha_entrega.isoformat(),
                 fecha_primera_cuota=None,
@@ -2777,7 +2776,6 @@ async def admin_batch_corregir_fechas(
     2. Llama registrar_entrega() con las nuevas fechas
     3. El cronograma se regenera limpio
     """
-    from routers.loanbook import RegistrarEntregaBody, registrar_entrega
     lb_ids = body.get("loanbook_ids") or []
     fecha_entrega = body.get("fecha_entrega")
     fecha_primera_cuota = body.get("fecha_primera_cuota")
@@ -2844,7 +2842,6 @@ async def corregir_fecha_entrega(
     Si el cliente paga la próxima semana, fecha_primera_cuota = primer miércoles después
     de fecha_entrega + 7 días (regla canónica).
     """
-    from routers.loanbook import RegistrarEntregaBody, registrar_entrega
     fecha_entrega = body.get("fecha_entrega")
     if not fecha_entrega:
         raise HTTPException(status_code=400, detail="fecha_entrega obligatoria (ISO yyyy-MM-dd)")
