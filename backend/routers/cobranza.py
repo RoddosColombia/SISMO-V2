@@ -178,14 +178,17 @@ async def plan_semanal(
 ):
     """Plan de cobro para el miércoles de la semana solicitada.
 
-    Reglas:
-      - Cada fila = UNA cuota pendiente del cronograma.
-      - dpd = (miércoles_target - fecha_cuota).days.
-      - Sección por dpd (canónico sub_buckets):
+    DELEGADO al motor unificado (services/loanbook/engine.plan_cobro_semanal).
+    Esto garantiza que la lógica del plan vive en un solo lugar.
+
+    Reglas (definidas en engine):
+      - Cada fila = UNA cuota PENDIENTE.
+      - Sección por dpd canónico:
             blanco   dpd==0     | amarillo 1..7 | rojo >=8
+      - Cuotas pagadas históricas (dpd > 0) NO entran al plan.
+      - Cuotas pagadas del miércoles target SÍ aparecen en blanco como check.
       - Cuotas futuras (dpd<0) no aparecen.
-      - Cuotas pagadas no aparecen (excepto si vienen marcadas en filtro).
-      - Loanbooks en estado saldado / castigado / pendiente_entrega excluidos.
+      - Loanbooks saldado / castigado / pendiente_entrega excluidos.
 
     Returns:
         {
@@ -208,6 +211,7 @@ async def plan_semanal(
           "fecha_analisis": "ISO"
         }
     """
+    from services.loanbook.engine import plan_cobro_semanal as _engine_plan
     fecha_corte = today_bogota()
 
     # Normalizar fecha de semana solicitada
@@ -223,144 +227,24 @@ async def plan_semanal(
         d_input = fecha_corte
     miercoles_target = _normalizar_a_miercoles(d_input)
 
-    # Init secciones
-    secciones: dict[str, dict] = {
-        SECCION_BLANCO: {
-            "label":          "Cobros normales de la semana",
-            "descripcion":    "Cuotas que vencen este miércoles, sin atrasos previos",
-            "color_hex":      "ffffff",
-            "items":          [],
-            "subtotal_count": 0,
-            "subtotal_monto": 0,
-            "subtotal_pagados_count": 0,
-            "subtotal_pagados_monto": 0,
-        },
-        SECCION_AMARILLO: {
-            "label":          "Atrasos de 1 semana",
-            "descripcion":    "Clientes que no pagaron la cuota de la semana pasada",
-            "color_hex":      "fef3c7",  # amber-100 (background)
-            "items":          [],
-            "subtotal_count": 0,
-            "subtotal_monto": 0,
-            "subtotal_pagados_count": 0,
-            "subtotal_pagados_monto": 0,
-        },
-        SECCION_ROJO: {
-            "label":          "Críticos: 2+ semanas atrasadas",
-            "descripcion":    "Casos para gestión directa de Andrés / Fabián",
-            "color_hex":      "fee2e2",  # red-100 (background)
-            "items":          [],
-            "subtotal_count": 0,
-            "subtotal_monto": 0,
-            "subtotal_pagados_count": 0,
-            "subtotal_pagados_monto": 0,
-        },
-    }
+    # Delegado al motor unificado: una sola fuente de verdad para el plan
+    plan = await _engine_plan(db, miercoles_target)
 
-    # Tracking de personas únicas (para counters)
-    personas_total: set[str] = set()
-    personas_pagaron: set[str] = set()
-
-    # Recorrer loanbooks activos
-    async for lb in db.loanbook.find({}):
-        estado_lb = (lb.get("estado") or "").strip()
-        if estado_lb in ESTADOS_EXCLUIR_PLAN:
-            continue
-
-        cuotas = lb.get("cuotas") or []
-        if not cuotas:
-            continue  # no hay cronograma todavía
-
-        cliente = _extraer_cliente(lb)
-        loanbook_id = lb.get("loanbook_id") or lb.get("loanbook_codigo") or str(lb.get("_id"))
-        modelo = (
-            lb.get("modelo")
-            or (lb.get("moto") or {}).get("modelo")
-            or lb.get("plan_codigo", "")
-        )
-        modalidad = lb.get("modalidad") or lb.get("modalidad_pago") or "semanal"
-
-        for cuota in cuotas:
-            # Solo cuotas pendientes/vencidas (no pagadas)
-            if _es_cuota_pagada(cuota):
-                # excepción: si es la cuota de esta semana y ya pagada, marcarla pagada
-                # para que el counter "pagaron" se actualice. Pero solo si la fecha
-                # está en o antes del miércoles target (no contar futuras).
-                fecha_cuota = _parse_cuota_fecha(
-                    cuota.get("fecha") or cuota.get("fecha_programada")
-                )
-                if fecha_cuota is None:
-                    continue
-                dpd = (miercoles_target - fecha_cuota).days
-                if dpd < 0:
-                    continue
-                seccion = _seccion_para_dpd(dpd)
-                if seccion is None:
-                    continue
-                # Item pagado
-                item = _construir_item(
-                    lb, cuota, cliente, loanbook_id, modelo, modalidad,
-                    fecha_cuota, dpd, pagada=True,
-                )
-                secciones[seccion]["items"].append(item)
-                secciones[seccion]["subtotal_count"] += 1
-                secciones[seccion]["subtotal_monto"] += int(item["cuota_monto"])
-                secciones[seccion]["subtotal_pagados_count"] += 1
-                secciones[seccion]["subtotal_pagados_monto"] += int(item["cuota_monto"])
-                personas_total.add(loanbook_id)
-                personas_pagaron.add(loanbook_id)
-                continue
-
-            fecha_cuota = _parse_cuota_fecha(
-                cuota.get("fecha") or cuota.get("fecha_programada")
-            )
-            if fecha_cuota is None:
-                continue
-
-            dpd = (miercoles_target - fecha_cuota).days
-            seccion = _seccion_para_dpd(dpd)
-            if seccion is None:
-                continue  # cuota futura, no entra al plan de esta semana
-
-            item = _construir_item(
-                lb, cuota, cliente, loanbook_id, modelo, modalidad,
-                fecha_cuota, dpd, pagada=False,
-            )
-            secciones[seccion]["items"].append(item)
-            secciones[seccion]["subtotal_count"] += 1
-            secciones[seccion]["subtotal_monto"] += int(item["cuota_monto"])
-            personas_total.add(loanbook_id)
-
-    # Ordenar dentro de cada sección por dpd desc, luego por nombre
-    for sec in secciones.values():
-        sec["items"].sort(
-            key=lambda it: (-int(it["dpd"]), str(it["cliente_nombre"]))
-        )
-
-    # Totales globales
-    esperado = sum(s["subtotal_monto"] for s in secciones.values())
-    recibido = sum(s["subtotal_pagados_monto"] for s in secciones.values())
-    filas_total = sum(s["subtotal_count"] for s in secciones.values())
-    filas_pagadas = sum(s["subtotal_pagados_count"] for s in secciones.values())
-    n_personas = len(personas_total)
-    n_pagaron  = len(personas_pagaron)
-
-    return {
-        "semana_miercoles": miercoles_target.isoformat(),
-        "fecha_corte":      fecha_corte.isoformat(),
-        "secciones":        secciones,
-        "totales": {
-            "esperado":         esperado,
-            "recibido":         recibido,
-            "pendiente":        max(0, esperado - recibido),
-            "personas_pagaron": n_pagaron,
-            "personas_faltan":  max(0, n_personas - n_pagaron),
-            "personas_total":   n_personas,
-            "filas_total":      filas_total,
-            "filas_pagadas":    filas_pagadas,
-        },
-        "fecha_analisis": now_iso_bogota(),
-    }
+    # Enriquecer secciones con metadata visual (color/descripcion) que el
+    # motor no necesita conocer pero el frontend sí
+    plan["secciones"]["blanco"].update({
+        "descripcion": "Cuotas que vencen este miércoles, sin atrasos previos",
+        "color_hex":   "ffffff",
+    })
+    plan["secciones"]["amarillo"].update({
+        "descripcion": "Clientes que no pagaron la cuota de la semana pasada",
+        "color_hex":   "fef3c7",
+    })
+    plan["secciones"]["rojo"].update({
+        "descripcion": "Casos para gestión directa de Andrés / Fabián",
+        "color_hex":   "fee2e2",
+    })
+    return plan
 
 
 def _construir_item(
@@ -783,4 +667,3 @@ async def audit_cronogramas(
         "puede_enviar_email":        rojas == 0,
         "violaciones":               violaciones,
     }
-

@@ -46,6 +46,7 @@ from routers.integraciones import router as integraciones_router
 from routers.webhooks import router as webhooks_router  # Sprint S1.5
 from routers.tributario import router as tributario_router  # E3.3 motor tributario
 from routers.cobranza import router as cobranza_router  # COBRANZA-MARTES plan semanal
+from routers.loanbook_admin import router as loanbook_admin_router  # UNIFICACION engine
 
 app = FastAPI(title="SISMO V2", version="0.1.0", lifespan=lifespan)
 
@@ -81,6 +82,7 @@ app.include_router(integraciones_router)
 app.include_router(webhooks_router)  # Sprint S1.5 — Alegra/Mercately webhooks
 app.include_router(tributario_router)  # E3.3 motor tributario
 app.include_router(cobranza_router)  # COBRANZA-MARTES plan semanal
+app.include_router(loanbook_admin_router)  # UNIFICACION engine - audit/full-repair
 
 
 @app.get("/health")
@@ -106,7 +108,6 @@ class SPAStaticFiles(StaticFiles):
             if ex.status_code == 404:
                 return await super().get_response("index.html", scope)
             raise ex
-
 
 frontend_dist = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
 if os.path.isdir(frontend_dist):

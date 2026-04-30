@@ -565,10 +565,21 @@ export default function LoanbookPage() {
   })
 
   // Tarjetas DINÁMICAS según filtro activo
-  const sumSaldos = filtered.reduce((acc, lb: any) => acc + Number(lb.saldo_pendiente || 0), 0)
+  // Tres métricas independientes:
+  //   carteraNeto    = lo que aún se debe (saldo_pendiente)
+  //   carteraBruto   = total contratado original (valor_total)
+  //   recaudado      = cartera_bruta - cartera_neto (lo que ya pagaron)
+  const carteraNeto = filtered.reduce((acc, lb: any) => acc + Number(lb.saldo_pendiente || 0), 0)
+  const carteraBruto = filtered.reduce((acc, lb: any) => acc + Number(
+    lb.valor_total || lb.monto_original || lb.saldo_pendiente || 0
+  ), 0)
+  const recaudado = Math.max(0, carteraBruto - carteraNeto)
   const dynamicStats = {
     count: filtered.length,
-    cartera_total: sumSaldos,
+    cartera_total: carteraNeto,        // legacy alias
+    cartera_neto: carteraNeto,
+    cartera_bruto: carteraBruto,
+    recaudado: recaudado,
     en_mora: filtered.filter(lb => matchEstado(lb.estado, 'mora') || matchEstado(lb.estado, 'mora_grave')).length,
   }
 
@@ -844,15 +855,17 @@ export default function LoanbookPage() {
               </div>
               <div className="bg-surface-container-lowest shadow-ambient-1 rounded-lg px-4 py-3">
                 <div className="text-xs text-on-surface-variant uppercase tracking-wider">
-                  {filtroEstado ? `Saldo ${ESTADO_FILTER_LABELS[filtroEstado] || filtroEstado}` : 'Cartera total'}
+                  {filtroEstado ? `Saldo neto ${ESTADO_FILTER_LABELS[filtroEstado] || filtroEstado}` : 'Saldo neto a cobrar'}
                 </div>
-                <div className="font-display text-2xl font-bold text-on-surface">{formatCOP(dynamicStats.cartera_total)}</div>
-                <div className="text-[10px] text-on-surface-variant">Σ saldo_pendiente filtrado</div>
+                <div className="font-display text-2xl font-bold text-on-surface">{formatCOP(dynamicStats.cartera_neto)}</div>
+                <div className="text-[10px] text-on-surface-variant">Bruto contratado: {formatCOP(dynamicStats.cartera_bruto)}</div>
               </div>
               <div className="bg-surface-container-lowest shadow-ambient-1 rounded-lg px-4 py-3">
-                <div className="text-xs text-on-surface-variant uppercase tracking-wider">Recaudo semanal</div>
-                <div className="font-display text-2xl font-bold text-emerald-600">{formatCOP(stats?.recaudo_semanal ?? 0)}</div>
-                <div className="text-[10px] text-on-surface-variant">Proyectado próx 7d</div>
+                <div className="text-xs text-on-surface-variant uppercase tracking-wider">Recaudado a la fecha</div>
+                <div className="font-display text-2xl font-bold text-emerald-600">{formatCOP(dynamicStats.recaudado)}</div>
+                <div className="text-[10px] text-on-surface-variant">
+                  {dynamicStats.cartera_bruto > 0 ? `${Math.round((dynamicStats.recaudado / dynamicStats.cartera_bruto) * 100)}% del bruto` : '0%'}
+                </div>
               </div>
               <div className="bg-surface-container-lowest shadow-ambient-1 rounded-lg px-4 py-3">
                 <div className="text-xs text-on-surface-variant uppercase tracking-wider">En mora</div>
