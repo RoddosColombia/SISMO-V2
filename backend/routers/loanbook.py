@@ -2850,7 +2850,7 @@ async def admin_repoblar_monto_cuotas(
     }
 
 
-@router.post("/admin-reconciliacion-completa")
+@router.post("/audit/reconciliacion-completa")
 async def admin_reconciliacion_completa(
     body: dict | None = None,
     db: AsyncIOMotorDatabase = Depends(get_db),
