@@ -2918,6 +2918,9 @@ async def admin_reconciliacion_completa(
         num_cuotas = int(lb.get("num_cuotas") or lb.get("cuotas_total") or len(cuotas))
         cuotas_pagadas_agregado = int(lb.get("cuotas_pagadas") or 0)
         total_pagado_agregado = float(lb.get("total_pagado") or 0)
+        cuota_inicial = float(lb.get("cuota_inicial") or 0)
+        cuota_inicial_pagada = bool(lb.get("cuota_inicial_pagada", False))
+        cuota_inicial_monto_pagado = float(lb.get("cuota_inicial_monto") or 0)
 
         if cuota_monto <= 0:
             errores.append({"loanbook_id": lb_id, "cliente": nombre, "error": "cuota_monto=0"})
@@ -2953,14 +2956,21 @@ async def admin_reconciliacion_completa(
                 cuotas_nuevas.append(c)
 
         # 2-3. Recalcular valor_total y total_pagado canónicos
-        valor_total_canonico = num_cuotas * cuota_monto
-        total_pagado_real = sum(
+        # Fórmula canónica RODDOS: valor_total = cuota_inicial + (num_cuotas × cuota_monto)
+        valor_total_canonico = cuota_inicial + (num_cuotas * cuota_monto)
+        total_pagado_cuotas = sum(
             float(c.get("monto_pagado") or c.get("monto") or 0)
             for c in cuotas_nuevas
             if (c.get("estado") or "").lower() == "pagada"
         )
-        # Si el agregado dice más pagado que la suma del array, usar el agregado (tiene info real)
-        total_pagado_real = max(total_pagado_real, total_pagado_agregado)
+        # Si el agregado dice más pagado, usar (info real)
+        total_pagado_cuotas = max(total_pagado_cuotas, total_pagado_agregado)
+        # Sumar cuota inicial pagada al total
+        total_pagado_real = total_pagado_cuotas
+        if cuota_inicial_pagada and cuota_inicial_monto_pagado > 0:
+            total_pagado_real += cuota_inicial_monto_pagado
+        elif cuota_inicial_pagada and cuota_inicial > 0:
+            total_pagado_real += cuota_inicial
         saldo_pendiente_canonico = max(0, valor_total_canonico - total_pagado_real)
 
         # 4-5. Recalcular DPD y cuotas_vencidas
