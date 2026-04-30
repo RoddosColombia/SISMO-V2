@@ -2758,8 +2758,8 @@ async def audit_inspeccionar_reparados(
     return {"total": len(out), "loanbooks": out}
 
 
-@router.post("/audit/corregir-batch")
-async def audit_corregir_batch(
+@router.post("/admin-batch-corregir-fechas")
+async def admin_batch_corregir_fechas(
     body: dict = Body(...),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
