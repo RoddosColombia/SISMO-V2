@@ -2757,6 +2757,99 @@ async def audit_inspeccionar_reparados(
     return {"total": len(out), "loanbooks": out}
 
 
+@router.post("/admin-repoblar-monto-cuotas")
+async def admin_repoblar_monto_cuotas(
+    body: dict | None = None,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Repobla cuotas[].monto en LBs donde está en 0 o vacío.
+
+    Lógica:
+    1. Toma cuota_monto del LB (top-level)
+    2. Si está vacío, busca en lb.plan o catalogo_planes por plan_codigo
+    3. Para cada cuota con monto 0, le asigna ese cuota_monto
+    4. También actualiza cuota_monto top-level del LB si estaba vacío
+
+    Body: {"dry_run": true (default)}
+    """
+    dry_run = bool((body or {}).get("dry_run", True))
+    actualizados = []
+    sin_cambios = []
+    sin_solucion = []
+
+    async for lb in db.loanbook.find({}):
+        lb_id = lb.get("loanbook_id", "?")
+        nombre = (lb.get("cliente") or {}).get("nombre") or lb.get("cliente_nombre", "")
+        cuotas = lb.get("cuotas") or []
+        if not cuotas:
+            continue
+
+        cuotas_en_cero = [c for c in cuotas if (c.get("monto") or 0) == 0]
+        if not cuotas_en_cero:
+            sin_cambios.append(lb_id)
+            continue
+
+        # Estrategia 1: cuota_monto top-level
+        cuota_monto = lb.get("cuota_monto") or 0
+        # Estrategia 2: lb.plan.cuota_monto (a veces guardado anidado)
+        if not cuota_monto:
+            plan = lb.get("plan") or {}
+            cuota_monto = plan.get("cuota_monto") or plan.get("valor_cuota") or 0
+        # Estrategia 3: lookup catalogo_planes
+        if not cuota_monto:
+            plan_codigo = lb.get("plan_codigo") or (lb.get("plan") or {}).get("codigo")
+            if plan_codigo:
+                plan_doc = await db.catalogo_planes.find_one(
+                    {"$or": [{"plan_codigo": plan_codigo}, {"codigo": plan_codigo}]}
+                )
+                if plan_doc:
+                    cuota_monto = plan_doc.get("cuota_monto") or plan_doc.get("valor_cuota") or 0
+
+        if not cuota_monto:
+            sin_solucion.append({
+                "loanbook_id": lb_id, "cliente": nombre,
+                "razon": f"sin cuota_monto en lb top, plan, ni catalogo (plan_codigo={lb.get('plan_codigo')})",
+            })
+            continue
+
+        # Actualizar las cuotas con monto 0
+        cuotas_nuevas = []
+        for c in cuotas:
+            if (c.get("monto") or 0) == 0:
+                cuotas_nuevas.append({**c, "monto": cuota_monto})
+            else:
+                cuotas_nuevas.append(c)
+
+        if not dry_run:
+            try:
+                await db.loanbook.update_one(
+                    {"_id": lb["_id"]},
+                    {"$set": {
+                        "cuota_monto": cuota_monto,
+                        "cuotas": cuotas_nuevas,
+                    }},
+                )
+            except Exception as e:
+                sin_solucion.append({"loanbook_id": lb_id, "error": str(e)})
+                continue
+
+        actualizados.append({
+            "loanbook_id": lb_id,
+            "cliente": nombre,
+            "cuota_monto_aplicado": cuota_monto,
+            "cuotas_corregidas": len(cuotas_en_cero),
+        })
+
+    return {
+        "dry_run": dry_run,
+        "actualizados_count": len(actualizados),
+        "sin_cambios_count": len(sin_cambios),
+        "sin_solucion_count": len(sin_solucion),
+        "actualizados": actualizados,
+        "sin_solucion": sin_solucion,
+    }
+
+
 @router.post("/admin-batch-corregir-fechas")
 async def admin_batch_corregir_fechas(
     body: dict = Body(...),
