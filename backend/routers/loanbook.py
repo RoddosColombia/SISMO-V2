@@ -2855,6 +2855,11 @@ async def admin_reconciliacion_completa(
     body: dict | None = None,
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
+    # CANÓNICO: usar SIEMPRE las funciones de reglas_negocio.py.
+    # Nunca calcular saldos inline (regla CLAUDE.md línea 84).
+    from services.loanbook.reglas_negocio import (
+        calcular_saldos, calcular_mora, get_valor_total
+    )
     """Reconciliación INTEGRAL de TODOS los loanbooks en una sola pasada.
 
     Por cada LB no-saldado:
@@ -2874,17 +2879,6 @@ async def admin_reconciliacion_completa(
     dry_run = bool((body or {}).get("dry_run", True))
     today = today_bogota()
     today_iso = today.isoformat()
-
-    def _phase7_bucket(dpd: int) -> str:
-        if dpd <= 0: return "Current"
-        if dpd <= 7: return "Grace"
-        if dpd <= 15: return "Warning"
-        if dpd <= 30: return "Alert"
-        if dpd <= 45: return "Critical"
-        if dpd <= 60: return "Severe"
-        if dpd <= 90: return "PreDefault"
-        if dpd <= 120: return "Default"
-        return "ChargeOff"
 
     def _estado_from_dpd(dpd: int) -> str:
         if dpd <= 0: return "al_dia"
@@ -2911,16 +2905,31 @@ async def admin_reconciliacion_completa(
 
         cuotas = lb.get("cuotas") or []
         if not cuotas:
-            errores.append({"loanbook_id": lb_id, "cliente": nombre, "error": "sin cuotas en array"})
+            # Sin cuotas en array: necesita registrar_entrega para generar cronograma.
+            # Marcamos como necesita_atencion y skip (no escribimos nada para él).
+            errores.append({
+                "loanbook_id": lb_id, "cliente": nombre,
+                "error": "sin cuotas en array - usar /admin-batch-corregir-fechas para generar cronograma",
+                "estado_actual": estado,
+                "fecha_entrega": lb.get("fecha_entrega"),
+            })
             continue
 
-        cuota_monto = float(lb.get("cuota_monto") or 0)
-        num_cuotas = int(lb.get("num_cuotas") or lb.get("cuotas_total") or len(cuotas))
+        # cuota_monto canónico: valor periódico de cada cuota del crédito
+        cuota_monto = float(
+            lb.get("cuota_monto")
+            or lb.get("cuota_periodica")
+            or lb.get("cuota_estandar_plan")
+            or 0
+        )
+        num_cuotas = int(
+            lb.get("num_cuotas")
+            or lb.get("cuotas_total")
+            or lb.get("total_cuotas")
+            or len(cuotas)
+        )
         cuotas_pagadas_agregado = int(lb.get("cuotas_pagadas") or 0)
         total_pagado_agregado = float(lb.get("total_pagado") or 0)
-        cuota_inicial = float(lb.get("cuota_inicial") or 0)
-        cuota_inicial_pagada = bool(lb.get("cuota_inicial_pagada", False))
-        cuota_inicial_monto_pagado = float(lb.get("cuota_inicial_monto") or 0)
 
         if cuota_monto <= 0:
             errores.append({"loanbook_id": lb_id, "cliente": nombre, "error": "cuota_monto=0"})
@@ -2955,23 +2964,46 @@ async def admin_reconciliacion_completa(
             else:
                 cuotas_nuevas.append(c)
 
-        # 2-3. Recalcular valor_total y total_pagado canónicos
-        # Fórmula canónica RODDOS: valor_total = cuota_inicial + (num_cuotas × cuota_monto)
-        valor_total_canonico = cuota_inicial + (num_cuotas * cuota_monto)
-        total_pagado_cuotas = sum(
+        # 2-3. CANÓNICO: usar calcular_saldos() de reglas_negocio.py
+        # NUNCA inventar fórmulas (regla CLAUDE.md línea 84).
+        capital_plan_lb = int(lb.get("capital_plan") or 0)
+        cuota_estandar_plan = int(lb.get("cuota_estandar_plan") or cuota_monto)
+        moto_valor_origen = int(lb.get("moto_valor_origen") or 0)
+        cuotas_pagadas_real = sum(1 for c in cuotas_nuevas if (c.get("estado") or "").lower() == "pagada")
+
+        saldos = calcular_saldos(
+            capital_plan=capital_plan_lb,
+            total_cuotas=num_cuotas,
+            cuota_periodica=int(cuota_monto),
+            cuotas_pagadas=cuotas_pagadas_real,
+            cuota_estandar_plan=cuota_estandar_plan,
+            moto_valor_origen=moto_valor_origen or None,
+        )
+        # saldo_pendiente del cronograma = saldo_capital + saldo_intereses
+        # (NO incluye cuota_inicial — eso es Plan Separe)
+        saldo_capital_canonico = int(saldos["saldo_capital"])
+        saldo_intereses_canonico = int(saldos["saldo_intereses"])
+        saldo_pendiente_canonico = saldo_capital_canonico + saldo_intereses_canonico
+        monto_original_canonico = int(saldos["monto_original"])
+
+        # valor_total CANÓNICO incluye cuota_inicial (get_valor_total de reglas_negocio.py)
+        cuota_inicial_lb = float(lb.get("cuota_inicial") or 0)
+        plan_codigo_lb = lb.get("plan_codigo") or ""
+        modalidad_lb = lb.get("modalidad") or lb.get("modalidad_pago") or "semanal"
+        valor_total_canonico = get_valor_total(
+            plan_codigo=plan_codigo_lb,
+            modalidad=modalidad_lb,
+            valor_cuota=cuota_monto,
+            cuota_inicial=cuota_inicial_lb,
+        ) or (num_cuotas * cuota_monto + cuota_inicial_lb)
+
+        # total_pagado: suma de cuotas pagadas en array (CRONOGRAMA)
+        total_pagado_real = sum(
             float(c.get("monto_pagado") or c.get("monto") or 0)
             for c in cuotas_nuevas
             if (c.get("estado") or "").lower() == "pagada"
         )
-        # Si el agregado dice más pagado, usar (info real)
-        total_pagado_cuotas = max(total_pagado_cuotas, total_pagado_agregado)
-        # Sumar cuota inicial pagada al total
-        total_pagado_real = total_pagado_cuotas
-        if cuota_inicial_pagada and cuota_inicial_monto_pagado > 0:
-            total_pagado_real += cuota_inicial_monto_pagado
-        elif cuota_inicial_pagada and cuota_inicial > 0:
-            total_pagado_real += cuota_inicial
-        saldo_pendiente_canonico = max(0, valor_total_canonico - total_pagado_real)
+        total_pagado_real = max(total_pagado_real, total_pagado_agregado)
 
         # 4-5. Recalcular DPD y cuotas_vencidas
         cuotas_vencidas_real = 0
@@ -2992,15 +3024,15 @@ async def admin_reconciliacion_completa(
                 dpd_real = (today - date.fromisoformat(primera_pendiente_fecha)).days
             except Exception:
                 pass
-
-        # Si todas las cuotas son futuras (LB nuevo no entregado todavía), DPD=0
         if cuotas_vencidas_real == 0:
             dpd_real = 0
 
-        # 6. Sub-bucket Phase 7
-        sub_bucket = _phase7_bucket(dpd_real)
+        # 6. CANÓNICO: sub_bucket + mora desde calcular_mora()
+        mora_data = calcular_mora(dpd_real)
+        sub_bucket = mora_data["sub_bucket_semanal"]
+        mora_acumulada_real = mora_data["mora_acumulada_cop"]
+
         # 7. Estado canónico
-        cuotas_pagadas_real = sum(1 for c in cuotas_nuevas if (c.get("estado") or "").lower() == "pagada")
         if cuotas_pagadas_real >= num_cuotas:
             estado_canonico = "saldado"
         else:
@@ -3008,11 +3040,15 @@ async def admin_reconciliacion_completa(
 
         cambios = {
             "valor_total":      {"antes": lb.get("valor_total"), "despues": int(valor_total_canonico)},
-            "saldo_pendiente":  {"antes": int(saldo_antes), "despues": int(saldo_pendiente_canonico)},
+            "monto_original":   {"antes": lb.get("monto_original"), "despues": monto_original_canonico},
+            "saldo_capital":    {"antes": int(lb.get("saldo_capital") or 0), "despues": saldo_capital_canonico},
+            "saldo_intereses":  {"antes": int(lb.get("saldo_intereses") or 0), "despues": saldo_intereses_canonico},
+            "saldo_pendiente":  {"antes": int(saldo_antes), "despues": saldo_pendiente_canonico},
             "total_pagado":     {"antes": int(total_pagado_agregado), "despues": int(total_pagado_real)},
             "cuotas_pagadas":   {"antes": cuotas_pagadas_agregado, "despues": cuotas_pagadas_real},
             "cuotas_vencidas":  {"antes": int(lb.get("cuotas_vencidas") or 0), "despues": cuotas_vencidas_real},
             "dpd":              {"antes": int(lb.get("dpd") or 0), "despues": dpd_real},
+            "mora_acumulada":   {"antes": int(lb.get("mora_acumulada_cop") or 0), "despues": mora_acumulada_real},
             "estado":           {"antes": estado, "despues": estado_canonico},
             "sub_bucket":       {"antes": lb.get("sub_bucket_semanal") or "", "despues": sub_bucket},
             "cuotas_marcadas_pagada_ahora": marcadas_count,
@@ -3023,15 +3059,19 @@ async def admin_reconciliacion_completa(
                 await db.loanbook.update_one(
                     {"_id": lb["_id"]},
                     {"$set": {
-                        "cuotas":           cuotas_nuevas,
-                        "valor_total":      int(valor_total_canonico),
-                        "saldo_pendiente":  int(saldo_pendiente_canonico),
-                        "total_pagado":     int(total_pagado_real),
-                        "cuotas_pagadas":   cuotas_pagadas_real,
-                        "cuotas_vencidas":  cuotas_vencidas_real,
-                        "dpd":              dpd_real,
-                        "estado":           estado_canonico,
-                        "sub_bucket_semanal": sub_bucket,
+                        "cuotas":              cuotas_nuevas,
+                        "valor_total":         int(valor_total_canonico),
+                        "monto_original":      monto_original_canonico,
+                        "saldo_capital":       saldo_capital_canonico,
+                        "saldo_intereses":     saldo_intereses_canonico,
+                        "saldo_pendiente":     saldo_pendiente_canonico,
+                        "total_pagado":        int(total_pagado_real),
+                        "cuotas_pagadas":      cuotas_pagadas_real,
+                        "cuotas_vencidas":     cuotas_vencidas_real,
+                        "dpd":                 dpd_real,
+                        "mora_acumulada_cop":  mora_acumulada_real,
+                        "estado":              estado_canonico,
+                        "sub_bucket_semanal":  sub_bucket,
                         "reconciliacion_completa_at": dt.now(tz.utc).isoformat(),
                     }},
                 )
