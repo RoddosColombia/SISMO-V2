@@ -125,5 +125,6 @@ async def liquidar_retefuente_mes(
         "total_a_pagar": round(total),
         "detalle_por_concepto": {k: round(v) for k, v in detalle.items()},
         "n_journals_procesados": n_journals,
-        "fecha_calculo": "",  # lo setea el handler
+        "fecha_calculo": "",
     }
+

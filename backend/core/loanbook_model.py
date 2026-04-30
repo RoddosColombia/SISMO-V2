@@ -372,17 +372,27 @@ def calcular_cronograma(
     """
     Calculate cuota schedule respecting the Wednesday Rule.
 
-    Regla canónica RODDOS:
-      - Si fecha_primer_pago se pasa explícitamente: SE RESPETA (debe ser >fecha_entrega)
-      - Si NO se pasa:
-        * Semanal: primer miércoles DESPUÉS de fecha_entrega (no necesariamente +7d)
-        * Quincenal/mensual: ValueError (es obligatorio en estas modalidades)
+    Regla canónica RODDOS (alineada con reglas_negocio.primer_miercoles_cobro):
+      - Sin fecha_primer_pago + semanal:
+          primer cobro = primer miércoles >= fecha_entrega + 7 días
+          (gap mínimo de 7 días es canónico — ver CLAUDE.md y docstring de
+          services/loanbook/reglas_negocio.py::primer_miercoles_cobro)
+      - Con fecha_primer_pago explícita:
+          se RESPETA siempre que (a) caiga en el día de cobro objetivo
+          (miércoles por defecto), (b) sea estrictamente posterior a
+          fecha_entrega. NO se aplica el gap canónico de +7 días — el
+          override está para excepciones operativas legítimas.
+      - Sin fecha_primer_pago + quincenal/mensual:
+          ValueError (la fecha es obligatoria en estas modalidades).
 
     Después del primer cobro: cada N días según modalidad (7/14/28).
 
     Default: ALL dates son miércoles. Pass `dia_cobro_especial` para excepciones
     (e.g. cliente solo cobra jueves por su esquema de ingreso).
     """
+    # Importación local para evitar ciclo si reglas_negocio importa de aquí
+    from services.loanbook.reglas_negocio import primer_miercoles_cobro
+
     if modalidad not in MODALIDADES:
         raise ValueError(f"Modalidad '{modalidad}' no válida.")
 
@@ -401,7 +411,9 @@ def calcular_cronograma(
     dias = MODALIDADES[modalidad]["dias"]
 
     if fecha_primer_pago is not None:
-        # Override explícito: respetar la fecha que el operador eligió
+        # Override explícito: respetar la fecha que el operador eligió.
+        # Sólo se valida (a) que sea posterior a la entrega y (b) que caiga
+        # en el weekday objetivo. NO se aplica el gap canónico de +7 días.
         if fecha_primer_pago <= fecha_entrega:
             raise ValueError(
                 f"fecha_primer_pago ({fecha_primer_pago.isoformat()}) debe ser "
@@ -416,9 +428,15 @@ def calcular_cronograma(
             )
         primer_cobro = fecha_primer_pago
     elif modalidad == "semanal":
-        # Auto-calculate: primer miércoles DESPUÉS de fecha_entrega
-        # (regla RODDOS: no se requiere gap de 7 días, basta que sea >entrega)
-        primer_cobro = _next_weekday(fecha_entrega + timedelta(days=1), target_weekday)
+        # Auto-calculate canónico: delega a primer_miercoles_cobro() que aplica
+        # la regla "primer miércoles >= fecha_entrega + 7 días" (CLAUDE.md).
+        # Si dia_cobro_especial pide otro día, se cae a una versión análoga
+        # +7 días sobre ese weekday.
+        if target_weekday == WEDNESDAY:
+            primer_cobro = primer_miercoles_cobro(fecha_entrega)
+        else:
+            start = fecha_entrega + timedelta(days=7)
+            primer_cobro = _next_weekday(start, target_weekday)
     else:
         # Quincenal/mensual REQUIERE fecha_primer_pago explícita
         raise ValueError(
@@ -475,18 +493,19 @@ def calcular_dpd(cuotas: list[dict], fecha_actual: date) -> int:
     for cuota in cuotas:
         if cuota["estado"] == "pagada":
             continue
-        fecha_str = cuota.get("fecha")
+        fecha_str = cuota.get("fecha") or cuota.get("fecha_programada")
         if not fecha_str:
             continue
-        fecha_cuota = date.fromisoformat(fecha_str)
-        if fecha_cuota < fecha_actual:
-            if oldest_overdue_date is None or fecha_cuota < oldest_overdue_date:
-                oldest_overdue_date = fecha_cuota
+        fecha_cuota = date.fromisoformat(fecha_str) if isinstance(fecha_str, str) else fecha_str
+        if fecha_cuota >= fecha_actual:
+            continue  # cuota futura, no overdue
+        if oldest_overdue_date is None or fecha_cuota < oldest_overdue_date:
+            oldest_overdue_date = fecha_cuota
 
     if oldest_overdue_date is None:
         return 0
-
     return (fecha_actual - oldest_overdue_date).days
+
 
 
 # ═══════════════════════════════════════════
@@ -496,17 +515,21 @@ def calcular_dpd(cuotas: list[dict], fecha_actual: date) -> int:
 
 def estado_from_dpd(dpd: int) -> str:
     """
-    Derive credit state from days past due.
-    - 0 days: al_dia
-    - 1-15 days: en_riesgo
-    - 16-60 days: mora
-    - 61+ days: mora_grave
+    Derive credit state from days past due (DPD).
+
+    Mapping (calibrado para cobro semanal RODDOS):
+        DPD 0       → "al_dia"
+        DPD 1-15    → "en_riesgo"
+        DPD 16-60   → "mora"
+        DPD 61+     → "mora_grave"
+
+    Estados terminales (saldado, castigado) se manejan aparte —
+    esta función no transiciona desde ellos.
     """
     if dpd <= 0:
         return "al_dia"
-    elif dpd <= 15:
+    if dpd <= 15:
         return "en_riesgo"
-    elif dpd <= 60:
+    if dpd <= 60:
         return "mora"
-    else:
-        return "mora_grave"
+    return "mora_grave"

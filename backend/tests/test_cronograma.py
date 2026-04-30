@@ -230,18 +230,23 @@ class TestCronogramaValidation:
                 fecha_primer_pago=date(2026, 4, 23),  # Thursday
             )
 
-    def test_fecha_primer_pago_too_early_raises(self):
-        """fecha_primer_pago must be >= fecha_entrega + 7 days."""
+    def test_fecha_primer_pago_anterior_o_igual_entrega_raises(self):
+        """fecha_primer_pago debe ser estrictamente posterior a fecha_entrega.
+
+        El override no exige gap canónico de +7 días (se respeta la elección
+        del operador para excepciones legítimas), pero sí exige que la fecha
+        sea posterior a la entrega — un pago no puede ocurrir antes de
+        recibir la moto.
+        """
         from core.loanbook_model import calcular_cronograma
 
-        # Entrega 14 abr + 7 = 21 abr. fecha_primer_pago 15 abr is too early.
-        # 2026-04-15 is Wednesday but < entrega + 7
-        with pytest.raises(ValueError, match="7 d"):
+        # 2026-04-08 is Wednesday, anterior a entrega (Tue 2026-04-14)
+        with pytest.raises(ValueError, match="posterior"):
             calcular_cronograma(
                 fecha_entrega=date(2026, 4, 14),
                 modalidad="quincenal",
                 num_cuotas=26,
-                fecha_primer_pago=date(2026, 4, 15),  # Only 1 day after entrega
+                fecha_primer_pago=date(2026, 4, 8),  # miércoles anterior
             )
 
     def test_all_dates_are_wednesday_property(self):
@@ -453,6 +458,8 @@ class TestEntregaAsignaCronograma:
 
         call_args = db.loanbook.update_one.call_args
         update_set = call_args[0][1]["$set"]
+        # Entrega 2026-04-15 (Wed) + 7 = 2026-04-22 (Wed) → primer cobro
+        assert update_set["fecha_primera_cuota"] == "2026-04-22"
+        # Última cuota = primera + (n-1) * 7 días = 2026-04-22 + 14 = 2026-05-06
+        assert update_set["fecha_ultima_cuota"] == "2026-05-06"
 
-        assert "fecha_primera_cuota" in update_set
-        assert "fecha_ultima_cuota" in update_set

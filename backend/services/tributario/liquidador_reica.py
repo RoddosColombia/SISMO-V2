@@ -123,11 +123,10 @@ async def liquidar_reica_bogota_bimestre(
         "periodo": periodo_label,
         "inicio": inicio_str,
         "fin": fin_str,
-        "ingresos_bimestre": round(ingresos),
-        "ica_causado": round(ica_causado),
         "reica_retenida_proveedores": round(reica_a_proveedores),
-        "reica_retenida_a_nosotros": round(reica_a_nosotros),
-        "total_a_pagar": round(max(total, 0)),
-        "n_invoices": n_inv,
-        "n_journals": n_journals,
+        "reica_anticipo_recibido": round(reica_a_nosotros),
+        "total_a_pagar": round(max(0, total)),
+        "n_journals_procesados": n_journals,
+        "fecha_calculo": "",
     }
+
