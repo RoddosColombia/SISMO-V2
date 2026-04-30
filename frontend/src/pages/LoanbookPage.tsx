@@ -529,8 +529,32 @@ export default function LoanbookPage() {
   }, [loadData])
 
   const searchNormalized = search.trim().toLowerCase()
+
+  // Filtro estado: 'activo' significa "todos los no-saldados/cancelados/pendiente_entrega"
+  // (incluye al_dia, en_riesgo, mora, mora_grave, Early Delinquency, etc.)
+  const matchEstado = (lbEstado: string | undefined, filtro: string): boolean => {
+    if (!filtro) return true
+    const e = (lbEstado || '').toLowerCase()
+    if (filtro === 'activo') {
+      return !['saldado', 'pagado', 'castigado', 'chargeoff', 'pendiente_entrega', 'pendiente entrega', 'cancelado'].includes(e)
+    }
+    if (filtro === 'al_dia') {
+      return e === 'al_dia' || e === 'al día' || e === 'current' || e === 'activo'
+    }
+    if (filtro === 'mora') {
+      return e === 'mora' || e === 'early delinquency' || e === 'late delinquency'
+    }
+    if (filtro === 'mora_grave') {
+      return e === 'mora_grave' || e === 'severe delinquency' || e === 'pre default' || e === 'default'
+    }
+    if (filtro === 'en_riesgo') {
+      return e === 'en_riesgo' || e === 'grace' || e === 'warning' || e === 'alert'
+    }
+    return e === filtro.toLowerCase()
+  }
+
   const filtered = loanbooks.filter(lb => {
-    if (filtroEstado && lb.estado !== filtroEstado) return false
+    if (!matchEstado(lb.estado, filtroEstado)) return false
     if (!searchNormalized) return true
     const haystack = [
       lb.cliente?.nombre || '',
@@ -539,6 +563,14 @@ export default function LoanbookPage() {
     ].join(' ').toLowerCase()
     return haystack.includes(searchNormalized)
   })
+
+  // Tarjetas DINÁMICAS según filtro activo
+  const sumSaldos = filtered.reduce((acc, lb: any) => acc + Number(lb.saldo_pendiente || 0), 0)
+  const dynamicStats = {
+    count: filtered.length,
+    cartera_total: sumSaldos,
+    en_mora: filtered.filter(lb => matchEstado(lb.estado, 'mora') || matchEstado(lb.estado, 'mora_grave')).length,
+  }
 
   return (
     <div className="flex flex-col h-full bg-surface">
@@ -801,28 +833,33 @@ export default function LoanbookPage() {
           </div>
         ) : (
           <>
-            {/* Summary cards */}
+            {/* Summary cards — DINÁMICAS según filtro activo */}
             <div className="grid grid-cols-4 gap-4 mb-5">
               <div className="bg-surface-container-lowest shadow-ambient-1 rounded-lg px-4 py-3">
-                <div className="text-xs text-on-surface-variant uppercase tracking-wider">Créditos activos</div>
-                <div className="font-display text-2xl font-bold text-on-surface">{stats?.activos ?? 0}</div>
-                <div className="text-[10px] text-on-surface-variant">{stats?.total ?? 0} total</div>
+                <div className="text-xs text-on-surface-variant uppercase tracking-wider">
+                  {filtroEstado ? `${ESTADO_FILTER_LABELS[filtroEstado] || filtroEstado}` : 'Créditos activos'}
+                </div>
+                <div className="font-display text-2xl font-bold text-on-surface">{dynamicStats.count}</div>
+                <div className="text-[10px] text-on-surface-variant">{loanbooks.length} total</div>
               </div>
               <div className="bg-surface-container-lowest shadow-ambient-1 rounded-lg px-4 py-3">
-                <div className="text-xs text-on-surface-variant uppercase tracking-wider">Cartera total</div>
-                <div className="font-display text-2xl font-bold text-on-surface">{formatCOP(stats?.cartera_total ?? 0)}</div>
+                <div className="text-xs text-on-surface-variant uppercase tracking-wider">
+                  {filtroEstado ? `Saldo ${ESTADO_FILTER_LABELS[filtroEstado] || filtroEstado}` : 'Cartera total'}
+                </div>
+                <div className="font-display text-2xl font-bold text-on-surface">{formatCOP(dynamicStats.cartera_total)}</div>
+                <div className="text-[10px] text-on-surface-variant">Σ saldo_pendiente filtrado</div>
               </div>
               <div className="bg-surface-container-lowest shadow-ambient-1 rounded-lg px-4 py-3">
                 <div className="text-xs text-on-surface-variant uppercase tracking-wider">Recaudo semanal</div>
                 <div className="font-display text-2xl font-bold text-emerald-600">{formatCOP(stats?.recaudo_semanal ?? 0)}</div>
-                <div className="text-[10px] text-on-surface-variant">Proyectado</div>
+                <div className="text-[10px] text-on-surface-variant">Proyectado próx 7d</div>
               </div>
               <div className="bg-surface-container-lowest shadow-ambient-1 rounded-lg px-4 py-3">
                 <div className="text-xs text-on-surface-variant uppercase tracking-wider">En mora</div>
-                <div className={`font-display text-2xl font-bold ${(stats?.en_mora ?? 0) > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
-                  {stats?.en_mora ?? 0}
+                <div className={`font-display text-2xl font-bold ${dynamicStats.en_mora > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                  {dynamicStats.en_mora}
                 </div>
-                <div className="text-[10px] text-on-surface-variant">DPD {'>'} 0</div>
+                <div className="text-[10px] text-on-surface-variant">DPD {'>'} 0 en filtro</div>
               </div>
             </div>
 
