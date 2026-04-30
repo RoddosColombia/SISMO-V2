@@ -2557,7 +2557,18 @@ async def audit_reparar_batch(
     no_reparables = []
     errores = []
 
-    async for lb in db.loanbook.find({"estado": "pendiente_entrega"}):
+    # Búsqueda tolerante: cualquier variante de "pendiente_entrega" o "pendiente entrega"
+    # Y también LBs activos sin cuotas (caso bug donde se quedó rota la creación)
+    query = {
+        "$or": [
+            {"estado": {"$regex": "pendiente.entrega", "$options": "i"}},
+            {"$and": [
+                {"estado": {"$in": ["activo", "Activo", "ACTIVO"]}},
+                {"$or": [{"cuotas": {"$exists": False}}, {"cuotas": []}, {"cuotas": None}]},
+            ]},
+        ]
+    }
+    async for lb in db.loanbook.find(query):
         lb_id = lb.get("loanbook_id", "?")
         nombre = (lb.get("cliente") or {}).get("nombre") or lb.get("cliente_nombre", "")
 
@@ -2610,6 +2621,102 @@ async def audit_reparar_batch(
         "errores_count": len(errores),
         "reparados": reparados,
         "no_reparables": no_reparables,
+        "errores": errores,
+    }
+
+
+@router.post("/audit/recalcular-saldos")
+async def audit_recalcular_saldos(
+    body: dict | None = None,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Recalcula y persiste saldos canónicos de cada loanbook desde su array cuotas.
+
+    Para cada LB:
+      total_pagado_real    = Σ cuotas[].monto_pagado donde estado="pagada"
+      cuotas_pagadas       = count cuotas con estado="pagada"
+      saldo_pendiente_real = valor_total - total_pagado_real
+
+    Body: {"dry_run": true (default)}
+    """
+    dry_run = bool((body or {}).get("dry_run", True))
+    ajustados = []
+    sin_cambios = []
+    errores = []
+
+    async for lb in db.loanbook.find({}):
+        lb_id = lb.get("loanbook_id", "?")
+        nombre = (lb.get("cliente") or {}).get("nombre") or lb.get("cliente_nombre", "")
+        cuotas = lb.get("cuotas") or []
+
+        total_pagado_real = 0.0
+        cuotas_pagadas_real = 0
+        cuotas_vencidas_real = 0
+        from core.datetime_utils import today_bogota
+        today_iso = today_bogota().isoformat()
+
+        for c in cuotas:
+            estado = (c.get("estado") or "").lower()
+            if estado == "pagada":
+                cuotas_pagadas_real += 1
+                total_pagado_real += float(c.get("monto_pagado") or c.get("monto") or 0)
+            elif c.get("fecha") and c.get("fecha") < today_iso:
+                cuotas_vencidas_real += 1
+
+        valor_total = float(lb.get("valor_total") or lb.get("monto_original", 0) or 0)
+        saldo_pendiente_real = max(0, valor_total - total_pagado_real)
+        capital_plan = float(lb.get("capital_plan") or 0)
+        # Distribuir saldo: primero capital, después intereses
+        if total_pagado_real >= capital_plan:
+            saldo_capital_real = 0
+            saldo_intereses_real = max(0, valor_total - total_pagado_real)
+        else:
+            saldo_capital_real = capital_plan - total_pagado_real
+            saldo_intereses_real = max(0, valor_total - capital_plan)
+
+        # Comparar con campos persistidos
+        cambios = {}
+        if abs(float(lb.get("total_pagado", 0)) - total_pagado_real) > 1:
+            cambios["total_pagado"] = {"antes": lb.get("total_pagado", 0), "despues": round(total_pagado_real)}
+        if abs(float(lb.get("saldo_pendiente", 0)) - saldo_pendiente_real) > 1:
+            cambios["saldo_pendiente"] = {"antes": lb.get("saldo_pendiente", 0), "despues": round(saldo_pendiente_real)}
+        if int(lb.get("cuotas_pagadas", 0)) != cuotas_pagadas_real:
+            cambios["cuotas_pagadas"] = {"antes": lb.get("cuotas_pagadas", 0), "despues": cuotas_pagadas_real}
+        if int(lb.get("cuotas_vencidas", 0)) != cuotas_vencidas_real:
+            cambios["cuotas_vencidas"] = {"antes": lb.get("cuotas_vencidas", 0), "despues": cuotas_vencidas_real}
+        if abs(float(lb.get("saldo_capital", 0)) - saldo_capital_real) > 1:
+            cambios["saldo_capital"] = {"antes": lb.get("saldo_capital", 0), "despues": round(saldo_capital_real)}
+
+        if not cambios:
+            sin_cambios.append(lb_id)
+            continue
+
+        if not dry_run:
+            try:
+                await db.loanbook.update_one(
+                    {"_id": lb["_id"]},
+                    {"$set": {
+                        "total_pagado": round(total_pagado_real),
+                        "saldo_pendiente": round(saldo_pendiente_real),
+                        "saldo_capital": round(saldo_capital_real),
+                        "saldo_intereses": round(saldo_intereses_real),
+                        "cuotas_pagadas": cuotas_pagadas_real,
+                        "cuotas_vencidas": cuotas_vencidas_real,
+                        "saldos_recalculados_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+                    }},
+                )
+            except Exception as e:
+                errores.append({"loanbook_id": lb_id, "error": str(e)})
+                continue
+
+        ajustados.append({"loanbook_id": lb_id, "cliente": nombre, "cambios": cambios})
+
+    return {
+        "dry_run": dry_run,
+        "ajustados_count": len(ajustados),
+        "sin_cambios_count": len(sin_cambios),
+        "errores_count": len(errores),
+        "ajustados": ajustados,
         "errores": errores,
     }
 
