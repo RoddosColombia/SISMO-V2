@@ -19,7 +19,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from core.database import get_db
@@ -407,11 +407,8 @@ ESTADO_EXCEL_A_OPCION_B = {
 
 @router.post("/restaurar-desde-excel")
 async def restaurar_desde_excel(
-    file: "UploadFile" = None,
-    dry_run: Annotated[
-        bool,
-        Query(description="True (default) preview. False persiste."),
-    ] = True,
+    file: UploadFile = File(..., description="Excel oficial loanbook_roddos_YYYY-MM-DD.xlsx"),
+    dry_run: bool = Query(True, description="True (default) preview. False persiste."),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Restaura los LBs desde el Excel oficial RODDOS.
@@ -435,13 +432,9 @@ async def restaurar_desde_excel(
 
     Soporta Hoja 1 (RDX) y Hoja 2 (RODANTE).
     """
-    from fastapi import UploadFile, File
     from openpyxl import load_workbook
     from io import BytesIO
     from datetime import datetime, date
-
-    if file is None:
-        return {"error": "file requerido (upload Excel multipart)"}
 
     contenido = await file.read()
     wb = load_workbook(BytesIO(contenido), data_only=True)
