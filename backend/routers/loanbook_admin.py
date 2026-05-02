@@ -213,3 +213,163 @@ def _detectar_cambios(antes: dict, despues: dict) -> list[dict]:
             "despues": v_despues,
         })
     return cambios
+
+
+# ─────────────────────── MOTOR CANÓNICO ENDPOINTS (DAY1) ────────────────────
+
+@router.get("/motor/audit-all")
+async def motor_audit_all(db: AsyncIOMotorDatabase = Depends(get_db)):
+    """Audita los 43 LBs aplicando el motor canónico (services.loanbook.motor).
+
+    No modifica nada. Devuelve semáforo verde/amarilla/roja por LB.
+
+    El motor aplica reglas v1.1 (Opción B):
+      - 9 estados: pendiente_entrega, al_dia, mora_leve, mora_media, mora_grave,
+        default, castigado, reestructurado, saldado.
+      - Sub-buckets v1.1: Current/Grace/Warning/Alert/Critical/Severe/Pre-default/Default.
+      - Mora $2.000 COP/día sin cap.
+      - Solo recalcula derivados; NO toca cronograma.
+    """
+    from services.loanbook.motor import auditar
+    from core.datetime_utils import today_bogota
+
+    hoy = today_bogota()
+    total = 0
+    verdes = 0
+    amarillas = 0
+    rojas = 0
+    reportes = []
+
+    async for lb in db.loanbook.find({}):
+        total += 1
+        try:
+            r = auditar(lb, hoy=hoy)
+        except Exception as exc:
+            r = {
+                "loanbook_id": lb.get("loanbook_id"),
+                "cliente":     (lb.get("cliente") or {}).get("nombre"),
+                "ok":          False,
+                "severidad":   "roja",
+                "violaciones": [{"campo": "exception", "antes": "", "despues": str(exc), "tipo": "estructural"}],
+            }
+        if r["severidad"] == "verde":
+            verdes += 1
+        elif r["severidad"] == "amarilla":
+            amarillas += 1
+        else:
+            rojas += 1
+        reportes.append(r)
+
+    orden = {"roja": 0, "amarilla": 1, "verde": 2}
+    reportes.sort(key=lambda r: (orden.get(r["severidad"], 3), r.get("loanbook_id") or ""))
+
+    return {
+        "fecha_corte":               hoy.isoformat(),
+        "fecha_analisis":            now_iso_bogota(),
+        "motor":                     "services.loanbook.motor v1 (DAY1)",
+        "total":                     total,
+        "verdes":                    verdes,
+        "amarillas":                 amarillas,
+        "rojas":                     rojas,
+        "puede_migrar_sin_riesgo":   rojas == 0,
+        "loanbooks":                 reportes,
+    }
+
+
+@router.post("/motor/migrar")
+async def motor_migrar(
+    dry_run: Annotated[
+        bool,
+        Query(description="True (default) = solo preview. False = aplica derivar_estado y persiste."),
+    ] = True,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Aplica services.loanbook.motor.derivar_estado a todos los LBs y persiste.
+
+    SOLO recalcula derivados (saldo, dpd, sub_bucket, estado, mora, total_pagado,
+    cuotas_pagadas, cuotas_vencidas). NO toca cronograma, NO toca términos pactados,
+    NO toca metadata cliente. Cumple invariante: idempotente.
+
+    Args:
+        dry_run: True por defecto. False persiste cambios en MongoDB.
+
+    Returns:
+        Reporte detallado: cuántos LBs cambiaron, qué campo cambió en cada uno,
+        cartera_total antes vs después.
+    """
+    from services.loanbook.motor import derivar_estado
+    from core.datetime_utils import today_bogota
+
+    hoy = today_bogota()
+    total = 0
+    modificados = 0
+    sin_cambios = 0
+    errores = []
+    cambios_detalle = []
+    cartera_antes = 0
+    cartera_despues = 0
+
+    async for lb in db.loanbook.find({}):
+        total += 1
+        loanbook_id = lb.get("loanbook_id") or str(lb.get("_id"))
+        cliente = (lb.get("cliente") or {}).get("nombre") or lb.get("cliente_nombre") or "?"
+
+        # Saldo antes (usa el persistido)
+        saldo_antes = int(lb.get("saldo_pendiente") or 0)
+        cartera_antes += saldo_antes
+
+        try:
+            canonico = derivar_estado(lb, hoy=hoy)
+        except Exception as exc:
+            errores.append({"loanbook_id": loanbook_id, "error": str(exc)})
+            continue
+
+        # Saldo después (canónico)
+        saldo_despues = int(canonico.get("saldo_pendiente") or 0)
+        cartera_despues += saldo_despues
+
+        # Detectar cambios reales (campos derivados solamente)
+        cambios = {}
+        for k in ["saldo_pendiente", "total_pagado", "dpd", "estado", "sub_bucket",
+                  "mora_acumulada_cop", "cuotas_pagadas", "cuotas_vencidas"]:
+            v_antes = lb.get(k)
+            v_despues = canonico.get(k)
+            if v_antes != v_despues:
+                cambios[k] = {"antes": v_antes, "despues": v_despues}
+
+        if not cambios:
+            sin_cambios += 1
+            continue
+
+        modificados += 1
+        cambios_detalle.append({
+            "loanbook_id": loanbook_id,
+            "cliente":     cliente,
+            "cambios":     cambios,
+        })
+
+        if not dry_run:
+            # Persistir solo los campos derivados, no tocar cronograma ni términos
+            patch = {k: canonico[k] for k in [
+                "saldo_pendiente", "total_pagado", "dpd", "estado", "sub_bucket",
+                "mora_acumulada_cop", "cuotas_pagadas", "cuotas_vencidas",
+                "fecha_ultima_recalculacion",
+            ] if k in canonico}
+            await db.loanbook.update_one(
+                {"_id": lb["_id"]},
+                {"$set": patch},
+            )
+
+    return {
+        "dry_run":                  dry_run,
+        "fecha_analisis":           now_iso_bogota(),
+        "motor":                    "services.loanbook.motor v1 (DAY1)",
+        "total_loanbooks":          total,
+        "modificados":              modificados,
+        "sin_cambios":              sin_cambios,
+        "errores":                  errores,
+        "cartera_total_antes":      cartera_antes,
+        "cartera_total_despues":    cartera_despues,
+        "delta_cartera":            cartera_despues - cartera_antes,
+        "cambios":                  cambios_detalle,
+    }
