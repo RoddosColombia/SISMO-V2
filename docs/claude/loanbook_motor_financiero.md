@@ -159,13 +159,47 @@ Ubicación: `backend/tests/test_motor.py`
 - **No genera journals en Alegra.** Solo emite el `distribucion` con desglose ANZI/mora/interés/capital — el Contador es quien hace el journal con esos campos (otro chat).
 - **No regenera cronograma de LBs existentes.** El cronograma es inmutable después de creado salvo migración explícita.
 
-## Próximos pasos del refactor (Día 3 en curso)
+## LB-30 Luis Romero — caso de regeneración estructural (Bloque 3)
 
-- B2: Re-aplicar patches con `valor_total = cuota_inicial + cuota×n` corregido en los 43 LBs.
-- B3: LB-30 Luis Romero — regenerar cronograma desde Excel oficial.
-- B4: Refactor `routers/loanbook.py` para que use `motor.aplicar_pago` en vez de engine viejo.
+**Síntoma:** auditor lo marcaba como roja con divergencia estructural en `valor_total`
+(BD=$9.464.000 vs motor=$7.098.000).
+
+**Diagnóstico raíz:** el LB se creó con metadata top-level coherente con un plan
+P52S (52 cuotas × 182.000 = 9.464.000 = monto_original ✓ matches Loan Tape RDX),
+pero el `cuotas[]` array sólo tenía 39 entradas, sin desglose `monto_capital` ni
+`monto_interes`. El plan_codigo en BD decía `P39S` por error de captura.
+
+**Verificación contractual:** Andrés confirmó verbalmente — el plan correcto es **P52S**.
+La fila Loan Tape RDX del Excel oficial es la fuente de verdad numérica.
+
+**Solución:** endpoint `POST /api/loanbook-admin/regenerar-cronograma-lb`
+generó cronograma canónico via `motor.crear_cronograma(...)` con:
+```
+fecha_primer_pago = 2026-04-29  (miércoles, según cronograma actual)
+num_cuotas        = 52
+cuota_periodica   = 182.000
+modalidad         = semanal
+capital_plan      = 5.750.000   (TVS Sport 100, canónico CLAUDE.md)
+cuota_inicial     = 0
+```
+
+Resultado: 52 cuotas con desglose canónico (capital ~110.577 + interés ~71.423 c/u),
+Σ capital = 5.750.000 ✓, valor_total = 9.464.000 ✓. Sin pagos previos a preservar
+(`total_pagado=0` en BD).
+
+El endpoint:
+- Soporta `dry_run`
+- Preserva `monto_pagado` por número de cuota si los hubiera (no aplicó aquí)
+- Aborta si detecta pagos huérfanos (cuotas pagadas que no caben en el nuevo cronograma)
+- NO recalcula derivados — eso lo hace `/motor/migrar` en una pasada posterior
+
+## Próximos pasos del refactor
+
+- B4: Refactor `routers/loanbook.py` PUT /pago y /entrega → `motor.aplicar_pago`.
 - B5: Cadena Mercately → OCR → match → `motor.aplicar_pago` end-to-end.
 - B6: Frontend ajustes mínimos (cuota 0 visible en detalle de LB).
+- B2.8 (bug menor): excluir cuota 0 del conteo `cuotas_vencidas` en `derivar_estado`
+  (hoy cuenta cuota 0 vencida aunque el DPD ya la ignora).
 
 ## Historial
 
@@ -173,4 +207,7 @@ Ubicación: `backend/tests/test_motor.py`
 - **2026-05-01** Día 1 — Motor canónico v1 con 32 tests. Endpoints admin/motor.
 - **2026-05-02** Día 2 — Restauración desde Excel oficial. Cartera $384.9M.
 - **2026-05-03** — Auditor con tolerancia 1%. 1 roja real (LB-30) pendiente.
-- **2026-05-04** Día 3 — Cuota inicial como cuota 0 (RODDOS V2.1). 37 tests verdes.
+- **2026-05-04** Día 3 B1 — Cuota inicial como cuota 0 (RODDOS V2.1). 37 tests verdes.
+- **2026-05-04** Día 3 B2 — Patches `valor_total = monto + cuota_inicial` aplicados a 11 LBs (+$15.15M).
+- **2026-05-04** Día 3 B2.7 — `/motor/migrar` recalcula derivados: 42 verdes / 0 amarillas / 1 roja.
+- **2026-05-04** Día 3 B3 — LB-30 cronograma regenerado P52S. Cartera limpia.

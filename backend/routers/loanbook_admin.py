@@ -627,3 +627,190 @@ async def inyectar_cuota_inicial(
         "errores":         errores,
         "cambios":         cambios,
     }
+
+
+# ─────────────────── REGENERAR CRONOGRAMA LB (DAY3 BLOQUE 3) ─────────────────
+
+@router.post("/regenerar-cronograma-lb")
+async def regenerar_cronograma_lb(
+    body: dict,
+    dry_run: bool = Query(True, description="True (default) preview. False persiste."),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Regenera el cronograma de UN loanbook usando motor.crear_cronograma.
+
+    Caso de uso DAY3 Bloque 3: LB-30 Luis Romero — cronograma estructuralmente
+    inconsistente (39 cuotas en BD, num_cuotas top-level dice 52).
+
+    Body esperado:
+        {
+          "loanbook_id":          "LB-2026-0030",
+          "num_cuotas":           52,
+          "cuota_periodica":      182000,
+          "capital_plan":         5750000,
+          "fecha_primer_pago":    "2026-04-29",
+          "modalidad":            "semanal",
+          "cuota_inicial":        0,                       # opcional
+          "fecha_cuota_inicial":  null,                    # opcional
+          "plan_codigo":          "P52S",                  # opcional, fix metadata
+          "preserve_pagos":       true                     # opcional, default true
+        }
+
+    Reglas inviolables:
+      - Si alguna cuota existente tiene monto_pagado > 0, se preserva el pago
+        (matching por número de cuota). El motor genera el cronograma limpio
+        y luego se mergean los monto_pagado existentes por número.
+      - Si preserve_pagos=true y se detecta más cuotas pagadas que num_cuotas
+        nuevo → ABORTA con error (riesgo de pérdida de pago).
+      - Persiste cronograma + valor_total nuevo. Recálculo de derivados
+        (saldo_pendiente, dpd, estado, sub_bucket) NO se hace aquí — usar
+        /motor/migrar después.
+    """
+    from services.loanbook.motor import crear_cronograma
+    from datetime import date
+
+    loanbook_id = body.get("loanbook_id")
+    if not loanbook_id:
+        return {"error": "body.loanbook_id es obligatorio"}
+
+    # Parámetros del nuevo cronograma
+    try:
+        num_cuotas        = int(body["num_cuotas"])
+        cuota_periodica   = int(body["cuota_periodica"])
+        capital_plan      = int(body["capital_plan"])
+        modalidad         = body["modalidad"]
+        fpp_str           = body["fecha_primer_pago"]
+        fecha_primer_pago = date.fromisoformat(fpp_str)
+    except (KeyError, ValueError, TypeError) as e:
+        return {"error": f"parámetros inválidos: {e}"}
+
+    cuota_inicial      = int(body.get("cuota_inicial") or 0)
+    fci_raw            = body.get("fecha_cuota_inicial")
+    fecha_ci           = date.fromisoformat(fci_raw) if fci_raw else None
+    plan_codigo_nuevo  = body.get("plan_codigo")
+    preserve_pagos     = bool(body.get("preserve_pagos", True))
+
+    # ── Lectura del LB
+    lb = await db.loanbook.find_one({"loanbook_id": loanbook_id})
+    if lb is None:
+        return {"error": f"LB {loanbook_id} no encontrado"}
+
+    cuotas_actuales = lb.get("cuotas") or []
+    pagos_existentes = {
+        int(c.get("numero") or -1): {
+            "monto_pagado":   int(c.get("monto_pagado") or 0),
+            "fecha_pago":     c.get("fecha_pago"),
+            "anzi_pagado":    int(c.get("anzi_pagado") or 0),
+            "mora_pagada":    int(c.get("mora_pagada") or 0),
+            "mora_acumulada": int(c.get("mora_acumulada") or 0),
+            "estado":         c.get("estado"),
+        }
+        for c in cuotas_actuales
+        if int(c.get("monto_pagado") or 0) > 0
+    }
+
+    # ── Generar cronograma canónico
+    try:
+        cronograma_nuevo = crear_cronograma(
+            fecha_primer_pago     = fecha_primer_pago,
+            num_cuotas            = num_cuotas,
+            cuota_valor           = cuota_periodica,
+            modalidad             = modalidad,
+            capital_plan          = capital_plan,
+            cuota_estandar_plan   = cuota_periodica,
+            cuota_inicial         = cuota_inicial,
+            fecha_cuota_inicial   = fecha_ci,
+        )
+    except Exception as e:
+        return {"error": f"motor.crear_cronograma falló: {e}"}
+
+    # ── Validación: si hay pagos en cuotas que no caben en nuevo cronograma → ABORTA
+    numeros_nuevos = {int(c.get("numero")) for c in cronograma_nuevo}
+    pagos_huerfanos = [num for num in pagos_existentes if num not in numeros_nuevos]
+    if pagos_huerfanos and preserve_pagos:
+        return {
+            "error":            "pagos huérfanos detectados — pago en cuota que no existe en nuevo cronograma",
+            "loanbook_id":      loanbook_id,
+            "pagos_huerfanos":  pagos_huerfanos,
+            "pagos_existentes": pagos_existentes,
+            "abort":            True,
+        }
+
+    # ── Merge: preservar monto_pagado de cuotas existentes
+    if preserve_pagos and pagos_existentes:
+        for c in cronograma_nuevo:
+            num = int(c.get("numero"))
+            if num in pagos_existentes:
+                p = pagos_existentes[num]
+                c["monto_pagado"]   = p["monto_pagado"]
+                c["fecha_pago"]     = p["fecha_pago"]
+                c["anzi_pagado"]    = p["anzi_pagado"]
+                c["mora_pagada"]    = p["mora_pagada"]
+                c["mora_acumulada"] = p["mora_acumulada"]
+                if p["estado"] in ("pagada", "parcial"):
+                    c["estado"] = p["estado"]
+
+    # ── Cálculos del nuevo estado top-level
+    valor_total_nuevo = sum(int(c.get("monto") or 0) for c in cronograma_nuevo)
+    sigma_capital     = sum(int(c.get("monto_capital") or 0) for c in cronograma_nuevo)
+    sigma_interes     = sum(int(c.get("monto_interes") or 0) for c in cronograma_nuevo)
+    total_pagado      = sum(int(c.get("monto_pagado") or 0) for c in cronograma_nuevo)
+
+    diff = {
+        "loanbook_id":            loanbook_id,
+        "cliente":                (lb.get("cliente") or {}).get("nombre")
+                                  or lb.get("cliente_nombre") or "?",
+        "antes": {
+            "num_cuotas":         lb.get("num_cuotas"),
+            "cuotas_array_count": len(cuotas_actuales),
+            "valor_total":        lb.get("valor_total"),
+            "plan_codigo":        lb.get("plan_codigo"),
+        },
+        "despues": {
+            "num_cuotas":         num_cuotas,
+            "cuotas_array_count": len(cronograma_nuevo),
+            "valor_total":        valor_total_nuevo,
+            "Σ capital":          sigma_capital,
+            "Σ interes":          sigma_interes,
+            "total_pagado":       total_pagado,
+            "plan_codigo":        plan_codigo_nuevo or lb.get("plan_codigo"),
+            "fecha_primer_pago":  fpp_str,
+            "fecha_ultima_cuota": cronograma_nuevo[-1]["fecha"],
+        },
+        "pagos_preservados":      len(pagos_existentes),
+    }
+
+    if not dry_run:
+        update_set = {
+            "cuotas":                       cronograma_nuevo,
+            "valor_total":                  valor_total_nuevo,
+            "num_cuotas":                   num_cuotas,
+            "cuota_periodica":              cuota_periodica,
+            "capital_plan":                 capital_plan,
+            "modalidad":                    modalidad,
+            "fecha_primer_pago":            fpp_str,
+            "saldo_pendiente":              max(0, valor_total_nuevo - total_pagado),
+            "total_pagado":                 total_pagado,
+            "regenerado_cronograma_at":     now_iso_bogota(),
+        }
+        if cuota_inicial > 0:
+            update_set["cuota_inicial"] = cuota_inicial
+        if plan_codigo_nuevo:
+            update_set["plan_codigo"] = plan_codigo_nuevo
+
+        await db.loanbook.update_one(
+            {"loanbook_id": loanbook_id},
+            {"$set": update_set},
+        )
+
+    return {
+        "dry_run":         dry_run,
+        "fecha_analisis":  now_iso_bogota(),
+        "diff":            diff,
+        "cronograma_preview": [
+            {"numero": c["numero"], "fecha": c["fecha"], "monto": c["monto"],
+             "monto_capital": c["monto_capital"], "monto_interes": c["monto_interes"],
+             "monto_pagado": c.get("monto_pagado", 0)}
+            for c in cronograma_nuevo[:3] + cronograma_nuevo[-3:]
+        ],
+    }
