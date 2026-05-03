@@ -19,7 +19,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi import APIRouter, Depends, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from core.database import get_db
@@ -375,226 +375,107 @@ async def motor_migrar(
     }
 
 
-# ─────────────────────── RESTAURAR DESDE EXCEL OFICIAL (DAY2) ───────────────
 
-# Mapeo nomenclatura Excel oficial → Opción B (rangos v1.1)
-ESTADO_EXCEL_A_OPCION_B = {
-    "Aprobado":             "pendiente_entrega",
-    "Pendiente Entrega":    "pendiente_entrega",
-    "pendiente_entrega":    "pendiente_entrega",
-    "Current":              "al_dia",
-    "al_dia":               "al_dia",
-    "Early Delinquency":    "mora_leve",
-    "mora_leve":            "mora_leve",
-    "Mid Delinquency":      "mora_media",
-    "mora_media":           "mora_media",
-    "Late Delinquency":     "mora_grave",
-    "mora_grave":           "mora_grave",
-    "en_riesgo":            "mora_leve",  # legacy → mapear al rango más cercano
-    "mora":                 "mora_grave",  # legacy
-    "Default":              "default",
-    "default":              "default",
-    "Charge-Off":           "castigado",
-    "ChargeOff":            "castigado",
-    "castigado":            "castigado",
-    "Modificado":           "reestructurado",
-    "reestructurado":       "reestructurado",
-    "Pagado":               "saldado",
-    "saldado":              "saldado",
-    "activo":               "al_dia",  # legacy
-}
+# ─────────────────────── APLICAR PATCHES JSON (DAY2 — sin multipart) ─────────
 
-
-@router.post("/restaurar-desde-excel")
-async def restaurar_desde_excel(
-    file: UploadFile = File(..., description="Excel oficial loanbook_roddos_YYYY-MM-DD.xlsx"),
+@router.post("/aplicar-patches")
+async def aplicar_patches(
+    body: dict,
     dry_run: bool = Query(True, description="True (default) preview. False persiste."),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    """Restaura los LBs desde el Excel oficial RODDOS.
+    """Aplica patches canónicos a los LBs desde un JSON body.
 
-    Lee el Excel oficial (loanbook_roddos_YYYY-MM-DD.xlsx) y para cada LB
-    actualiza los campos canónicos sin tocar cronograma:
-      - monto_original, cuota_periodica, total_cuotas
-      - cuotas_pagadas, cuotas_vencidas
-      - saldo_capital, saldo_intereses (separados como pide el negocio)
-      - saldo_pendiente = sc + si
-      - dpd, mora_acumulada_cop
-      - estado (mapeado a Opción B), sub_bucket_semanal
-      - producto, subtipo_rodante, plan_codigo, modalidad_pago
-      - cliente block, metadata moto/repuestos/comparendo/etc
+    Alternativa al endpoint multipart restaurar-desde-excel: recibe los patches
+    pre-generados como JSON body, sin dependencia de python-multipart.
 
-    NO toca:
+    Body esperado:
+        {
+          "total_loanbooks": 43,
+          "patches": [
+            {
+              "loanbook_id": "LB-2026-0001",
+              "saldo_capital": 6720600,
+              "saldo_intereses": 1554800,
+              "saldo_pendiente": 8275400,
+              "valor_total": 9354800,
+              "total_pagado": 1079400,
+              "cuotas_pagadas": 6,
+              "dpd": 1,
+              "estado": "mora_leve",
+              "sub_bucket": "Grace",
+              ...
+            },
+            ...
+          ]
+        }
+
+    Por cada patch hace $set sobre el doc del LB sin tocar:
       - cuotas[] (cronograma con fechas reales)
-      - fecha_entrega, fecha_primer_pago (términos pactados)
-      - capital_plan, cuota_estandar_plan (configuración del plan)
+      - cliente, moto, metadata_producto
+      - fechas pactadas (entrega, primer_pago)
       - factura_alegra_id
 
-    Soporta Hoja 1 (RDX) y Hoja 2 (RODANTE).
+    Idempotente: aplicarlo dos veces no produce cambios la segunda vez.
     """
-    from openpyxl import load_workbook
-    from io import BytesIO
-    from datetime import datetime, date
+    patches = body.get("patches") or []
+    if not patches:
+        return {"error": "body debe incluir 'patches' (lista de dicts)"}
 
-    contenido = await file.read()
-    wb = load_workbook(BytesIO(contenido), data_only=True)
-
-    def _val(cell):
-        v = cell.value if hasattr(cell, "value") else cell
-        if isinstance(v, datetime):
-            return v.date().isoformat()
-        if isinstance(v, date):
-            return v.isoformat()
-        return v
-
-    def _int(v, default=0):
-        if v is None or v == "":
-            return default
-        try:
-            return int(v)
-        except (TypeError, ValueError):
-            return default
-
-    def _normalizar_estado(raw):
-        if not raw:
-            return "al_dia"
-        return ESTADO_EXCEL_A_OPCION_B.get(str(raw).strip(), "al_dia")
-
-    def _fila_a_patch(headers, row_cells):
-        """Convierte una fila del Excel a dict de campos canónicos para $set."""
-        d = {h: _val(c) for h, c in zip(headers, row_cells)}
-        loanbook_id = d.get("loanbook_codigo") or d.get("loanbook_id")
-        if not loanbook_id:
-            return None, None
-
-        patch = {}
-        # Términos del crédito (canónicos del Excel)
-        patch["monto_original"] = _int(d.get("monto_original"))
-        patch["cuota_periodica"] = _int(d.get("cuota_periodica"))
-        patch["cuota_monto"] = _int(d.get("cuota_periodica"))
-        patch["total_cuotas"] = _int(d.get("total_cuotas"))
-        patch["num_cuotas"] = _int(d.get("total_cuotas"))
-        # Cuota inicial puede venir None
-        if d.get("cuota_inicial") not in (None, ""):
-            patch["cuota_inicial"] = _int(d.get("cuota_inicial"))
-
-        # Desempeño (derivados oficiales del Excel — fuente de verdad)
-        patch["cuotas_pagadas"] = _int(d.get("cuotas_pagadas"))
-        patch["cuotas_vencidas"] = _int(d.get("cuotas_vencidas"))
-        patch["saldo_capital"] = _int(d.get("saldo_capital"))
-        patch["saldo_intereses"] = _int(d.get("saldo_intereses"))
-        patch["saldo_pendiente"] = patch["saldo_capital"] + patch["saldo_intereses"]
-        patch["mora_acumulada_cop"] = _int(d.get("mora_acumulada_cop"))
-        patch["mora_acumulada"] = patch["mora_acumulada_cop"]
-        patch["dpd"] = _int(d.get("dpd"))
-
-        # Estado (mapeado a nomenclatura Opción B)
-        patch["estado"] = _normalizar_estado(d.get("estado"))
-        if d.get("sub_bucket_semanal"):
-            patch["sub_bucket"] = str(d["sub_bucket_semanal"]).strip()
-            patch["sub_bucket_semanal"] = str(d["sub_bucket_semanal"]).strip()
-
-        # Identidad (no toca si ya existe)
-        if d.get("producto"):
-            patch["producto"] = str(d["producto"]).strip()
-        if d.get("subtipo_rodante"):
-            patch["subtipo_rodante"] = str(d["subtipo_rodante"]).strip()
-        if d.get("plan_codigo"):
-            patch["plan_codigo"] = str(d["plan_codigo"]).strip()
-        if d.get("modalidad_pago"):
-            patch["modalidad_pago"] = str(d["modalidad_pago"]).strip()
-            patch["modalidad"] = str(d["modalidad_pago"]).strip()
-        if d.get("tasa_ea") not in (None, ""):
-            patch["tasa_ea"] = float(d.get("tasa_ea"))
-
-        # Total_pagado derivado: valor_total_canónico − saldo_pendiente
-        valor_total_canonico = patch["cuota_periodica"] * patch["total_cuotas"]
-        patch["valor_total"] = valor_total_canonico
-        patch["total_pagado"] = max(0, valor_total_canonico - patch["saldo_pendiente"])
-
-        # Otros campos opcionales del Excel
-        for k in ("vendedor", "whatsapp_status", "factura_alegra_id"):
-            if d.get(k) not in (None, ""):
-                patch[k] = str(d[k]).strip()
-        if d.get("fecha_ultimo_pago") not in (None, ""):
-            patch["fecha_ultimo_pago"] = d["fecha_ultimo_pago"]
-
-        # Marker de auditoría
-        patch["restaurado_desde_excel_at"] = now_iso_bogota()
-
-        return loanbook_id, patch
-
-    # Procesar Hoja 1 RDX y Hoja 2 RODANTE
-    total = 0
+    total = len(patches)
     actualizados = 0
     no_encontrados = []
+    sin_cambios = 0
     errores = []
-    cambios = []
+    cambios_detalle = []
 
-    for sheet_name in ["Loan Tape RDX", "Loan Tape RODANTE"]:
-        if sheet_name not in wb.sheetnames:
+    for patch in patches:
+        loanbook_id = patch.get("loanbook_id")
+        if not loanbook_id:
+            errores.append({"patch": patch, "error": "sin loanbook_id"})
             continue
-        ws = wb[sheet_name]
-        headers = [ws.cell(1, c).value for c in range(1, ws.max_column + 1)]
 
-        for r in range(2, ws.max_row + 1):
-            row_cells = [ws.cell(r, c) for c in range(1, ws.max_column + 1)]
-            try:
-                loanbook_id, patch = _fila_a_patch(headers, row_cells)
-            except Exception as exc:
-                errores.append({"fila": r, "sheet": sheet_name, "error": str(exc)})
+        doc_actual = await db.loanbook.find_one({"loanbook_id": loanbook_id})
+        if doc_actual is None:
+            no_encontrados.append(loanbook_id)
+            continue
+
+        # Detectar cambios reales
+        cambios_lb = {}
+        for k, v in patch.items():
+            if k == "loanbook_id":
                 continue
+            v_actual = doc_actual.get(k)
+            if v_actual != v:
+                cambios_lb[k] = {"antes": v_actual, "despues": v}
 
-            if loanbook_id is None:
-                continue
-            total += 1
+        if not cambios_lb:
+            sin_cambios += 1
+            continue
 
-            # Buscar el LB en MongoDB
-            doc_actual = await db.loanbook.find_one({"loanbook_id": loanbook_id})
-            if doc_actual is None:
-                no_encontrados.append(loanbook_id)
-                continue
+        actualizados += 1
+        cambios_detalle.append({
+            "loanbook_id": loanbook_id,
+            "cliente":     (doc_actual.get("cliente") or {}).get("nombre")
+                            or doc_actual.get("cliente_nombre") or "?",
+            "n_cambios":   len(cambios_lb),
+        })
 
-            # Detectar cambios reales
-            cambios_lb = {}
-            for k, v in patch.items():
-                if k == "restaurado_desde_excel_at":
-                    continue
-                v_actual = doc_actual.get(k)
-                if v_actual != v:
-                    cambios_lb[k] = {"antes": v_actual, "despues": v}
-            if not cambios_lb:
-                continue
-
-            actualizados += 1
-            cambios.append({
-                "loanbook_id": loanbook_id,
-                "cliente":     (doc_actual.get("cliente") or {}).get("nombre")
-                                or doc_actual.get("cliente_nombre") or "?",
-                "n_cambios":   len(cambios_lb),
-                "cambios":     cambios_lb,
-            })
-
-            if not dry_run:
-                await db.loanbook.update_one(
-                    {"loanbook_id": loanbook_id},
-                    {"$set": patch},
-                )
-
-    cartera_total_canonica = sum(
-        (c["cambios"].get("saldo_pendiente", {}).get("despues")
-         or c["cambios"].get("saldo_capital", {}).get("despues") or 0)
-        for c in cambios
-    )
+        if not dry_run:
+            patch_set = {k: v for k, v in patch.items() if k != "loanbook_id"}
+            patch_set["restaurado_desde_excel_at"] = now_iso_bogota()
+            await db.loanbook.update_one(
+                {"loanbook_id": loanbook_id},
+                {"$set": patch_set},
+            )
 
     return {
         "dry_run":          dry_run,
         "fecha_analisis":   now_iso_bogota(),
-        "fuente":           file.filename,
-        "total_filas":      total,
+        "total_patches":    total,
         "actualizados":     actualizados,
-        "sin_cambios":      total - actualizados - len(no_encontrados),
+        "sin_cambios":      sin_cambios,
         "no_encontrados":   no_encontrados,
         "errores":          errores,
-        "cambios":          cambios,
+        "cambios":          cambios_detalle,
     }
