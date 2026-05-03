@@ -520,17 +520,20 @@ def auditar(loanbook: dict, hoy: date | None = None) -> dict:
     estado_actual = (loanbook.get("estado") or "").strip()
     if estado_actual != "pendiente_entrega":
         valor_total_calc = sum(int(c.get("monto") or 0) for c in (loanbook.get("cuotas") or []))
-        if (
-            loanbook.get("valor_total")
-            and valor_total_calc
-            and abs(loanbook["valor_total"] - valor_total_calc) > 1
-        ):
-            violaciones.append({
-                "campo":   "valor_total",
-                "antes":   loanbook["valor_total"],
-                "despues": valor_total_calc,
-                "tipo":    "estructural",
-            })
+        v_actual = loanbook.get("valor_total")
+        if v_actual and valor_total_calc:
+            diff = abs(v_actual - valor_total_calc)
+            # Tolerancia 1% — diferencias menores son redondeo del cronograma, no error real
+            tolerancia = max(100, int(v_actual * 0.01))
+            if diff > tolerancia:
+                # Solo es ESTRUCTURAL (rojo) si diff > 5% — eso sí es un error real
+                tipo = "estructural" if diff > int(v_actual * 0.05) else "derivado"
+                violaciones.append({
+                    "campo":   "valor_total",
+                    "antes":   v_actual,
+                    "despues": valor_total_calc,
+                    "tipo":    tipo,
+                })
 
     severidad = "verde"
     if violaciones:
