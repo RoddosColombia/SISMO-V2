@@ -145,28 +145,60 @@ def crear_cronograma(
     modalidad: str,
     capital_plan: int,
     cuota_estandar_plan: int,
+    cuota_inicial: int = 0,
+    fecha_cuota_inicial: date | None = None,
 ) -> list[dict]:
     """Genera cronograma con N cuotas según fecha_primer_pago + intervalo modal.
 
-    Cada cuota incluye desglose canónico capital/interés (calcular_cuota_desglosada).
-    Si num_cuotas == 0 (caso P1S contado), retorna lista vacía.
+    Si cuota_inicial > 0, inserta al inicio una "cuota 0" con esa cantidad.
+    La cuota 0 NO está sujeta al waterfall ANZI/mora — es un pago directo a capital
+    (corresponde al monto pactado de cuota inicial al originar el crédito, RODDOS V2.1).
+
+    Cada cuota regular (1..N) incluye desglose canónico capital/interés
+    (calcular_cuota_desglosada).
+    Si num_cuotas == 0 (caso P1S contado), retorna lista vacía o solo la cuota 0
+    si cuota_inicial > 0.
 
     Args:
-        fecha_primer_pago: fecha exacta de la primera cuota (definida por operador).
+        fecha_primer_pago: fecha exacta de la primera cuota REGULAR (cuota #1).
                            El día de la semana queda fijado desde aquí.
-        num_cuotas: cantidad total de cuotas.
-        cuota_valor: monto periódico que paga el cliente.
+        num_cuotas: cantidad de cuotas REGULARES (no cuenta la cuota 0).
+        cuota_valor: monto periódico que paga el cliente en cada cuota regular.
         modalidad: semanal | quincenal | mensual.
         capital_plan: capital base del plan (sin intereses) — Raider 7.8M, Sport 5.75M.
-        cuota_estandar_plan: cuota canónica del plan (puede diferir de cuota_valor
-                             si el operador pactó una cuota especial).
+        cuota_estandar_plan: cuota canónica del plan.
+        cuota_inicial: monto de la cuota 0 (default 0 = sin cuota inicial pactada).
+        fecha_cuota_inicial: fecha de la cuota 0. Si None, usa fecha_primer_pago como
+                             referencia (se asume que la cuota 0 vence en o antes de
+                             fecha_primer_pago).
 
     Returns:
-        Lista de cuotas con fecha, monto, monto_capital, monto_interes,
-        estado=pendiente, monto_pagado=0, fecha_pago=None, mora_acumulada=0.
+        Lista de cuotas. Si cuota_inicial > 0, la primera entrada es la cuota 0.
+        Las cuotas regulares siguen numeradas 1..N.
     """
+    cronograma: list[dict] = []
+
+    # ── Cuota 0 (si cuota_inicial > 0) ───────────────────────────────────────
+    if cuota_inicial and cuota_inicial > 0:
+        fecha_0 = fecha_cuota_inicial or fecha_primer_pago
+        cronograma.append({
+            "numero":            0,
+            "fecha":             fecha_0.isoformat(),
+            "monto":             int(cuota_inicial),
+            "monto_capital":     int(cuota_inicial),
+            "monto_interes":     0,
+            "estado":            "pendiente",
+            "monto_pagado":      0,
+            "fecha_pago":        None,
+            "mora_acumulada":    0,
+            "anzi_pagado":       0,
+            "mora_pagada":       0,
+            "es_cuota_inicial":  True,
+        })
+
+    # ── Cuotas regulares (1..N) ──────────────────────────────────────────────
     if num_cuotas == 0:
-        return []
+        return cronograma
 
     if modalidad not in DIAS_ENTRE_CUOTAS:
         raise ValueError(f"Modalidad '{modalidad}' inválida. Use: semanal | quincenal | mensual.")
@@ -186,7 +218,6 @@ def crear_cronograma(
     capital_acumulado = capital_cuota * (num_cuotas - 1)
     capital_ultima = int(capital_plan) - capital_acumulado
 
-    cronograma = []
     for i in range(num_cuotas):
         es_ultima = (i == num_cuotas - 1)
         cap = capital_ultima if es_ultima else capital_cuota
@@ -211,6 +242,7 @@ def crear_cronograma(
             "mora_acumulada": 0,
             "anzi_pagado":    0,
             "mora_pagada":    0,
+            "es_cuota_inicial": False,
         })
 
     return cronograma
@@ -294,7 +326,41 @@ def aplicar_pago(
 
     cuota = cuotas[target_idx]
 
-    # ═══════ Waterfall §4.1 ═══════
+    # ═══════ Excepción: cuota 0 (cuota inicial) — sin waterfall ═══════
+    # La cuota 0 es el pago inicial pactado al originar el crédito (RODDOS V2.1).
+    # NO se le aplica ANZI 2% ni mora — va directo a capital.
+    if cuota.get("es_cuota_inicial") is True or int(cuota.get("numero") or -1) == 0:
+        lb_nuevo = copy.deepcopy(loanbook)
+        cuota_nueva = lb_nuevo["cuotas"][target_idx]
+        ya_pagado_ini = int(cuota_nueva.get("monto_pagado") or 0)
+        monto_cuota_ini = int(cuota_nueva.get("monto") or 0)
+        capital_aplicado = min(int(monto), max(0, monto_cuota_ini - ya_pagado_ini))
+        no_aplicado_ini = int(monto) - capital_aplicado
+
+        cuota_nueva["monto_pagado"] = ya_pagado_ini + capital_aplicado
+        cuota_nueva["fecha_pago"] = fecha_pago.isoformat()
+        if cuota_nueva["monto_pagado"] >= monto_cuota_ini:
+            cuota_nueva["estado"] = "pagada"
+        elif cuota_nueva["monto_pagado"] > 0:
+            cuota_nueva["estado"] = "parcial"
+
+        lb_nuevo["total_capital_pagado"] = (
+            int(lb_nuevo.get("total_capital_pagado") or 0) + capital_aplicado
+        )
+        lb_nuevo = derivar_estado(lb_nuevo, hoy=fecha_pago)
+        return {
+            "loanbook": lb_nuevo,
+            "distribucion": {
+                "anzi":          0,
+                "mora":          0,
+                "interes":       0,
+                "capital":       capital_aplicado,
+                "abono_capital": 0,
+                "no_aplicado":   no_aplicado_ini,
+            },
+        }
+
+    # ═══════ Waterfall §4.1 (cuotas regulares 1..N) ═══════
     rem = int(monto)
 
     # 1º ANZI 2% del pago bruto
@@ -421,9 +487,10 @@ def derivar_estado(loanbook: dict, hoy: date | None = None) -> dict:
         return lb
 
     cuotas = lb["cuotas"]
+    # valor_total = SUMA DE TODAS las cuotas (incluye cuota 0 si existe)
     valor_total = int(lb.get("valor_total") or sum(int(c.get("monto") or 0) for c in cuotas))
 
-    # ── Suma de pagos
+    # ── Suma de pagos (incluye pagos a cuota 0)
     total_pagado = sum(int(c.get("monto_pagado") or 0) for c in cuotas)
     saldo_pendiente = max(0, valor_total - total_pagado)
 
@@ -434,10 +501,16 @@ def derivar_estado(loanbook: dict, hoy: date | None = None) -> dict:
         if not _es_pagada(c) and _parse_date(c.get("fecha")) and _parse_date(c.get("fecha")) < hoy
     )
 
-    # ── DPD canónico: días desde la cuota más antigua sin pagar
+    # ── DPD canónico: días desde la cuota REGULAR más antigua sin pagar
+    # IMPORTANTE: la cuota 0 (cuota_inicial) NO genera mora ni cuenta para DPD.
+    # El cliente puede tener cuota_inicial pendiente sin que eso lo ponga en mora —
+    # la cuota_inicial se cobra aparte según política comercial.
     dpd = 0
     fecha_mas_antigua = None
     for c in cuotas:
+        # Saltar cuota 0 (no aporta DPD ni mora)
+        if c.get("es_cuota_inicial") is True or int(c.get("numero") or -1) == 0:
+            continue
         if _es_pagada(c):
             continue
         f = _parse_date(c.get("fecha"))
@@ -451,6 +524,7 @@ def derivar_estado(loanbook: dict, hoy: date | None = None) -> dict:
         dpd = max(0, (hoy - fecha_mas_antigua).days)
 
     # ── Estado derivado
+    # saldado solo si TODAS las cuotas (incluyendo cuota 0) están cubiertas
     if total_pagado >= valor_total or saldo_pendiente == 0:
         estado_nuevo = "saldado"
     elif estado_actual in ("reestructurado", "castigado"):
@@ -515,18 +589,15 @@ def auditar(loanbook: dict, hoy: date | None = None) -> dict:
             "tipo":    "derivado",
         })
 
-    # Estructurales (no se recalculan, deberían coincidir)
-    # Skip check si el LB está en pendiente_entrega (sin cronograma aún)
+    # Estructurales (no se recalculan, deberian coincidir)
     estado_actual = (loanbook.get("estado") or "").strip()
     if estado_actual != "pendiente_entrega":
         valor_total_calc = sum(int(c.get("monto") or 0) for c in (loanbook.get("cuotas") or []))
         v_actual = loanbook.get("valor_total")
         if v_actual and valor_total_calc:
             diff = abs(v_actual - valor_total_calc)
-            # Tolerancia 1% — diferencias menores son redondeo del cronograma, no error real
             tolerancia = max(100, int(v_actual * 0.01))
             if diff > tolerancia:
-                # Solo es ESTRUCTURAL (rojo) si diff > 5% — eso sí es un error real
                 tipo = "estructural" if diff > int(v_actual * 0.05) else "derivado"
                 violaciones.append({
                     "campo":   "valor_total",

@@ -492,3 +492,160 @@ class TestInvariantes:
         except ValueError:
             pass
 
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 6. CUOTA INICIAL (CUOTA 0) — RODDOS V2.1
+# ════════════════════════════════════════════════════════════════════════════
+
+
+class TestCuotaInicial:
+    """Cuota 0 = pago inicial pactado. Sin waterfall ANZI/mora. Suma a valor_total."""
+
+    def test_cuota_inicial_se_inserta_como_cuota_0(self):
+        """Si cuota_inicial > 0, se inserta cuota 0 al inicio del cronograma."""
+        from services.loanbook.motor import crear_cronograma
+        cronograma = crear_cronograma(
+            fecha_primer_pago=date(2026, 5, 6),
+            num_cuotas=39,
+            cuota_valor=210_000,
+            modalidad="semanal",
+            capital_plan=7_800_000,
+            cuota_estandar_plan=210_000,
+            cuota_inicial=1_460_000,
+            fecha_cuota_inicial=date(2026, 4, 30),
+        )
+        # Total: 1 cuota 0 + 39 regulares = 40 entries
+        assert len(cronograma) == 40
+        # Primera entry es cuota 0
+        c0 = cronograma[0]
+        assert c0["numero"] == 0
+        assert c0["monto"] == 1_460_000
+        assert c0["monto_capital"] == 1_460_000
+        assert c0["monto_interes"] == 0
+        assert c0["estado"] == "pendiente"
+        assert c0["es_cuota_inicial"] is True
+        assert c0["fecha"] == "2026-04-30"
+        # Cuotas regulares siguen numeradas 1..39
+        assert cronograma[1]["numero"] == 1
+        assert cronograma[1]["fecha"] == "2026-05-06"
+        assert cronograma[39]["numero"] == 39
+
+    def test_cuota_inicial_cero_no_genera_cuota_0(self):
+        """Si cuota_inicial = 0 (caso aceleración comercial), cronograma sin cuota 0."""
+        from services.loanbook.motor import crear_cronograma
+        cronograma = crear_cronograma(
+            fecha_primer_pago=date(2026, 5, 6),
+            num_cuotas=39,
+            cuota_valor=210_000,
+            modalidad="semanal",
+            capital_plan=7_800_000,
+            cuota_estandar_plan=210_000,
+            cuota_inicial=0,
+        )
+        # Solo 39 cuotas regulares, sin cuota 0
+        assert len(cronograma) == 39
+        assert cronograma[0]["numero"] == 1
+        # Ninguna cuota es es_cuota_inicial
+        for c in cronograma:
+            assert c.get("es_cuota_inicial", False) is False
+
+    def test_aplicar_pago_a_cuota_0_sin_waterfall(self):
+        """Pago a cuota 0: NO aplica ANZI 2%, NO aplica mora — todo va a capital."""
+        from services.loanbook.motor import crear_cronograma, aplicar_pago
+
+        # Crear LB con cuota inicial pactada
+        cronograma = crear_cronograma(
+            fecha_primer_pago=date(2026, 5, 6),
+            num_cuotas=39,
+            cuota_valor=210_000,
+            modalidad="semanal",
+            capital_plan=7_800_000,
+            cuota_estandar_plan=210_000,
+            cuota_inicial=1_460_000,
+            fecha_cuota_inicial=date(2026, 4, 30),
+        )
+        lb = {
+            "loanbook_id": "LB-TEST-INICIAL",
+            "cliente": {"nombre": "Test Cuota Inicial"},
+            "estado": "al_dia",
+            "valor_total": sum(c["monto"] for c in cronograma),
+            "cuotas": cronograma,
+        }
+        # Cliente paga la cuota inicial completa
+        result = aplicar_pago(lb, monto=1_460_000, fecha_pago=date(2026, 4, 30), cuota_numero=0)
+        d = result["distribucion"]
+        # ANZI = 0, mora = 0, interes = 0 (no aplica waterfall a cuota 0)
+        assert d["anzi"] == 0, f"ANZI debe ser 0 en cuota 0, fue {d['anzi']}"
+        assert d["mora"] == 0
+        assert d["interes"] == 0
+        # Todo al capital
+        assert d["capital"] == 1_460_000
+        assert d["abono_capital"] == 0
+        assert d["no_aplicado"] == 0
+        # Cuota 0 marcada pagada
+        cuota_0 = result["loanbook"]["cuotas"][0]
+        assert cuota_0["numero"] == 0
+        assert cuota_0["estado"] == "pagada"
+        assert cuota_0["monto_pagado"] == 1_460_000
+
+    def test_valor_total_incluye_cuota_inicial(self):
+        """valor_total = cuota_inicial + (cuota_valor × num_cuotas)."""
+        from services.loanbook.motor import crear_cronograma, derivar_estado
+        cronograma = crear_cronograma(
+            fecha_primer_pago=date(2026, 5, 6),
+            num_cuotas=39,
+            cuota_valor=210_000,
+            modalidad="semanal",
+            capital_plan=7_800_000,
+            cuota_estandar_plan=210_000,
+            cuota_inicial=1_460_000,
+            fecha_cuota_inicial=date(2026, 4, 30),
+        )
+        # Suma de todas las cuotas (con cuota 0)
+        suma_total = sum(c["monto"] for c in cronograma)
+        # Esperado: 1.460.000 + 39 * 210.000 = 1.460.000 + 8.190.000 = 9.650.000
+        assert suma_total == 9_650_000
+
+        # Verificar via derivar_estado
+        lb = {
+            "loanbook_id": "LB-TEST-VT",
+            "cliente": {"nombre": "Test"},
+            "estado": "al_dia",
+            "valor_total": suma_total,
+            "cuotas": cronograma,
+        }
+        r = derivar_estado(lb, hoy=date(2026, 5, 1))
+        assert r["saldo_pendiente"] == 9_650_000  # nada pagado todavia
+        assert r["total_pagado"] == 0
+
+    def test_dpd_no_se_genera_por_cuota_0_vencida(self):
+        """Si solo la cuota 0 está vencida, dpd debe ser 0 (no genera mora).
+
+        Política RODDOS: la cuota inicial puede quedar pendiente sin mover al
+        cliente a estado de mora — se cobra aparte segun politica comercial.
+        """
+        from services.loanbook.motor import crear_cronograma, derivar_estado
+        cronograma = crear_cronograma(
+            fecha_primer_pago=date(2026, 5, 13),  # cuotas regulares en futuro
+            num_cuotas=39,
+            cuota_valor=210_000,
+            modalidad="semanal",
+            capital_plan=7_800_000,
+            cuota_estandar_plan=210_000,
+            cuota_inicial=1_460_000,
+            fecha_cuota_inicial=date(2026, 4, 30),  # cuota 0 vencida hace 6 dias
+        )
+        lb = {
+            "loanbook_id": "LB-TEST-CI-VENCIDA",
+            "cliente": {"nombre": "Test"},
+            "estado": "al_dia",
+            "valor_total": sum(c["monto"] for c in cronograma),
+            "cuotas": cronograma,
+        }
+        # Hoy 2026-05-06: cuota 0 vencida hace 6 dias, cuotas regulares aun no vencen
+        r = derivar_estado(lb, hoy=date(2026, 5, 6))
+        # DPD debe ser 0 — cuota 0 NO genera mora ni mueve estado
+        assert r["dpd"] == 0
+        assert r["estado"] == "al_dia"
+        assert r["mora_acumulada_cop"] == 0
