@@ -1,0 +1,112 @@
+[
+  {
+    "loanbook_id": "LB-2026-0031",
+    "cliente": "Rafael Antonio Ssawk Baldovi",
+    "cuota_inicial": 550000,
+    "fecha_cuota_inicial": "2026-04-23",
+    "cuota_periodica": 175000,
+    "num_cuotas": 39,
+    "monto_original_excel": 6825000,
+    "valor_total_calculado": 7375000
+  },
+  {
+    "loanbook_id": "LB-2026-0034",
+    "cliente": "ANTONI LEVIT RICO",
+    "cuota_inicial": 1460000,
+    "fecha_cuota_inicial": "2026-04-30",
+    "cuota_periodica": 210000,
+    "num_cuotas": 39,
+    "monto_original_excel": 8190000,
+    "valor_total_calculado": 9650000
+  },
+  {
+    "loanbook_id": "LB-2026-0035",
+    "cliente": "JORGE SUAREZ",
+    "cuota_inicial": 1460000,
+    "fecha_cuota_inicial": "2026-04-30",
+    "cuota_periodica": 149900,
+    "num_cuotas": 78,
+    "monto_original_excel": 11692200,
+    "valor_total_calculado": 13152200
+  },
+  {
+    "loanbook_id": "LB-2026-0036",
+    "cliente": "DIEGO MOISES ROSARIO ",
+    "cuota_inicial": 1460000,
+    "fecha_cuota_inicial": "2026-04-30",
+    "cuota_periodica": 210000,
+    "num_cuotas": 39,
+    "monto_original_excel": 8190000,
+    "valor_total_calculado": 9650000
+  },
+  {
+    "loanbook_id": "LB-2026-0037",
+    "cliente": "MANUEL DAVID QUIROZ",
+    "cuota_inicial": 1460000,
+    "fecha_cuota_inicial": "2026-04-30",
+    "cuota_periodica": 210000,
+    "num_cuotas": 39,
+    "monto_original_excel": 8190000,
+    "valor_total_calculado": 9650000
+  },
+  {
+    "loanbook_id": "LB-2026-0038",
+    "cliente": "MANUEL DAVID QUIROZ",
+    "cuota_inicial": 1460000,
+    "fecha_cuota_inicial": "2026-04-30",
+    "cuota_periodica": 179900,
+    "num_cuotas": 52,
+    "monto_original_excel": 9354800,
+    "valor_total_calculado": 10814800
+  },
+  {
+    "loanbook_id": "LB-2026-0039",
+    "cliente": "MANUEL DAVID QUIROZ",
+    "cuota_inicial": 1460000,
+    "fecha_cuota_inicial": "2026-04-30",
+    "cuota_periodica": 179900,
+    "num_cuotas": 52,
+    "monto_original_excel": 9354800,
+    "valor_total_calculado": 10814800
+  },
+  {
+    "loanbook_id": "LB-2026-0040",
+    "cliente": "EDUAR ROJAS",
+    "cuota_inicial": 1460000,
+    "fecha_cuota_inicial": "2026-04-30",
+    "cuota_periodica": 210000,
+    "num_cuotas": 39,
+    "monto_original_excel": 8190000,
+    "valor_total_calculado": 9650000
+  },
+  {
+    "loanbook_id": "LB-2026-0041",
+    "cliente": "LEONEL MEDRANO",
+    "cuota_inicial": 1460000,
+    "fecha_cuota_inicial": "2026-04-30",
+    "cuota_periodica": 210000,
+    "num_cuotas": 39,
+    "monto_original_excel": 8190000,
+    "valor_total_calculado": 9650000
+  },
+  {
+    "loanbook_id": "LB-2026-0042",
+    "cliente": "ROBINSON RONDON",
+    "cuota_inicial": 1460000,
+    "fecha_cuota_inicial": "2026-04-30",
+    "cuota_periodica": 210000,
+    "num_cuotas": 39,
+    "monto_original_excel": 8190000,
+    "valor_total_calculado": 9650000
+  },
+  {
+    "loanbook_id": "LB-2026-0043",
+    "cliente": "MARIMAR GARCIA",
+    "cuota_inicial": 1460000,
+    "fecha_cuota_inicial": "2026-04-30",
+    "cuota_periodica": 179900,
+    "num_cuotas": 52,
+    "monto_original_excel": 9354800,
+    "valor_total_calculado": 10814800
+  }
+]

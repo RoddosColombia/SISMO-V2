@@ -479,3 +479,151 @@ async def aplicar_patches(
         "errores":          errores,
         "cambios":          cambios_detalle,
     }
+
+
+# ─────────────────────── INYECTAR CUOTA INICIAL (DAY3 BLOQUE 2) ─────────────
+
+@router.post("/inyectar-cuota-inicial")
+async def inyectar_cuota_inicial(
+    body: dict,
+    dry_run: bool = Query(True, description="True (default) preview. False persiste."),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Inyecta cuota 0 (cuota inicial pactada) al cronograma de los LBs indicados.
+
+    Política RODDOS V2.1:
+      - Cuota 0 con monto = cuota_inicial pactada
+      - es_cuota_inicial = True
+      - monto_capital = cuota_inicial, monto_interes = 0
+      - estado = pendiente (hasta que el operador la cobre)
+      - Suma a valor_total: valor_total = cuota_inicial + Σ cuotas regulares
+
+    Body esperado:
+        {
+          "loanbooks": [
+            {
+              "loanbook_id":         "LB-2026-0034",
+              "cuota_inicial":       1460000,
+              "fecha_cuota_inicial": "2026-04-30"
+            },
+            ...
+          ]
+        }
+
+    Idempotente: si el LB ya tiene cuota 0 (es_cuota_inicial=True),
+    NO la duplica. Sólo recalcula valor_total si difiere.
+    """
+    items = body.get("loanbooks") or []
+    if not items:
+        return {"error": "body debe incluir 'loanbooks' (lista)"}
+
+    total = len(items)
+    inyectados = 0
+    ya_tenian = 0
+    no_encontrados = []
+    errores = []
+    cambios = []
+
+    for it in items:
+        loanbook_id = it.get("loanbook_id")
+        cuota_inicial = int(it.get("cuota_inicial") or 0)
+        fecha_ci = it.get("fecha_cuota_inicial")
+
+        if not loanbook_id or cuota_inicial <= 0:
+            errores.append({"item": it, "error": "loanbook_id o cuota_inicial faltan"})
+            continue
+
+        lb = await db.loanbook.find_one({"loanbook_id": loanbook_id})
+        if lb is None:
+            no_encontrados.append(loanbook_id)
+            continue
+
+        cuotas = lb.get("cuotas") or []
+
+        # ¿Ya tiene cuota 0?
+        tiene_cuota_0 = any(
+            (c.get("es_cuota_inicial") is True) or (int(c.get("numero") or -1) == 0)
+            for c in cuotas
+        )
+
+        if tiene_cuota_0:
+            # Verificar si valor_total está bien o necesita recálculo
+            valor_total_calc = sum(int(c.get("monto") or 0) for c in cuotas)
+            valor_total_actual = int(lb.get("valor_total") or 0)
+            if valor_total_actual == valor_total_calc:
+                ya_tenian += 1
+                continue
+            # Solo actualizar valor_total
+            cambios.append({
+                "loanbook_id": loanbook_id,
+                "accion":      "solo_recalcular_valor_total",
+                "antes":       valor_total_actual,
+                "despues":     valor_total_calc,
+            })
+            if not dry_run:
+                await db.loanbook.update_one(
+                    {"loanbook_id": loanbook_id},
+                    {"$set": {"valor_total": valor_total_calc}},
+                )
+            ya_tenian += 1
+            continue
+
+        # No tiene cuota 0 — inyectarla
+        cuota_0 = {
+            "numero":           0,
+            "fecha":            fecha_ci or lb.get("fecha_entrega"),
+            "monto":            cuota_inicial,
+            "monto_capital":    cuota_inicial,
+            "monto_interes":    0,
+            "estado":           "pendiente",
+            "monto_pagado":     0,
+            "fecha_pago":       None,
+            "mora_acumulada":   0,
+            "anzi_pagado":      0,
+            "mora_pagada":      0,
+            "es_cuota_inicial": True,
+        }
+
+        cuotas_nuevas = [cuota_0] + cuotas
+        valor_total_nuevo = sum(int(c.get("monto") or 0) for c in cuotas_nuevas)
+        valor_total_anterior = int(lb.get("valor_total") or 0)
+
+        cambios.append({
+            "loanbook_id":              loanbook_id,
+            "cliente":                  (lb.get("cliente") or {}).get("nombre")
+                                        or lb.get("cliente_nombre") or "?",
+            "accion":                   "inyectar_cuota_0",
+            "cuota_inicial":            cuota_inicial,
+            "fecha_cuota_inicial":      cuota_0["fecha"],
+            "valor_total_antes":        valor_total_anterior,
+            "valor_total_despues":      valor_total_nuevo,
+            "cuotas_total_antes":       len(cuotas),
+            "cuotas_total_despues":     len(cuotas_nuevas),
+        })
+
+        if not dry_run:
+            await db.loanbook.update_one(
+                {"loanbook_id": loanbook_id},
+                {
+                    "$set": {
+                        "cuotas":               cuotas_nuevas,
+                        "valor_total":          valor_total_nuevo,
+                        "cuota_inicial":        cuota_inicial,
+                        "saldo_pendiente":      max(0, valor_total_nuevo - int(lb.get("total_pagado") or 0)),
+                        "inyectado_cuota_0_at": now_iso_bogota(),
+                    }
+                },
+            )
+
+        inyectados += 1
+
+    return {
+        "dry_run":         dry_run,
+        "fecha_analisis":  now_iso_bogota(),
+        "total":           total,
+        "inyectados":      inyectados,
+        "ya_tenian":       ya_tenian,
+        "no_encontrados":  no_encontrados,
+        "errores":         errores,
+        "cambios":         cambios,
+    }

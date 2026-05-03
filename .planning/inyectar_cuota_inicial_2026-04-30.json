@@ -1,0 +1,59 @@
+{
+  "loanbooks": [
+    {
+      "loanbook_id": "LB-2026-0031",
+      "cuota_inicial": 550000,
+      "fecha_cuota_inicial": "2026-04-23"
+    },
+    {
+      "loanbook_id": "LB-2026-0034",
+      "cuota_inicial": 1460000,
+      "fecha_cuota_inicial": "2026-04-30"
+    },
+    {
+      "loanbook_id": "LB-2026-0035",
+      "cuota_inicial": 1460000,
+      "fecha_cuota_inicial": "2026-04-30"
+    },
+    {
+      "loanbook_id": "LB-2026-0036",
+      "cuota_inicial": 1460000,
+      "fecha_cuota_inicial": "2026-04-30"
+    },
+    {
+      "loanbook_id": "LB-2026-0037",
+      "cuota_inicial": 1460000,
+      "fecha_cuota_inicial": "2026-04-30"
+    },
+    {
+      "loanbook_id": "LB-2026-0038",
+      "cuota_inicial": 1460000,
+      "fecha_cuota_inicial": "2026-04-30"
+    },
+    {
+      "loanbook_id": "LB-2026-0039",
+      "cuota_inicial": 1460000,
+      "fecha_cuota_inicial": "2026-04-30"
+    },
+    {
+      "loanbook_id": "LB-2026-0040",
+      "cuota_inicial": 1460000,
+      "fecha_cuota_inicial": "2026-04-30"
+    },
+    {
+      "loanbook_id": "LB-2026-0041",
+      "cuota_inicial": 1460000,
+      "fecha_cuota_inicial": "2026-04-30"
+    },
+    {
+      "loanbook_id": "LB-2026-0042",
+      "cuota_inicial": 1460000,
+      "fecha_cuota_inicial": "2026-04-30"
+    },
+    {
+      "loanbook_id": "LB-2026-0043",
+      "cuota_inicial": 1460000,
+      "fecha_cuota_inicial": "2026-04-30"
+    }
+  ]
+}
