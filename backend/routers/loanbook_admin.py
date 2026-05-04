@@ -814,3 +814,219 @@ async def regenerar_cronograma_lb(
             for c in cronograma_nuevo[:3] + cronograma_nuevo[-3:]
         ],
     }
+
+
+# ───────── MARCAR CUOTAS INICIALES PAGADAS (DAY3 B5) ─────────
+
+@router.post("/marcar-cuotas-iniciales-pagadas")
+async def marcar_cuotas_iniciales_pagadas(
+    body: dict,
+    dry_run: bool = Query(True, description="True (default) preview. False persiste."),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Marca cuotas iniciales como PAGADAS para LBs cuya CI fue cobrada antes de entrega.
+
+    Política RODDOS confirmada 4-may-2026:
+      - Norma: todo crédito tiene cuota_inicial > 0, cobrada ANTES de la entrega
+        (para facturar y matricular). Excepción comercial: algunos LBs sin CI.
+      - Cuota 0 en cronograma debe nacer como pagada cuando CI > 0.
+
+    Body esperado (la fuente de verdad es Excel oficial loanbook_roddos_<fecha>.xlsx):
+        {
+          "loanbooks": [
+            {
+              "loanbook_id":    "LB-2026-0001",
+              "cuota_inicial":  1460000,                              # del Excel col cuota_inicial
+              "fecha_pago":     "2026-04-30",                         # típicamente fecha_entrega
+              "metodo_pago":    "cuota_inicial_pre_entrega",          # default si no se envía
+              "referencia":     "Wava-XXXX | Bancolombia | Efectivo"  # opcional
+            },
+            ...
+          ]
+        }
+
+    Por cada LB:
+      1. Si BD no tiene `cuota_inicial` top-level o difiere → $set al valor del body.
+      2. Si cuotas[] no tiene cuota 0 → la inserta como pagada al inicio.
+      3. Si cuotas[] tiene cuota 0 pendiente → la marca pagada con monto_pagado=cuota_inicial.
+      4. Si cuotas[] tiene cuota 0 ya pagada → skip (idempotente).
+      5. Recalcula valor_total = Σ cuotas[].monto.
+      6. Recalcula derivados via motor.derivar_estado.
+
+    Idempotente. Aborta el cambio puntual si la cuota 0 existente tiene monto_pagado > 0
+    distinto al cuota_inicial del body (sospechoso de inconsistencia operativa).
+    """
+    from services.loanbook.motor import derivar_estado
+    from datetime import date
+
+    items = body.get("loanbooks") or []
+    if not items:
+        return {"error": "body debe incluir 'loanbooks' (lista)"}
+
+    total = len(items)
+    procesados = 0
+    ya_pagadas = 0
+    nuevas_cuotas_0 = 0
+    actualizadas_cuota_0 = 0
+    sin_cambio_ci_top = 0
+    sin_ci_omitidos = 0
+    no_encontrados: list[str] = []
+    errores: list[dict] = []
+    cambios: list[dict] = []
+    sigma_delta_total_pagado = 0
+    sigma_delta_valor_total = 0
+    sigma_delta_saldo_pendiente = 0
+
+    for it in items:
+        lb_id = it.get("loanbook_id")
+        ci = int(it.get("cuota_inicial") or 0)
+        fecha_pago_str = it.get("fecha_pago")
+        metodo = (it.get("metodo_pago") or "cuota_inicial_pre_entrega").lower()
+        referencia = it.get("referencia") or ""
+
+        if not lb_id:
+            errores.append({"item": it, "error": "loanbook_id faltante"})
+            continue
+        if ci <= 0:
+            sin_ci_omitidos += 1
+            continue
+
+        try:
+            fecha_pago = date.fromisoformat(fecha_pago_str) if fecha_pago_str else None
+        except ValueError:
+            errores.append({"loanbook_id": lb_id, "error": f"fecha_pago inválida: {fecha_pago_str}"})
+            continue
+
+        lb = await db.loanbook.find_one({"loanbook_id": lb_id})
+        if lb is None:
+            no_encontrados.append(lb_id)
+            continue
+
+        if fecha_pago is None:
+            fent = lb.get("fecha_entrega")
+            try:
+                fecha_pago = date.fromisoformat(fent) if fent else None
+            except ValueError:
+                fecha_pago = None
+            if fecha_pago is None:
+                errores.append({"loanbook_id": lb_id, "error": "sin fecha_pago ni fecha_entrega válida"})
+                continue
+
+        cuotas = list(lb.get("cuotas") or [])
+        idx_c0 = next(
+            (i for i, c in enumerate(cuotas)
+             if c.get("es_cuota_inicial") is True or int(c.get("numero") or -1) == 0),
+            None,
+        )
+
+        accion = ""
+        if idx_c0 is None:
+            cuota_0 = {
+                "numero":           0,
+                "fecha":            fecha_pago.isoformat(),
+                "monto":            ci,
+                "monto_capital":    ci,
+                "monto_interes":    0,
+                "estado":           "pagada",
+                "monto_pagado":     ci,
+                "fecha_pago":       fecha_pago.isoformat(),
+                "metodo_pago":      metodo,
+                "referencia":       referencia,
+                "mora_acumulada":   0,
+                "anzi_pagado":      0,
+                "mora_pagada":      0,
+                "es_cuota_inicial": True,
+            }
+            cuotas = [cuota_0] + cuotas
+            accion = "crear_cuota_0_pagada"
+            nuevas_cuotas_0 += 1
+        else:
+            c0 = dict(cuotas[idx_c0])
+            ya_pagada = c0.get("estado") == "pagada" and int(c0.get("monto_pagado") or 0) >= ci
+            if ya_pagada:
+                ya_pagadas += 1
+                continue
+            mp_actual = int(c0.get("monto_pagado") or 0)
+            if mp_actual > 0 and mp_actual != ci:
+                errores.append({
+                    "loanbook_id": lb_id,
+                    "error": f"cuota 0 ya tiene monto_pagado={mp_actual} != cuota_inicial={ci}; revisar manualmente",
+                })
+                continue
+            c0["estado"]       = "pagada"
+            c0["monto_pagado"] = ci
+            c0["monto"]        = ci
+            c0["monto_capital"] = ci
+            c0["monto_interes"] = 0
+            c0["fecha_pago"]   = fecha_pago.isoformat()
+            c0["metodo_pago"]  = metodo
+            c0["es_cuota_inicial"] = True
+            if referencia:
+                c0["referencia"] = referencia
+            cuotas[idx_c0] = c0
+            accion = "marcar_cuota_0_pagada"
+            actualizadas_cuota_0 += 1
+
+        valor_total_nuevo = sum(int(c.get("monto") or 0) for c in cuotas)
+        ci_top_actual = int(lb.get("cuota_inicial") or 0)
+        ci_top_change = ci_top_actual != ci
+
+        lb_proyectado = dict(lb)
+        lb_proyectado.pop("_id", None)
+        lb_proyectado["cuotas"] = cuotas
+        lb_proyectado["cuota_inicial"] = ci
+        lb_proyectado["valor_total"] = valor_total_nuevo
+        lb_proyectado_derivado = derivar_estado(lb_proyectado, hoy=fecha_pago)
+
+        delta_tp = int(lb_proyectado_derivado.get("total_pagado") or 0) - int(lb.get("total_pagado") or 0)
+        delta_vt = valor_total_nuevo - int(lb.get("valor_total") or 0)
+        delta_sp = int(lb_proyectado_derivado.get("saldo_pendiente") or 0) - int(lb.get("saldo_pendiente") or 0)
+        sigma_delta_total_pagado += delta_tp
+        sigma_delta_valor_total += delta_vt
+        sigma_delta_saldo_pendiente += delta_sp
+
+        if not ci_top_change:
+            sin_cambio_ci_top += 1
+
+        cambios.append({
+            "loanbook_id":      lb_id,
+            "cliente":          (lb.get("cliente") or {}).get("nombre")
+                                or lb.get("cliente_nombre") or "?",
+            "accion":           accion,
+            "cuota_inicial":    ci,
+            "fecha_pago":       fecha_pago.isoformat(),
+            "metodo_pago":      metodo,
+            "ci_top_antes":     ci_top_actual,
+            "valor_total":      {"antes": int(lb.get("valor_total") or 0), "despues": valor_total_nuevo},
+            "total_pagado":     {"antes": int(lb.get("total_pagado") or 0),
+                                 "despues": int(lb_proyectado_derivado.get("total_pagado") or 0)},
+            "saldo_pendiente":  {"antes": int(lb.get("saldo_pendiente") or 0),
+                                 "despues": int(lb_proyectado_derivado.get("saldo_pendiente") or 0)},
+            "estado":           {"antes": lb.get("estado"), "despues": lb_proyectado_derivado.get("estado")},
+        })
+
+        if not dry_run:
+            persist = {k: v for k, v in lb_proyectado_derivado.items() if k != "_id"}
+            persist["updated_at"] = now_iso_bogota()
+            await db.loanbook.update_one(
+                {"loanbook_id": lb_id},
+                {"$set": persist},
+            )
+        procesados += 1
+
+    return {
+        "dry_run":                dry_run,
+        "fecha_analisis":         now_iso_bogota(),
+        "total_input":            total,
+        "procesados":             procesados,
+        "ya_pagadas":             ya_pagadas,
+        "nuevas_cuotas_0":        nuevas_cuotas_0,
+        "actualizadas_cuota_0":   actualizadas_cuota_0,
+        "sin_ci_omitidos":        sin_ci_omitidos,
+        "no_encontrados":         no_encontrados,
+        "errores":                errores,
+        "delta_total_pagado":     sigma_delta_total_pagado,
+        "delta_valor_total":      sigma_delta_valor_total,
+        "delta_saldo_pendiente":  sigma_delta_saldo_pendiente,
+        "cambios":                cambios,
+    }

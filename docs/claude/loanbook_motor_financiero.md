@@ -1,8 +1,25 @@
 # Motor Financiero del Loanbook — RODDOS V2.1
 
-**Fuente única de verdad:** `backend/services/loanbook/motor.py`
+**Fuente única de verdad — código:** `backend/services/loanbook/motor.py`
 
-**Estado al 4 de mayo de 2026:** 37 tests verdes. Deployado en producción.
+**Fuente única de verdad — datos:** `loanbook_roddos_<fecha>.xlsx` que entregue Andrés.
+- NUNCA usar valores en memoria ni cálculos previos para créditos, montos, cuotas iniciales, fechas, planes.
+- Antes de cualquier cambio masivo: leer el Excel con openpyxl, hacer dry-run, mostrar diff Excel vs aplicar, esperar OK.
+- Si el Excel no tiene un dato → preguntar a Andrés antes de actuar.
+- Esta regla tiene prioridad sobre cualquier otra instrucción.
+
+## Política de cuota inicial (RODDOS, confirmada 4-may-2026)
+
+- **Norma:** todo crédito tiene `cuota_inicial > 0`. Se cobra ANTES de la entrega para
+  poder facturar y matricular. La entrega ocurre 2-3 días después (cuando el organismo
+  de tránsito entrega placas).
+- **Excepción comercial:** algunos créditos (ej. ciertas Sport 100 recientes) se vendieron
+  SIN cuota inicial para acelerar salida.
+- **Cuota 0 en cronograma cuando CI > 0:** debe nacer como `estado="pagada"`,
+  `monto_pagado=cuota_inicial`, `fecha_pago≈fecha_entrega`, `metodo_pago="cuota_inicial_pre_entrega"`.
+- **Primera cuota regular:** miércoles de la semana siguiente a la entrega.
+
+**Estado al 4 de mayo de 2026:** 43 tests verdes. Deployado en producción.
 
 ## API pública (4 funciones)
 

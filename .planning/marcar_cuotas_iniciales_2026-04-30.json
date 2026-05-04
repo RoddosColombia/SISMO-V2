@@ -1,0 +1,212 @@
+{
+  "fuente": "loanbook_roddos_2026-04-30.xlsx",
+  "generado": "Day3 B5 — auditoria completa",
+  "total_lbs": 34,
+  "total_ci": 47830000,
+  "loanbooks": [
+    {
+      "loanbook_id": "LB-2026-0001",
+      "cuota_inicial": 1460000,
+      "fecha_pago": "2026-03-05",
+      "metodo_pago": "cuota_inicial_pre_entrega"
+    },
+    {
+      "loanbook_id": "LB-2026-0002",
+      "cuota_inicial": 1160000,
+      "fecha_pago": "2026-03-05",
+      "metodo_pago": "cuota_inicial_pre_entrega"
+    },
+    {
+      "loanbook_id": "LB-2026-0003",
+      "cuota_inicial": 1460000,
+      "fecha_pago": "2026-03-05",
+      "metodo_pago": "cuota_inicial_pre_entrega"
+    },
+    {
+      "loanbook_id": "LB-2026-0004",
+      "cuota_inicial": 1460000,
+      "fecha_pago": "2026-03-05",
+      "metodo_pago": "cuota_inicial_pre_entrega"
+    },
+    {
+      "loanbook_id": "LB-2026-0005",
+      "cuota_inicial": 1460000,
+      "fecha_pago": "2026-03-05",
+      "metodo_pago": "cuota_inicial_pre_entrega"
+    },
+    {
+      "loanbook_id": "LB-2026-0006",
+      "cuota_inicial": 1460000,
+      "fecha_pago": "2026-03-10",
+      "metodo_pago": "cuota_inicial_pre_entrega"
+    },
+    {
+      "loanbook_id": "LB-2026-0007",
+      "cuota_inicial": 1160000,
+      "fecha_pago": "2026-03-24",
+      "metodo_pago": "cuota_inicial_pre_entrega"
+    },
+    {
+      "loanbook_id": "LB-2026-0008",
+      "cuota_inicial": 1460000,
+      "fecha_pago": "2026-03-24",
+      "metodo_pago": "cuota_inicial_pre_entrega"
+    },
+    {
+      "loanbook_id": "LB-2026-0009",
+      "cuota_inicial": 1160000,
+      "fecha_pago": "2026-03-10",
+      "metodo_pago": "cuota_inicial_pre_entrega"
+    },
+    {
+      "loanbook_id": "LB-2026-0010",
+      "cuota_inicial": 1460000,
+      "fecha_pago": "2026-03-19",
+      "metodo_pago": "cuota_inicial_pre_entrega"
+    },
+    {
+      "loanbook_id": "LB-2026-0011",
+      "cuota_inicial": 1460000,
+      "fecha_pago": "2026-03-25",
+      "metodo_pago": "cuota_inicial_pre_entrega"
+    },
+    {
+      "loanbook_id": "LB-2026-0012",
+      "cuota_inicial": 1460000,
+      "fecha_pago": "2026-03-21",
+      "metodo_pago": "cuota_inicial_pre_entrega"
+    },
+    {
+      "loanbook_id": "LB-2026-0013",
+      "cuota_inicial": 1460000,
+      "fecha_pago": "2026-03-20",
+      "metodo_pago": "cuota_inicial_pre_entrega"
+    },
+    {
+      "loanbook_id": "LB-2026-0014",
+      "cuota_inicial": 1460000,
+      "fecha_pago": "2026-03-27",
+      "metodo_pago": "cuota_inicial_pre_entrega"
+    },
+    {
+      "loanbook_id": "LB-2026-0015",
+      "cuota_inicial": 1460000,
+      "fecha_pago": "2026-03-27",
+      "metodo_pago": "cuota_inicial_pre_entrega"
+    },
+    {
+      "loanbook_id": "LB-2026-0016",
+      "cuota_inicial": 1460000,
+      "fecha_pago": "2026-03-27",
+      "metodo_pago": "cuota_inicial_pre_entrega"
+    },
+    {
+      "loanbook_id": "LB-2026-0017",
+      "cuota_inicial": 1460000,
+      "fecha_pago": "2026-03-28",
+      "metodo_pago": "cuota_inicial_pre_entrega"
+    },
+    {
+      "loanbook_id": "LB-2026-0018",
+      "cuota_inicial": 1460000,
+      "fecha_pago": "2026-03-28",
+      "metodo_pago": "cuota_inicial_pre_entrega"
+    },
+    {
+      "loanbook_id": "LB-2026-0019",
+      "cuota_inicial": 1460000,
+      "fecha_pago": "2026-04-08",
+      "metodo_pago": "cuota_inicial_pre_entrega"
+    },
+    {
+      "loanbook_id": "LB-2026-0020",
+      "cuota_inicial": 1460000,
+      "fecha_pago": "2026-04-10",
+      "metodo_pago": "cuota_inicial_pre_entrega"
+    },
+    {
+      "loanbook_id": "LB-2026-0021",
+      "cuota_inicial": 1460000,
+      "fecha_pago": "2026-04-10",
+      "metodo_pago": "cuota_inicial_pre_entrega"
+    },
+    {
+      "loanbook_id": "LB-2026-0022",
+      "cuota_inicial": 1460000,
+      "fecha_pago": "2026-04-10",
+      "metodo_pago": "cuota_inicial_pre_entrega"
+    },
+    {
+      "loanbook_id": "LB-2026-0023",
+      "cuota_inicial": 1460000,
+      "fecha_pago": "2026-04-10",
+      "metodo_pago": "cuota_inicial_pre_entrega"
+    },
+    {
+      "loanbook_id": "LB-2026-0031",
+      "cuota_inicial": 550000,
+      "fecha_pago": "2026-04-23",
+      "metodo_pago": "cuota_inicial_pre_entrega"
+    },
+    {
+      "loanbook_id": "LB-2026-0034",
+      "cuota_inicial": 1460000,
+      "fecha_pago": "2026-04-30",
+      "metodo_pago": "cuota_inicial_pre_entrega"
+    },
+    {
+      "loanbook_id": "LB-2026-0035",
+      "cuota_inicial": 1460000,
+      "fecha_pago": "2026-04-30",
+      "metodo_pago": "cuota_inicial_pre_entrega"
+    },
+    {
+      "loanbook_id": "LB-2026-0036",
+      "cuota_inicial": 1460000,
+      "fecha_pago": "2026-04-30",
+      "metodo_pago": "cuota_inicial_pre_entrega"
+    },
+    {
+      "loanbook_id": "LB-2026-0037",
+      "cuota_inicial": 1460000,
+      "fecha_pago": "2026-04-30",
+      "metodo_pago": "cuota_inicial_pre_entrega"
+    },
+    {
+      "loanbook_id": "LB-2026-0038",
+      "cuota_inicial": 1460000,
+      "fecha_pago": "2026-04-30",
+      "metodo_pago": "cuota_inicial_pre_entrega"
+    },
+    {
+      "loanbook_id": "LB-2026-0039",
+      "cuota_inicial": 1460000,
+      "fecha_pago": "2026-04-30",
+      "metodo_pago": "cuota_inicial_pre_entrega"
+    },
+    {
+      "loanbook_id": "LB-2026-0040",
+      "cuota_inicial": 1460000,
+      "fecha_pago": "2026-04-30",
+      "metodo_pago": "cuota_inicial_pre_entrega"
+    },
+    {
+      "loanbook_id": "LB-2026-0041",
+      "cuota_inicial": 1460000,
+      "fecha_pago": "2026-04-30",
+      "metodo_pago": "cuota_inicial_pre_entrega"
+    },
+    {
+      "loanbook_id": "LB-2026-0042",
+      "cuota_inicial": 1460000,
+      "fecha_pago": "2026-04-30",
+      "metodo_pago": "cuota_inicial_pre_entrega"
+    },
+    {
+      "loanbook_id": "LB-2026-0043",
+      "cuota_inicial": 1460000,
+      "fecha_pago": "2026-04-30",
+      "metodo_pago": "cuota_inicial_pre_entrega"
+    }
+  ]
+}
