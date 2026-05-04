@@ -145,6 +145,124 @@ async def loanbook_stats(db: AsyncIOMotorDatabase = Depends(get_db)):
     }
 
 
+# ───────────────── COBRANZA SEMANAL — DAY4 B6.1 ─────────────────────────────
+
+@router.get("/cobranza-semanal")
+async def cobranza_semanal(db: AsyncIOMotorDatabase = Depends(get_db)):
+    """Checklist operativa de cobranza semanal (Liz / Iván).
+
+    Vista única que agrupa para los próximos 7 días:
+      - Tarjeta superior: objetivo semanal, recaudado hoy/semana, % avance
+      - Checklist: cuotas que vencen en [hoy, hoy+7d] ordenadas por fecha
+      - Mora: clientes con DPD > 0 ordenados por DPD desc
+
+    Cada item incluye:
+      loanbook_id, cliente_nombre, cliente_telefono, cuota_numero,
+      es_cuota_inicial, monto, fecha_vencimiento, vencida, dias_diff,
+      dpd, estado, saldo_pendiente.
+
+    El frontend usa este endpoint como ÚNICA fuente para la página
+    /cartera/cobranza-semanal. Cualquier marca de pago va a PUT /pago.
+
+    Política RODDOS:
+      - Excluye estados terminales (saldado, castigado).
+      - pendiente_entrega NO entra al checklist (la moto aún no se entrega).
+      - Cuota 0 (cuota inicial) entra al checklist sólo si está pendiente —
+        se cobra antes de la entrega, política V2.1.
+    """
+    today = today_bogota()
+    seven_days = today + timedelta(days=7)
+    week_ago = today - timedelta(days=7)
+
+    cursor = db.loanbook.find({
+        "estado": {"$nin": ["saldado", "castigado", "pendiente_entrega"]},
+    })
+    items = await cursor.to_list(length=500)
+
+    semana_objetivo = 0
+    recaudado_hoy = 0
+    recaudado_semana = 0
+    checklist: list[dict] = []
+    en_mora: list[dict] = []
+
+    for lb in items:
+        prox = _motor_proxima_cuota(lb, hoy=today)
+        if prox is None:
+            continue
+
+        cliente_block = lb.get("cliente") or {}
+        item = {
+            "loanbook_id":      lb.get("loanbook_id"),
+            "cliente_nombre":   lb.get("cliente_nombre") or cliente_block.get("nombre") or "?",
+            "cliente_telefono": lb.get("cliente_telefono") or cliente_block.get("telefono"),
+            "cuota_numero":     prox["numero"],
+            "es_cuota_inicial": prox.get("es_cuota_inicial", False),
+            "monto":            prox["monto"],
+            "monto_capital":    prox.get("monto_capital", 0),
+            "monto_interes":    prox.get("monto_interes", 0),
+            "fecha_vencimiento": prox["fecha"],
+            "vencida":          prox.get("vencida", False),
+            "dias_diff":        prox.get("dias_diff", 0),
+            "dpd":              int(lb.get("dpd") or 0),
+            "estado":           lb.get("estado"),
+            "saldo_pendiente":  int(lb.get("saldo_pendiente") or 0),
+            "vin":              lb.get("vin"),
+            "modelo":           lb.get("modelo") or lb.get("moto_modelo") or lb.get("producto"),
+        }
+
+        # Checklist: cuota próxima cae en ventana [hoy, hoy+7d]
+        try:
+            fecha_prox = date.fromisoformat(prox["fecha"])
+        except (ValueError, TypeError):
+            fecha_prox = None
+
+        if fecha_prox is not None and today <= fecha_prox <= seven_days:
+            semana_objetivo += prox["monto"]
+            checklist.append(item)
+
+        # En mora: DPD > 0 (independiente de cuota próxima)
+        if int(lb.get("dpd") or 0) > 0:
+            en_mora.append(item)
+
+    # Recaudado hoy / semana: suma monto_pagado de cuotas con fecha_pago en rango
+    for lb in items:
+        for c in lb.get("cuotas") or []:
+            fp_str = c.get("fecha_pago")
+            if not fp_str:
+                continue
+            try:
+                fp = date.fromisoformat(fp_str)
+            except (ValueError, TypeError):
+                continue
+            mp = int(c.get("monto_pagado") or 0)
+            if mp <= 0:
+                continue
+            if fp == today:
+                recaudado_hoy += mp
+            if week_ago <= fp <= today:
+                recaudado_semana += mp
+
+    porcentaje = round((recaudado_semana / semana_objetivo) * 100, 1) if semana_objetivo > 0 else 0.0
+
+    checklist.sort(key=lambda x: (x["fecha_vencimiento"], x.get("loanbook_id") or ""))
+    en_mora.sort(key=lambda x: x["dpd"], reverse=True)
+
+    return {
+        "fecha_corte":         today.isoformat(),
+        "ventana_dias":        7,
+        "ventana_desde":       today.isoformat(),
+        "ventana_hasta":       seven_days.isoformat(),
+        "semana_objetivo":     semana_objetivo,
+        "recaudado_hoy":       recaudado_hoy,
+        "recaudado_semana":    recaudado_semana,
+        "porcentaje":          porcentaje,
+        "clientes_por_pagar":  len(checklist),
+        "clientes_en_mora":    len(en_mora),
+        "checklist":           checklist,
+        "en_mora":             en_mora,
+    }
+
+
 @router.get("/auditoria")
 async def get_auditoria(
     db: AsyncIOMotorDatabase = Depends(get_db),
