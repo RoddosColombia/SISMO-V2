@@ -193,9 +193,28 @@ El endpoint:
 - Aborta si detecta pagos huérfanos (cuotas pagadas que no caben en el nuevo cronograma)
 - NO recalcula derivados — eso lo hace `/motor/migrar` en una pasada posterior
 
+## Endpoints canónicos (DAY3 B4)
+
+| Endpoint | Función | Motor |
+|---|---|---|
+| `PUT /api/loanbook/{id}/entrega` | Activación crédito + cronograma | `motor.crear_cronograma` |
+| `PUT /api/loanbook/{id}/pago` | Pago de cuota regular (waterfall §4.1) | `motor.aplicar_pago` |
+| `PUT /api/loanbook/{id}/pago/inicial` | **Nuevo.** Pago cuota 0 (sin waterfall) | `motor.aplicar_pago` cuota_numero=0 |
+
+Endpoints DEPRECATED pero funcionales:
+- `POST /api/loanbook/{id}/registrar-pago` → migrar a `PUT /pago`
+- `POST /api/loanbook/{id}/registrar-pago-inicial` → migrar a `PUT /pago/inicial`
+
+Cuando un PUT /pago se ejecuta, el motor:
+1. Valida `fecha_pago` no futura (ValueError R-07)
+2. Aplica waterfall ANZI 2% → mora → interés → capital → abono anticipado
+3. Si `cuota_numero=0` → bypass waterfall (cuota inicial RODDOS V2.1)
+4. Recalcula derivados (saldo, dpd, estado, sub_bucket) automáticamente
+5. Persiste loanbook completo en BD
+6. Emite evento `pago.cuota.canonico` o `pago.cuota.inicial.canonico`
+
 ## Próximos pasos del refactor
 
-- B4: Refactor `routers/loanbook.py` PUT /pago y /entrega → `motor.aplicar_pago`.
 - B5: Cadena Mercately → OCR → match → `motor.aplicar_pago` end-to-end.
 - B6: Frontend ajustes mínimos (cuota 0 visible en detalle de LB).
 - B2.8 (bug menor): excluir cuota 0 del conteo `cuotas_vencidas` en `derivar_estado`
@@ -211,3 +230,4 @@ El endpoint:
 - **2026-05-04** Día 3 B2 — Patches `valor_total = monto + cuota_inicial` aplicados a 11 LBs (+$15.15M).
 - **2026-05-04** Día 3 B2.7 — `/motor/migrar` recalcula derivados: 42 verdes / 0 amarillas / 1 roja.
 - **2026-05-04** Día 3 B3 — LB-30 cronograma regenerado P52S. Cartera limpia.
+- **2026-05-04** Día 3 B4 — PUT /pago, /entrega, /pago/inicial usan motor canónico. Endpoints viejos deprecated.

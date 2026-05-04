@@ -38,6 +38,11 @@ from core.loanbook_model import (
     calcular_mora,
     estado_from_dpd,
 )
+# Motor canónico (DAY3 B4) — fuente única de verdad para pagos y cronogramas
+from services.loanbook.motor import (
+    aplicar_pago as _motor_aplicar_pago,
+    crear_cronograma as _motor_crear_cronograma,
+)
 
 logger = logging.getLogger("routers.loanbook")
 
@@ -807,13 +812,15 @@ async def _publish_event(db: AsyncIOMotorDatabase, event_type: str, source: str,
     })
 
 
-@router.post("/{identifier}/registrar-pago")
+@router.post("/{identifier}/registrar-pago", deprecated=True)
 async def registrar_pago_manual(
     identifier: str,
     body: RegistrarPagoBody,
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    """Registra un pago manual de cuota. Aplica waterfall.
+    """[DEPRECATED — usar PUT /api/loanbook/{id}/pago]
+
+    Registra un pago manual de cuota. Aplica waterfall.
 
     Flujo:
       1. MongoDB update inmediato (no bloquea si Alegra falla)
@@ -999,13 +1006,20 @@ async def registrar_pago_manual(
     }
 
 
-@router.post("/{identifier}/registrar-pago-inicial")
+@router.post("/{identifier}/registrar-pago-inicial", deprecated=True)
 async def registrar_pago_inicial(
     identifier: str,
     body: RegistrarPagoInicialBody,
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    """Registra la cuota inicial (solo válido en pendiente_entrega)."""
+    """[DEPRECATED — usar PUT /api/loanbook/{id}/pago/inicial]
+
+    Registra la cuota inicial (legacy: usa flags top-level, NO toca cronograma).
+    Mantiene comportamiento legacy para no romper integraciones existentes.
+    Para flujos nuevos usar PUT /pago/inicial que aplica motor.aplicar_pago
+    sobre la cuota 0 del cronograma (RODDOS V2.1).
+    """
+    logger.warning("DEPRECATED endpoint POST /registrar-pago-inicial usado para %s — migrar a PUT /pago/inicial", identifier)
     lb = await _find_lb_by_identifier(db, identifier)
     if lb.get("estado") != "pendiente_entrega":
         raise HTTPException(
@@ -1304,10 +1318,16 @@ async def put_entrega(
 ):
     """Activación canónica: pendiente_entrega → activo + cronograma.
 
+    Delega a `motor.crear_cronograma` (DAY3 B4) — fuente única de verdad para
+    desglose canónico capital/interés por cuota.
+
     Validación estricta:
       - 422 si el crédito no está en pendiente_entrega
       - 422 si fecha_primera_cuota no es miércoles
       - 422 si num_cuotas no está configurado
+
+    Si el LB tiene `cuota_inicial > 0` pactada, el motor inyecta una cuota 0
+    al inicio del cronograma con esa cuota inicial (RODDOS V2.1).
     """
     lb = await _find_lb_by_identifier(db, identifier)
 
@@ -1337,7 +1357,7 @@ async def put_entrega(
 
     modalidad = lb.get("modalidad", "semanal")
     num_cuotas = lb.get("num_cuotas", 0) or 0
-    cuota_monto = lb.get("cuota_monto", 0) or 0
+    cuota_monto = lb.get("cuota_monto") or lb.get("cuota_periodica") or 0
 
     if num_cuotas <= 0:
         raise HTTPException(
@@ -1345,76 +1365,71 @@ async def put_entrega(
             detail="num_cuotas no configurado. Use PUT /{id} para establecer plan_codigo primero.",
         )
 
-    fechas = calcular_cronograma(
-        fecha_entrega=fecha_entrega,
-        modalidad=modalidad,
-        num_cuotas=num_cuotas,
-        fecha_primer_pago=fpc,
-        dia_cobro_especial=body.dia_cobro_especial,
-    )
-
-    cuotas = [
-        {"numero": i + 1, "monto": cuota_monto, "estado": "pendiente",
-         "fecha": f.isoformat(), "fecha_pago": None, "mora_acumulada": 0}
-        for i, f in enumerate(fechas)
-    ]
-
-    # Obtener capital_plan de catalogo_planes para calcular saldos correctamente
+    # Obtener capital_plan de catalogo_planes
     plan_codigo_lb2 = lb.get("plan_codigo") or (lb.get("plan") or {}).get("codigo")
     capital_plan_val2: int | None = None
     if plan_codigo_lb2:
         cat_plan2 = await db.catalogo_planes.find_one({"codigo": plan_codigo_lb2})
         if cat_plan2:
             capital_plan_val2 = cat_plan2.get("capital_plan")
-    # Fallback RODANTE: capital_plan = monto_original del producto (repuesto/servicio)
     if not capital_plan_val2:
-        capital_plan_val2 = lb.get("monto_original") or (cuota_monto * num_cuotas) or 0
+        capital_plan_val2 = lb.get("capital_plan") or lb.get("monto_original") or (cuota_monto * num_cuotas) or 0
 
-    # cuota_estandar_plan: para RDX usa la del loanbook si existe; para RODANTE = cuota_periodica
     cuota_std_val2 = lb.get("cuota_estandar_plan") or int(cuota_monto)
+    cuota_inicial_pactada = int(lb.get("cuota_inicial") or 0)
 
-    from services.loanbook.reglas_negocio import calcular_saldos as _calcular_saldos2
-    if capital_plan_val2 and num_cuotas:
-        _s2 = _calcular_saldos2(int(capital_plan_val2), num_cuotas, int(cuota_monto), 0,
-                                cuota_estandar_plan=cuota_std_val2)
-        saldo_capital_init2   = _s2["saldo_capital"]
-        saldo_intereses_init2 = _s2["saldo_intereses"]
-    else:
-        saldo_capital_init2   = num_cuotas * cuota_monto
-        saldo_intereses_init2 = 0
+    # ── Delegar al motor canónico para generar cronograma con desglose
+    try:
+        cuotas = _motor_crear_cronograma(
+            fecha_primer_pago     = fpc,
+            num_cuotas            = num_cuotas,
+            cuota_valor           = int(cuota_monto),
+            modalidad             = modalidad,
+            capital_plan          = int(capital_plan_val2),
+            cuota_estandar_plan   = int(cuota_std_val2),
+            cuota_inicial         = cuota_inicial_pactada,
+            fecha_cuota_inicial   = fecha_entrega if cuota_inicial_pactada > 0 else None,
+        )
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=422, detail=f"motor.crear_cronograma falló: {exc}")
+
+    valor_total_nuevo = sum(int(c.get("monto") or 0) for c in cuotas)
 
     await db.loanbook.update_one(
         {"loanbook_id": lb["loanbook_id"]},
         {"$set": {
-            "estado": "activo",
-            "fecha_entrega": body.fecha_entrega,
-            "fecha_primer_pago": fpc.isoformat(),
-            "cuotas": cuotas,
-            "cuotas_pagadas": 0,
-            "cuotas_total": len(cuotas),
-            "saldo_capital":       saldo_capital_init2,
-            "saldo_pendiente":     saldo_capital_init2,
-            "saldo_intereses":     saldo_intereses_init2,
+            "estado":              "activo",
+            "fecha_entrega":       body.fecha_entrega,
+            "fecha_primer_pago":   fpc.isoformat(),
+            "cuotas":              cuotas,
+            "cuotas_pagadas":      0,
+            "cuotas_total":        len(cuotas),
+            "valor_total":         valor_total_nuevo,
+            "saldo_pendiente":     valor_total_nuevo,
             "capital_plan":        capital_plan_val2 or 0,
             "cuota_estandar_plan": cuota_std_val2,
-            "updated_at": now_iso_bogota(),
+            "cuota_inicial":       cuota_inicial_pactada,
+            "updated_at":          now_iso_bogota(),
         }},
     )
-    await _recalcular_y_persistir(db, lb["loanbook_id"])
     await _publish_event(
         db, "moto.entregada.canonico", "routers.loanbook.put",
         {"loanbook_id": lb["loanbook_id"], "fecha_entrega": body.fecha_entrega,
-         "fecha_primera_cuota": fpc.isoformat()},
+         "fecha_primera_cuota": fpc.isoformat(),
+         "num_cuotas": len(cuotas), "cuota_inicial": cuota_inicial_pactada},
         accion=f"Entrega canónica {lb['loanbook_id']}",
     )
 
     return {
-        "success": True,
-        "loanbook_id": lb["loanbook_id"],
-        "estado": "activo",
-        "fecha_entrega": body.fecha_entrega,
-        "fecha_primera_cuota": fpc.isoformat(),
-        "num_cuotas": len(cuotas),
+        "success":              True,
+        "loanbook_id":          lb["loanbook_id"],
+        "estado":               "activo",
+        "fecha_entrega":        body.fecha_entrega,
+        "fecha_primera_cuota":  fpc.isoformat(),
+        "num_cuotas":           len(cuotas),
+        "valor_total":          valor_total_nuevo,
+        "cuota_inicial":        cuota_inicial_pactada,
+        "motor":                "services.loanbook.motor v1",
     }
 
 
@@ -1434,21 +1449,25 @@ async def put_pago(
     db: AsyncIOMotorDatabase = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """Registro canónico de pago con waterfall ANZI → mora → vencidas → corriente.
+    """Registro canónico de pago — delega a `motor.aplicar_pago` (DAY3 B4).
 
-    Equivalente canónico del POST /registrar-pago (DEPRECATED).
-    Requiere autenticación. Aplica recalcular_loanbook() al final.
+    Waterfall §4.1 RODDOS: ANZI 2% → mora → interés → capital → abono anticipado.
+
+    El motor:
+      - Valida fecha_pago no futura (ValueError R-07)
+      - Rechaza pendiente_entrega / saldado / castigado
+      - Aplica el waterfall con desglose ANZI/mora/interés/capital
+      - Si cuota_numero=0 → bypass waterfall, aplica directo a capital (cuota inicial RODDOS V2.1)
+      - Recalcula derivados (saldo_pendiente, dpd, estado, sub_bucket) automáticamente
+
+    Mantiene shape de response compatible (success, loanbook_id, nuevo_saldo,
+    nuevo_estado, cuotas_pagadas, desglose, pago_parcial) — frontend no se rompe.
     """
     metodo = body.metodo_pago.lower()
     if metodo not in METODOS_PAGO:
         raise HTTPException(status_code=422, detail=f"metodo_pago inválido. Use: {sorted(METODOS_PAGO)}")
 
     lb = await _find_lb_by_identifier(db, identifier)
-    if lb.get("estado") in ("pendiente_entrega", "saldado", "castigado"):
-        raise HTTPException(
-            status_code=422,
-            detail=f"No se puede registrar pago en estado '{lb.get('estado')}'",
-        )
 
     today = today_bogota()
     fecha_pago_str = body.fecha_pago or today.isoformat()
@@ -1457,120 +1476,187 @@ async def put_pago(
     except ValueError:
         raise HTTPException(status_code=422, detail="fecha_pago inválida (use yyyy-MM-dd)")
 
-    # Gate: fecha_pago futura es físicamente imposible
+    # ── Delegar al motor canónico ──
     try:
-        _validar_fecha_pago(fecha_pago, hoy=today)
+        resultado = _motor_aplicar_pago(
+            loanbook    = lb,
+            monto       = int(body.monto_pago),
+            fecha_pago  = fecha_pago,
+            cuota_numero = body.cuota_numero,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
-    cuotas = lb.get("cuotas", [])
-    if not cuotas:
-        raise HTTPException(status_code=422, detail="Loanbook sin cuotas — ejecuta PUT /{id}/entrega primero")
+    lb_nuevo = resultado["loanbook"]
+    distribucion = resultado["distribucion"]
 
-    anzi_pct = lb.get("anzi_pct", 0.02) or 0.0
-    mora_pendiente = 0
-    for c in cuotas:
-        if c.get("estado") == "pagada" or not c.get("fecha"):
-            continue
-        fc = date.fromisoformat(c["fecha"])
-        mora = calcular_mora(fc, fecha_pago, MORA_TASA_DIARIA)
-        c["mora_acumulada"] = mora
-        mora_pendiente += mora
-
-    vencidas_total = sum(
-        (c.get("monto") or c.get("monto_total") or 0) for c in cuotas
-        if c.get("estado") != "pagada" and c.get("fecha")
-        and date.fromisoformat(c["fecha"]) < fecha_pago
-    )
-    corriente_monto = 0
-    for c in cuotas:
-        if c.get("estado") == "pagada":
-            continue
-        if c.get("fecha") and date.fromisoformat(c["fecha"]) >= fecha_pago:
-            corriente_monto = (c.get("monto") or c.get("monto_total") or 0)
-            break
-        if not c.get("fecha"):
-            corriente_monto = (c.get("monto") or c.get("monto_total") or 0)
-            break
-
-    saldo_capital = lb.get("saldo_capital", 0) or 0
-    alloc = aplicar_waterfall(
-        monto_pago=body.monto_pago,
-        anzi_pct=anzi_pct,
-        mora_pendiente=mora_pendiente,
-        cuotas_vencidas_total=vencidas_total,
-        cuota_corriente=corriente_monto,
-        saldo_capital=saldo_capital,
-    )
-
+    # ── Anotar metadata del pago en la cuota afectada (motor no la persiste)
+    # Esto es para preservar trazabilidad UI: método de pago + referencia + identidad operario
+    cuota_objetivo = body.cuota_numero
     pago_parcial = False
-    if body.cuota_numero is not None:
-        target = next((c for c in cuotas if c.get("numero") == body.cuota_numero), None)
-        if target is None:
-            raise HTTPException(status_code=404, detail=f"Cuota #{body.cuota_numero} no encontrada")
-        if target.get("estado") == "pagada":
-            raise HTTPException(status_code=409, detail=f"Cuota #{body.cuota_numero} ya está pagada")
-        pago_parcial = body.monto_pago < target["monto"]
-        target.update({"estado": "pagada", "fecha_pago": fecha_pago_str,
-                        "mora_acumulada": 0, "metodo_pago": metodo, "referencia": body.referencia})
-    else:
-        rem_venc = alloc["vencidas"]
-        rem_corr = alloc["corriente"]
-        for c in cuotas:
-            if c.get("estado") == "pagada":
-                continue
-            if c.get("fecha"):
-                fc = date.fromisoformat(c["fecha"])
-                if fc < fecha_pago and rem_venc >= (c.get("monto") or c.get("monto_total") or 0):
-                    c.update({"estado": "pagada", "fecha_pago": fecha_pago_str,
-                               "mora_acumulada": 0, "metodo_pago": metodo, "referencia": body.referencia})
-                    rem_venc -= (c.get("monto") or c.get("monto_total") or 0)
-                    continue
-                if fc >= fecha_pago and rem_corr >= (c.get("monto") or c.get("monto_total") or 0):
-                    c.update({"estado": "pagada", "fecha_pago": fecha_pago_str,
-                               "mora_acumulada": 0, "metodo_pago": metodo, "referencia": body.referencia})
-                    rem_corr -= (c.get("monto") or c.get("monto_total") or 0)
-                    break
-            elif rem_corr >= (c.get("monto") or c.get("monto_total") or 0):
-                c.update({"estado": "pagada", "fecha_pago": fecha_pago_str,
-                           "metodo_pago": metodo, "referencia": body.referencia})
-                rem_corr -= (c.get("monto") or c.get("monto_total") or 0)
-                break
+    for c in lb_nuevo.get("cuotas") or []:
+        es_target = (cuota_objetivo is not None and int(c.get("numero") or -1) == int(cuota_objetivo)) \
+                    or (cuota_objetivo is None and c.get("fecha_pago") == fecha_pago_str
+                        and int(c.get("monto_pagado") or 0) > 0
+                        and c.get("estado") in ("pagada", "parcial"))
+        if es_target:
+            c["metodo_pago"] = metodo
+            if body.referencia:
+                c["referencia"] = body.referencia
+            if c.get("estado") == "parcial":
+                pago_parcial = True
 
-    cuotas_pagadas = sum(1 for c in cuotas if c.get("estado") == "pagada")
-    new_saldo = max(saldo_capital - alloc["corriente"] - alloc["vencidas"] - alloc["capital"], 0)
-    nuevo_estado = "saldado" if new_saldo == 0 and cuotas_pagadas == len(cuotas) else estado_from_dpd(calcular_dpd(cuotas, fecha_pago))
-
+    # ── Persistir loanbook_nuevo COMPLETO (cuotas + derivados + buckets contables)
+    persist = {k: v for k, v in lb_nuevo.items() if k != "_id"}
+    persist["updated_at"] = now_iso_bogota()
     await db.loanbook.update_one(
         {"loanbook_id": lb["loanbook_id"]},
-        {"$set": {
-            "cuotas": cuotas,
-            "saldo_capital": new_saldo,
-            "saldo_pendiente": new_saldo,
-            "total_pagado": (lb.get("total_pagado", 0) or 0) + body.monto_pago,
-            "total_mora_pagada": (lb.get("total_mora_pagada", 0) or 0) + alloc["mora"],
-            "total_anzi_pagado": (lb.get("total_anzi_pagado", 0) or 0) + alloc["anzi"],
-            "cuotas_pagadas": cuotas_pagadas,
-            "estado": nuevo_estado,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        }},
+        {"$set": persist},
     )
-    await _recalcular_y_persistir(db, lb["loanbook_id"])
+
+    # ── Evento: mantener mismo event_type para que handlers downstream (Contador) sigan
     await _publish_event(
         db, "pago.cuota.canonico", "routers.loanbook.put",
-        {"loanbook_id": lb["loanbook_id"], "monto_pago": body.monto_pago,
-         "fecha_pago": fecha_pago_str, "desglose": alloc, "cuota_numero": body.cuota_numero},
+        {
+            "loanbook_id":  lb["loanbook_id"],
+            "monto_pago":   body.monto_pago,
+            "fecha_pago":   fecha_pago_str,
+            "desglose":     distribucion,
+            "cuota_numero": cuota_objetivo,
+            "metodo_pago":  metodo,
+            "referencia":   body.referencia,
+        },
         accion=f"Pago canónico ${body.monto_pago:,.0f} {lb.get('vin') or lb['loanbook_id']}",
     )
 
     return {
-        "success": True,
-        "loanbook_id": lb["loanbook_id"],
-        "nuevo_saldo": new_saldo,
-        "nuevo_estado": nuevo_estado,
-        "cuotas_pagadas": cuotas_pagadas,
-        "desglose": alloc,
-        "pago_parcial": pago_parcial,
+        "success":         True,
+        "loanbook_id":     lb["loanbook_id"],
+        "nuevo_saldo":     int(lb_nuevo.get("saldo_pendiente") or 0),
+        "nuevo_estado":    lb_nuevo.get("estado"),
+        "cuotas_pagadas":  int(lb_nuevo.get("cuotas_pagadas") or 0),
+        "desglose":        distribucion,
+        "pago_parcial":    pago_parcial,
+        "motor":           "services.loanbook.motor v1",
+    }
+
+
+# ──────────────── PUT /pago/inicial — cuota 0 RODDOS V2.1 (DAY3 B4) ─────────
+
+class PutPagoInicialBody(BaseModel):
+    """Pago de cuota inicial pactada (cuota 0). Política RODDOS V2.1.
+
+    La cuota 0 NO aplica waterfall §4.1 (sin ANZI 2%, sin mora, sin interés).
+    El pago va directo a capital de la cuota 0.
+    """
+    monto_pago: float
+    metodo_pago: str = "efectivo"
+    fecha_pago: str | None = None       # yyyy-MM-dd
+    referencia: str | None = None
+
+
+@router.put("/{identifier}/pago/inicial")
+async def put_pago_inicial(
+    identifier: str,
+    body: PutPagoInicialBody,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Registro canónico de cobro de cuota 0 (cuota inicial pactada).
+
+    Política RODDOS V2.1: la cuota 0 NO está sujeta a waterfall §4.1.
+    El pago se aplica DIRECTO a capital de la cuota 0 (cuota_numero=0).
+
+    El endpoint:
+      - Verifica que el LB tenga cuota 0 en su cronograma (es_cuota_inicial=true)
+      - Si no la tiene, retorna 422 con mensaje claro
+      - Llama motor.aplicar_pago(cuota_numero=0) que ya implementa el bypass
+      - Persiste y emite evento 'pago.cuota.inicial.canonico' (separado del evento
+        regular para que el Contador pueda diferenciar el journal)
+
+    Equivalente canónico del POST /registrar-pago-inicial (DEPRECATED — usaba flags
+    top-level, no tocaba cronograma; rompía la política V2.1).
+    """
+    metodo = body.metodo_pago.lower()
+    if metodo not in METODOS_PAGO:
+        raise HTTPException(status_code=422, detail=f"metodo_pago inválido. Use: {sorted(METODOS_PAGO)}")
+
+    lb = await _find_lb_by_identifier(db, identifier)
+
+    today = today_bogota()
+    fecha_pago_str = body.fecha_pago or today.isoformat()
+    try:
+        fecha_pago = date.fromisoformat(fecha_pago_str)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="fecha_pago inválida (use yyyy-MM-dd)")
+
+    cuotas = lb.get("cuotas") or []
+    cuota_0 = next(
+        (c for c in cuotas if c.get("es_cuota_inicial") is True or int(c.get("numero") or -1) == 0),
+        None,
+    )
+    if cuota_0 is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"LB {lb['loanbook_id']} no tiene cuota inicial (cuota 0) en su cronograma. "
+                   f"Si la cuota inicial fue pactada, ejecute primero "
+                   f"POST /api/loanbook-admin/inyectar-cuota-inicial.",
+        )
+    if cuota_0.get("estado") == "pagada":
+        raise HTTPException(
+            status_code=409,
+            detail=f"La cuota inicial de {lb['loanbook_id']} ya está pagada.",
+        )
+
+    try:
+        resultado = _motor_aplicar_pago(
+            loanbook    = lb,
+            monto       = int(body.monto_pago),
+            fecha_pago  = fecha_pago,
+            cuota_numero = 0,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    lb_nuevo = resultado["loanbook"]
+    distribucion = resultado["distribucion"]
+
+    # Anotar metadata de cobro en cuota 0
+    for c in lb_nuevo.get("cuotas") or []:
+        if c.get("es_cuota_inicial") is True or int(c.get("numero") or -1) == 0:
+            c["metodo_pago"] = metodo
+            if body.referencia:
+                c["referencia"] = body.referencia
+            break
+
+    persist = {k: v for k, v in lb_nuevo.items() if k != "_id"}
+    persist["updated_at"] = now_iso_bogota()
+    await db.loanbook.update_one(
+        {"loanbook_id": lb["loanbook_id"]},
+        {"$set": persist},
+    )
+
+    await _publish_event(
+        db, "pago.cuota.inicial.canonico", "routers.loanbook.put",
+        {
+            "loanbook_id":  lb["loanbook_id"],
+            "monto_pago":   body.monto_pago,
+            "fecha_pago":   fecha_pago_str,
+            "desglose":     distribucion,
+            "metodo_pago":  metodo,
+            "referencia":   body.referencia,
+        },
+        accion=f"Cuota inicial ${body.monto_pago:,.0f} {lb.get('vin') or lb['loanbook_id']}",
+    )
+
+    return {
+        "success":         True,
+        "loanbook_id":     lb["loanbook_id"],
+        "tipo":            "cuota_inicial",
+        "nuevo_saldo":     int(lb_nuevo.get("saldo_pendiente") or 0),
+        "nuevo_estado":    lb_nuevo.get("estado"),
+        "desglose":        distribucion,
+        "motor":           "services.loanbook.motor v1",
     }
 
 
