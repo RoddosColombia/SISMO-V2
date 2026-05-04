@@ -93,7 +93,16 @@ interface Loanbook {
   cuotas_pagadas?: number
   cuotas_total?: number
   dpd?: number
-  proxima_cuota?: { fecha: string; monto: number } | null
+  proxima_cuota?: {
+    fecha: string;
+    monto: number;
+    numero?: number;
+    monto_capital?: number;
+    monto_interes?: number;
+    es_cuota_inicial?: boolean;
+    vencida?: boolean;
+    dias_diff?: number;
+  } | null
   fecha_entrega?: string
   fecha_primer_pago?: string | null
   score_bucket?: string
@@ -652,11 +661,29 @@ export default function LoanDetailPage({ idProp, onClose }: LoanDetailPageProps 
           } />
           <Row label="Total pagado" value={<span className="text-emerald-600 font-medium">{formatCOP(totalPagado)}</span>} />
           {lb.proxima_cuota && (
-            <div className="mt-3 p-3 rounded-md bg-primary/5 border border-primary/20">
-              <div className="text-[10px] text-primary font-bold uppercase tracking-wider">Próximo pago</div>
+            <div className={`mt-3 p-3 rounded-md border ${
+              lb.proxima_cuota.vencida
+                ? 'bg-red-50 border-red-300'
+                : 'bg-primary/5 border-primary/20'
+            }`}>
+              <div className={`text-[10px] font-bold uppercase tracking-wider ${
+                lb.proxima_cuota.vencida ? 'text-red-700' : 'text-primary'
+              }`}>
+                {lb.proxima_cuota.vencida ? 'Pago atrasado' : 'Próximo pago'}
+                {lb.proxima_cuota.es_cuota_inicial && ' (cuota inicial)'}
+              </div>
               <div className="flex justify-between items-baseline mt-1">
-                <span className="text-sm text-on-surface">{formatDate(lb.proxima_cuota.fecha)}</span>
-                <span className="font-display text-lg font-bold text-primary">{formatCOP(lb.proxima_cuota.monto)}</span>
+                <span className="text-sm text-on-surface">
+                  {formatDate(lb.proxima_cuota.fecha)}
+                  {lb.proxima_cuota.vencida && lb.proxima_cuota.dias_diff !== undefined && (
+                    <span className="text-red-600 ml-2 text-xs">
+                      ({Math.abs(lb.proxima_cuota.dias_diff)} días atrás)
+                    </span>
+                  )}
+                </span>
+                <span className={`font-display text-lg font-bold ${
+                  lb.proxima_cuota.vencida ? 'text-red-700' : 'text-primary'
+                }`}>{formatCOP(lb.proxima_cuota.monto)}</span>
               </div>
             </div>
           )}

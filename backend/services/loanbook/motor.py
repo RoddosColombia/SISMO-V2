@@ -551,6 +551,76 @@ def derivar_estado(loanbook: dict, hoy: date | None = None) -> dict:
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# HELPER: calcular próxima cuota a cobrar (DAY3 B4.5)
+# ════════════════════════════════════════════════════════════════════════════
+
+
+def calcular_proxima_cuota(loanbook: dict, hoy: date | None = None) -> dict | None:
+    """Identifica la próxima cuota a cobrar del cronograma.
+
+    Recorre el cronograma en orden numérico y retorna la primera cuota con
+    estado distinto a 'pagada'. Usa este criterio para el dashboard "Próx" en
+    /loanbook y la lógica de cobro semanal.
+
+    Reglas (RODDOS V2.1):
+      - Cuotas pagadas se ignoran.
+      - Si TODAS las cuotas están pagadas → retorna None (crédito saldado).
+      - La cuota 0 (cuota_inicial) sí se considera próxima si está pendiente —
+        el frontend la diferencia via `es_cuota_inicial=True`.
+      - Si la primera cuota pendiente tiene fecha < hoy → la marca como
+        `vencida=True`. El frontend la pinta en rojo.
+      - Si la fecha es >= hoy → vencida=False (cuota futura o de hoy).
+
+    Args:
+        loanbook: doc del crédito.
+        hoy: fecha de referencia. Si None, usa today_bogota().
+
+    Returns:
+        dict con:
+          - numero: int, número de cuota (0..N)
+          - fecha: str ISO yyyy-MM-dd
+          - monto: int (monto de la cuota)
+          - es_cuota_inicial: bool
+          - vencida: bool (True si fecha < hoy)
+          - dias_diff: int (días entre fecha y hoy; positivo = futura, negativo = vencida)
+        None si el cronograma está vacío o todas las cuotas están pagadas.
+    """
+    if hoy is None:
+        hoy = today_bogota()
+
+    cuotas = loanbook.get("cuotas") or []
+    if not cuotas:
+        return None
+
+    for c in cuotas:
+        if _es_pagada(c):
+            continue
+        fecha_str = c.get("fecha")
+        if not fecha_str:
+            continue
+        try:
+            f = _parse_date(fecha_str)
+        except Exception:
+            continue
+        if f is None:
+            continue
+
+        dias_diff = (f - hoy).days
+        return {
+            "numero":           int(c.get("numero") or 0),
+            "fecha":            f.isoformat(),
+            "monto":            int(c.get("monto") or 0),
+            "monto_capital":    int(c.get("monto_capital") or 0),
+            "monto_interes":    int(c.get("monto_interes") or 0),
+            "es_cuota_inicial": bool(c.get("es_cuota_inicial") is True or int(c.get("numero") or -1) == 0),
+            "vencida":          dias_diff < 0,
+            "dias_diff":        dias_diff,
+        }
+
+    return None
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # FUNCIÓN PÚBLICA 4: auditar
 # ════════════════════════════════════════════════════════════════════════════
 

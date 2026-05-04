@@ -42,6 +42,7 @@ from core.loanbook_model import (
 from services.loanbook.motor import (
     aplicar_pago as _motor_aplicar_pago,
     crear_cronograma as _motor_crear_cronograma,
+    calcular_proxima_cuota as _motor_proxima_cuota,
 )
 
 logger = logging.getLogger("routers.loanbook")
@@ -388,15 +389,10 @@ async def listar_loanbooks(
         total_cuotas = len(cuotas)
         dpd = calcular_dpd(cuotas, today)
 
-        # Find next pending cuota
-        proxima = None
-        for c in cuotas:
-            if c.get("estado") != "pagada" and c.get("fecha"):
-                proxima = {
-                    "fecha": c["fecha"],
-                    "monto": c.get("monto") or c.get("monto_total", 0),
-                }
-                break
+        # Próxima cuota canónica via motor (DAY3 B4.5)
+        # Retorna dict con fecha, monto, vencida, dias_diff, es_cuota_inicial
+        # o None si saldado / sin cronograma.
+        proxima = _motor_proxima_cuota(lb, hoy=today)
 
         lb["cuotas_pagadas"] = pagadas
         lb["cuotas_total"] = total_cuotas
@@ -464,11 +460,8 @@ async def get_loanbook(
         else:
             c["timeline_status"] = "pendiente"
 
-    proxima = None
-    for c in cuotas:
-        if c.get("estado") != "pagada" and c.get("fecha"):
-            proxima = {"fecha": c["fecha"], "monto": (c.get("monto") or c.get("monto_total") or 0)}
-            break
+    # Próxima cuota canónica via motor (DAY3 B4.5)
+    proxima = _motor_proxima_cuota(lb, hoy=today)
 
     lb["cuotas_pagadas"] = pagadas
     lb["cuotas_total"] = len(cuotas)

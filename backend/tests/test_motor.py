@@ -649,3 +649,98 @@ class TestCuotaInicial:
         assert r["dpd"] == 0
         assert r["estado"] == "al_dia"
         assert r["mora_acumulada_cop"] == 0
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 7. CALCULAR PRÓXIMA CUOTA (DAY3 B4.5)
+# ════════════════════════════════════════════════════════════════════════════
+
+
+class TestCalcularProximaCuota:
+    """calcular_proxima_cuota retorna la primera cuota pendiente con metadata útil para UI."""
+
+    def test_retorna_primera_cuota_no_pagada(self):
+        """Retorna la primera cuota con estado != 'pagada'."""
+        from services.loanbook.motor import calcular_proxima_cuota
+        lb = {
+            "cuotas": [
+                {"numero": 1, "fecha": "2026-04-29", "monto": 200000, "estado": "pagada", "monto_pagado": 200000},
+                {"numero": 2, "fecha": "2026-05-06", "monto": 200000, "estado": "pendiente", "monto_pagado": 0},
+                {"numero": 3, "fecha": "2026-05-13", "monto": 200000, "estado": "pendiente", "monto_pagado": 0},
+            ],
+        }
+        prox = calcular_proxima_cuota(lb, hoy=date(2026, 5, 3))
+        assert prox is not None
+        assert prox["numero"] == 2
+        assert prox["fecha"] == "2026-05-06"
+        assert prox["monto"] == 200000
+        assert prox["vencida"] is False
+        assert prox["dias_diff"] == 3
+
+    def test_marca_vencida_si_fecha_pasada(self):
+        """Si la primera cuota pendiente tiene fecha < hoy → vencida=True, dias_diff negativo."""
+        from services.loanbook.motor import calcular_proxima_cuota
+        lb = {
+            "cuotas": [
+                {"numero": 1, "fecha": "2026-04-22", "monto": 200000, "estado": "pendiente", "monto_pagado": 0},
+                {"numero": 2, "fecha": "2026-04-29", "monto": 200000, "estado": "pendiente", "monto_pagado": 0},
+            ],
+        }
+        prox = calcular_proxima_cuota(lb, hoy=date(2026, 5, 3))
+        assert prox is not None
+        assert prox["numero"] == 1
+        assert prox["fecha"] == "2026-04-22"
+        assert prox["vencida"] is True
+        assert prox["dias_diff"] == -11
+
+    def test_retorna_none_si_todas_pagadas(self):
+        """Crédito saldado → retorna None."""
+        from services.loanbook.motor import calcular_proxima_cuota
+        lb = {
+            "cuotas": [
+                {"numero": 1, "fecha": "2026-04-01", "monto": 200000, "estado": "pagada", "monto_pagado": 200000},
+                {"numero": 2, "fecha": "2026-04-08", "monto": 200000, "estado": "pagada", "monto_pagado": 200000},
+            ],
+        }
+        prox = calcular_proxima_cuota(lb, hoy=date(2026, 5, 3))
+        assert prox is None
+
+    def test_retorna_none_si_sin_cuotas(self):
+        """LB sin cronograma (pendiente_entrega) → None."""
+        from services.loanbook.motor import calcular_proxima_cuota
+        lb = {"cuotas": []}
+        assert calcular_proxima_cuota(lb, hoy=date(2026, 5, 3)) is None
+
+    def test_cuota_0_pendiente_se_considera_proxima(self):
+        """Si cuota 0 (cuota_inicial) está pendiente, se retorna como próxima con flag."""
+        from services.loanbook.motor import calcular_proxima_cuota
+        lb = {
+            "cuotas": [
+                {"numero": 0, "fecha": "2026-04-30", "monto": 1460000, "estado": "pendiente",
+                 "monto_pagado": 0, "es_cuota_inicial": True},
+                {"numero": 1, "fecha": "2026-05-06", "monto": 210000, "estado": "pendiente",
+                 "monto_pagado": 0, "es_cuota_inicial": False},
+            ],
+        }
+        prox = calcular_proxima_cuota(lb, hoy=date(2026, 5, 3))
+        assert prox is not None
+        assert prox["numero"] == 0
+        assert prox["es_cuota_inicial"] is True
+        assert prox["vencida"] is True  # 30-abr ya pasó
+
+    def test_cuota_0_pagada_pasa_a_siguiente(self):
+        """Si cuota 0 ya está pagada, próxima = cuota 1."""
+        from services.loanbook.motor import calcular_proxima_cuota
+        lb = {
+            "cuotas": [
+                {"numero": 0, "fecha": "2026-04-30", "monto": 1460000, "estado": "pagada",
+                 "monto_pagado": 1460000, "es_cuota_inicial": True},
+                {"numero": 1, "fecha": "2026-05-06", "monto": 210000, "estado": "pendiente",
+                 "monto_pagado": 0, "es_cuota_inicial": False},
+            ],
+        }
+        prox = calcular_proxima_cuota(lb, hoy=date(2026, 5, 3))
+        assert prox is not None
+        assert prox["numero"] == 1
+        assert prox["es_cuota_inicial"] is False
+        assert prox["vencida"] is False

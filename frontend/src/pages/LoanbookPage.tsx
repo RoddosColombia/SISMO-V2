@@ -10,6 +10,12 @@ import LoanOverlayModal from '@/components/LoanOverlayModal'
 interface ProximaCuota {
   fecha: string
   monto: number
+  numero?: number
+  monto_capital?: number
+  monto_interes?: number
+  es_cuota_inicial?: boolean
+  vencida?: boolean
+  dias_diff?: number
 }
 
 interface Cuota {
@@ -356,12 +362,36 @@ function _LEGACY_DetalleModal_removed({ vin, onClose }: { vin: string; onClose: 
         {/* Próxima cuota */}
         {lb.proxima_cuota && (
           <div className="px-6 pb-4">
-            <div className="bg-primary/5 rounded-lg px-4 py-3 flex items-center justify-between">
+            <div
+              className={`rounded-lg px-4 py-3 flex items-center justify-between ${
+                lb.proxima_cuota.vencida ? 'bg-red-50' : 'bg-primary/5'
+              }`}
+            >
               <div>
-                <div className="text-[10px] text-primary uppercase tracking-wider font-medium">Próxima cuota</div>
-                <div className="text-sm text-on-surface font-medium">{formatDate(lb.proxima_cuota.fecha)}</div>
+                <div
+                  className={`text-[10px] uppercase tracking-wider font-medium ${
+                    lb.proxima_cuota.vencida ? 'text-red-700' : 'text-primary'
+                  }`}
+                >
+                  {lb.proxima_cuota.vencida ? 'Cuota atrasada' : 'Próxima cuota'}
+                  {lb.proxima_cuota.es_cuota_inicial && ' (cuota inicial)'}
+                </div>
+                <div className="text-sm text-on-surface font-medium">
+                  {formatDate(lb.proxima_cuota.fecha)}
+                  {lb.proxima_cuota.vencida && lb.proxima_cuota.dias_diff !== undefined && (
+                    <span className="text-red-600 ml-2">
+                      · {Math.abs(lb.proxima_cuota.dias_diff)}d atrás
+                    </span>
+                  )}
+                </div>
               </div>
-              <div className="font-display text-lg font-bold text-primary">{formatCOP(lb.proxima_cuota.monto)}</div>
+              <div
+                className={`font-display text-lg font-bold ${
+                  lb.proxima_cuota.vencida ? 'text-red-700' : 'text-primary'
+                }`}
+              >
+                {formatCOP(lb.proxima_cuota.monto)}
+              </div>
             </div>
           </div>
         )}
@@ -1005,8 +1035,21 @@ export default function LoanbookPage() {
                             </div>
                           )}
                           {lb.proxima_cuota && (
-                            <div className="text-[10px] text-primary mt-1">
-                              Próx: {formatDate(lb.proxima_cuota.fecha)}
+                            <div
+                              className={`text-[10px] mt-1 font-medium ${
+                                lb.proxima_cuota.vencida
+                                  ? 'text-red-600'
+                                  : 'text-primary'
+                              }`}
+                              title={
+                                lb.proxima_cuota.vencida
+                                  ? `Atrasada ${Math.abs(lb.proxima_cuota.dias_diff ?? 0)} días`
+                                  : `Faltan ${lb.proxima_cuota.dias_diff ?? 0} días`
+                              }
+                            >
+                              {lb.proxima_cuota.vencida ? 'Atrasada: ' : 'Próx: '}
+                              {formatDate(lb.proxima_cuota.fecha)}
+                              {lb.proxima_cuota.es_cuota_inicial && ' (cuota inicial)'}
                             </div>
                           )}
                         </div>
