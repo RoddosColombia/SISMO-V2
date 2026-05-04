@@ -976,7 +976,9 @@ async def marcar_cuotas_iniciales_pagadas(
         lb_proyectado["cuotas"] = cuotas
         lb_proyectado["cuota_inicial"] = ci
         lb_proyectado["valor_total"] = valor_total_nuevo
-        lb_proyectado_derivado = derivar_estado(lb_proyectado, hoy=fecha_pago)
+        # B5.2 fix: derivar al "hoy" canónico, no a fecha_pago de la cuota inicial
+        # (sino los derivados quedan congelados en el pasado para LBs antiguos).
+        lb_proyectado_derivado = derivar_estado(lb_proyectado, hoy=today_bogota())
 
         delta_tp = int(lb_proyectado_derivado.get("total_pagado") or 0) - int(lb.get("total_pagado") or 0)
         delta_vt = valor_total_nuevo - int(lb.get("valor_total") or 0)

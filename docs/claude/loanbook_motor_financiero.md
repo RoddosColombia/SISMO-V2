@@ -248,3 +248,5 @@ Cuando un PUT /pago se ejecuta, el motor:
 - **2026-05-04** Día 3 B2.7 — `/motor/migrar` recalcula derivados: 42 verdes / 0 amarillas / 1 roja.
 - **2026-05-04** Día 3 B3 — LB-30 cronograma regenerado P52S. Cartera limpia.
 - **2026-05-04** Día 3 B4 — PUT /pago, /entrega, /pago/inicial usan motor canónico. Endpoints viejos deprecated.
+- **2026-05-04** Día 3 B4.5 — `motor.calcular_proxima_cuota` + UI roja si vencida. 6 tests.
+- **2026-05-04** Día 3 B5 — `marcar-cuotas-iniciales-pagadas` aplicado a 34 LBs (Σ=$47.83M). Cartera 43 verdes / 0 rojas.
